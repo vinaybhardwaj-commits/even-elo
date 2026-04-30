@@ -87,6 +87,11 @@ check "GET /api/streams?team=UnitHead"        "$BASE_URL/api/streams?team=UnitHe
 check "GET /input/cc"                         "$BASE_URL/input/cc"
 check "GET /api/streams?team=CC"              "$BASE_URL/api/streams?team=CC"
 
+# ELO.6a — leaderboard + per-VC stub
+check "GET /api/leaderboard"                  "$BASE_URL/api/leaderboard"
+check "GET /api/leaderboard?status=all"       "$BASE_URL/api/leaderboard?status=all"
+check "GET /vc/[invalid] (404)"               "$BASE_URL/vc/not-a-uuid" 404
+
 echo "─────────────────────────────────────"
 echo "  $PASS passed · $FAIL failed"
 echo ""
