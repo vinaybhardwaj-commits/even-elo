@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { sql } from "@/lib/db";
 import { auditWrite } from "@/lib/audit";
 import { insertCaseAtomic } from "@/lib/case-ref";
+import { recomputeAndPersist } from "@/lib/scoring/persist";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -196,20 +197,17 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Fire one stub recompute per affected VC.
+    // Fire one real recompute per affected VC.
     const uniqueVcIds = Array.from(new Set(previewed.filter((p) => p.vc_id).map((p) => p.vc_id!)));
     for (const vc_id of uniqueVcIds) {
       try {
-        await fetch(`${req.nextUrl.origin}/api/recompute/${vc_id}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            trigger: "case_create",
-            triggered_by_position: entered_by_position,
-          }),
+        await recomputeAndPersist({
+          vcId: vc_id,
+          trigger: "case_create",
+          triggeredByPosition: entered_by_position,
         });
       } catch {
-        // non-fatal
+        // non-fatal — case rows are already committed
       }
     }
 

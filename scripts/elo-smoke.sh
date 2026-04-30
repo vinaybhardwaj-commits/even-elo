@@ -55,6 +55,11 @@ check "GET /api/cases?status=all"             "$BASE_URL/api/cases?status=all"
 check "GET /api/cases/[invalid] (400)"        "$BASE_URL/api/cases/not-a-uuid" 400
 check "POST /api/recompute/[invalid] (400)"   "$BASE_URL/api/recompute/not-a-uuid" 400 POST
 
+# ELO.3b — engine API + batch recompute
+check "POST /api/admin/recompute (no args)"   "$BASE_URL/api/admin/recompute" 400 POST
+check "POST /api/admin/recompute?vc=invalid"  "$BASE_URL/api/admin/recompute?vc=not-a-uuid" 400 POST
+check "POST /api/admin/recompute?all=true"    "$BASE_URL/api/admin/recompute?all=true" 200 POST
+
 echo "─────────────────────────────────────"
 echo "  $PASS passed · $FAIL failed"
 echo ""

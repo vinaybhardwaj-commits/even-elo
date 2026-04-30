@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sql } from "@/lib/db";
 import { auditWrite } from "@/lib/audit";
+import { recomputeAndPersist } from "@/lib/scoring/persist";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -99,23 +100,29 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       after: updated[0],
     });
 
-    // Recompute stub if the status changed in a way that affects scoring.
+    // Real engine recompute if the status changed in a way that affects scoring.
+    let recompute:
+      | { ok: true; composite: number; tier: string; snapshot_id: string }
+      | undefined;
     if (case_status && case_status !== before.case_status) {
       try {
-        await fetch(`${req.nextUrl.origin}/api/recompute/${before.vc_id}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            trigger: "case_status_change",
-            triggered_by_position: actor_position,
-          }),
+        const { result, snapshotId } = await recomputeAndPersist({
+          vcId: String(before.vc_id),
+          trigger: "case_status_change",
+          triggeredByPosition: actor_position,
         });
+        recompute = {
+          ok: true,
+          composite: result.composite,
+          tier: result.tier,
+          snapshot_id: snapshotId,
+        };
       } catch {
-        // Stub failure is non-fatal.
+        // Recompute failure is non-fatal — case patch already committed.
       }
     }
 
-    return NextResponse.json({ ok: true, case: updated[0] });
+    return NextResponse.json({ ok: true, case: updated[0], recompute });
   } catch (e) {
     return NextResponse.json(
       { ok: false, error: e instanceof Error ? e.message : String(e) },

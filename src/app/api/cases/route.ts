@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { sql } from "@/lib/db";
 import { auditWrite } from "@/lib/audit";
 import { insertCaseAtomic } from "@/lib/case-ref";
+import { recomputeAndPersist } from "@/lib/scoring/persist";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -136,20 +137,26 @@ export async function POST(req: NextRequest) {
       after: inserted as unknown as Record<string, unknown>,
     });
 
-    // Trigger stub recompute (real engine in ELO.3b).
-    let recompute: { stub: true; vc_id: string } | { error: string };
+    // Real engine recompute (ELO.3b).
+    let recompute:
+      | { ok: true; composite: number; tier: string; snapshot_id: string; duration_ms: number }
+      | { ok: false; error: string };
+    const recomputeStart = Date.now();
     try {
-      const r = await fetch(
-        `${req.nextUrl.origin}/api/recompute/${vc_id}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ trigger: "case_create", triggered_by_position: entered_by_position }),
-        },
-      );
-      recompute = await r.json();
+      const { result, snapshotId } = await recomputeAndPersist({
+        vcId: vc_id,
+        trigger: "case_create",
+        triggeredByPosition: entered_by_position,
+      });
+      recompute = {
+        ok: true,
+        composite: result.composite,
+        tier: result.tier,
+        snapshot_id: snapshotId,
+        duration_ms: Date.now() - recomputeStart,
+      };
     } catch (e) {
-      recompute = { error: e instanceof Error ? e.message : String(e) };
+      recompute = { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
 
     return NextResponse.json(
