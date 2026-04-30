@@ -55,7 +55,10 @@ async function getVcDetail(id: string): Promise<VcDetail | null> {
     )
     SELECT
       v.id, v.full_name, v.specialty, v.registration_no, v.status,
-      ls.composite, ls.caseload_score, ls.outcomes_score, ls.adherence_score,
+      ls.composite::float AS composite,
+      ls.caseload_score::float AS caseload_score,
+      ls.outcomes_score::float AS outcomes_score,
+      ls.adherence_score::float AS adherence_score,
       ls.tier, ls.low_confidence, ls.computed_at,
       (SELECT n FROM obs_count) AS total_observations,
       (SELECT n FROM case_count) AS case_count_window
