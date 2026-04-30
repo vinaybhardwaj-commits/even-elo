@@ -60,6 +60,15 @@ check "POST /api/admin/recompute (no args)"   "$BASE_URL/api/admin/recompute" 40
 check "POST /api/admin/recompute?vc=invalid"  "$BASE_URL/api/admin/recompute?vc=not-a-uuid" 400 POST
 check "POST /api/admin/recompute?all=true"    "$BASE_URL/api/admin/recompute?all=true" 200 POST
 
+# ELO.4a — first per-team forms + observations API
+check "GET /input/anesthesia"                 "$BASE_URL/input/anesthesia"
+check "GET /input/ot"                         "$BASE_URL/input/ot"
+check "GET /api/streams"                      "$BASE_URL/api/streams"
+check "GET /api/streams?team=Anesthesia"      "$BASE_URL/api/streams?team=Anesthesia"
+check "GET /api/streams?team=OT"              "$BASE_URL/api/streams?team=OT"
+check "GET /api/observations (no args)"       "$BASE_URL/api/observations" 400
+check "POST /api/observations (no body)"      "$BASE_URL/api/observations" 400 POST
+
 echo "─────────────────────────────────────"
 echo "  $PASS passed · $FAIL failed"
 echo ""

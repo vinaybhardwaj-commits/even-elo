@@ -51,6 +51,8 @@ export function TopNav({ nav = DEFAULT_NAV }: { nav?: NavItem[] } = {}) {
 const DEFAULT_NAV: NavItem[] = [
   { label: "Leaderboard", href: "/", pending: true },
   { label: "New Case", href: "/input/cases" },
+  { label: "Anesthesia", href: "/input/anesthesia" },
+  { label: "OT", href: "/input/ot" },
   { label: "Cases", href: "/admin/cases" },
   { label: "Admin", href: "/admin" },
 ];
