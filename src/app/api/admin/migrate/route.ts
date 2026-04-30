@@ -9,14 +9,26 @@ export const runtime = "nodejs";
 
 /**
  * Split a migration SQL block into discrete statements.
- * Naive but sufficient: our migrations don't contain DO blocks or strings
- * with semicolons. If that ever changes, switch to a proper splitter.
+ *
+ * 1. Strip line comments (`-- …`) before splitting — otherwise statements
+ *    that start with a comment line get filtered out by the leading-`-`
+ *    test downstream.
+ * 2. Split on `;`. Naive but sufficient — our migrations don't contain DO
+ *    blocks or strings with embedded semicolons. Switch to a proper
+ *    splitter (e.g., pg-query-emscripten) if that ever changes.
  */
 function splitStatements(sqlText: string): string[] {
-  return sqlText
+  const stripped = sqlText
+    .split("\n")
+    .map((line) => {
+      const idx = line.indexOf("--");
+      return idx === -1 ? line : line.substring(0, idx);
+    })
+    .join("\n");
+  return stripped
     .split(";")
     .map((s) => s.trim())
-    .filter((s) => s.length > 0 && !s.startsWith("--"));
+    .filter((s) => s.length > 0);
 }
 
 /**
