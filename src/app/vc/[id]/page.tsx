@@ -1,82 +1,123 @@
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { notFound } from "next/navigation";
-import { unstable_noStore as noStore } from "next/cache";
-import { sql } from "@/lib/db";
 import { TopNav } from "@/components/TopNav";
-import { TierChip, Tier, TIER_TEXT_COLOR } from "@/components/TierChip";
+import { TierChip, Tier, TIER_TEXT_COLOR, TIER_BAR_COLOR } from "@/components/TierChip";
+import { SparkLine } from "@/components/SparkLine";
+import { TrajectoryChart } from "@/components/TrajectoryChart";
+import { ActivityFeed } from "@/components/ActivityFeed";
+import { ComponentBreakdown } from "@/components/ComponentBreakdown";
 
-export const dynamic = "force-dynamic";
-export const runtime = "nodejs";
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-interface VcDetail {
-  id: string;
-  full_name: string;
-  specialty: string;
-  registration_no: string | null;
-  status: string;
-  composite: number | null;
-  caseload_score: number | null;
-  outcomes_score: number | null;
-  adherence_score: number | null;
-  tier: Tier | null;
-  low_confidence: boolean;
-  computed_at: string | null;
-  total_observations: number;
-  case_count_window: number;
+interface DetailResponse {
+  ok: boolean;
+  vc: {
+    id: string;
+    full_name: string;
+    specialty: string;
+    registration_no: string | null;
+    status: string;
+  };
+  result: {
+    caseload: { score: number | null; streams: ComponentStream[]; scoreable_stream_count: number };
+    outcomes: { score: number | null; streams: ComponentStream[]; scoreable_stream_count: number };
+    adherence: { score: number | null; streams: ComponentStream[]; scoreable_stream_count: number };
+    composite: number;
+    tier: Tier;
+    low_confidence: boolean;
+    total_observations: number;
+    case_count_window: number;
+  };
+  streams: Array<{ id: string; label: string; component: string; default_rule: string }>;
+  snapshot_history: Array<{
+    composite: number;
+    tier: string;
+    computed_at: string;
+  }>;
+  cases: Array<{
+    id: string;
+    case_ref: string;
+    surgery_date: string;
+    procedure_label: string | null;
+    patient_name: string | null;
+    case_status: string;
+    observation_count: number;
+  }>;
+  activity: Array<{
+    id: string;
+    actor_position: string;
+    action: string;
+    entity_type: string;
+    entity_id: string;
+    before_json: Record<string, unknown> | null;
+    after_json: Record<string, unknown> | null;
+    at: string;
+    case_ref_for_obs: string | null;
+  }>;
+  required_stream_count: number;
+  weights: { caseload_pct: number; outcomes_pct: number; adherence_pct: number };
+  error?: string;
 }
 
-async function getVcDetail(id: string): Promise<VcDetail | null> {
-  noStore();
-  const rows = (await sql`
-    WITH latest AS (
-      SELECT DISTINCT ON (vc_id)
-        vc_id, composite, caseload_score, outcomes_score, adherence_score,
-        tier, low_confidence, computed_at
-      FROM score_snapshots
-      WHERE vc_id = ${id}
-      ORDER BY vc_id, computed_at DESC
-    ),
-    obs_count AS (
-      SELECT COUNT(*)::int AS n
-      FROM case_observations co
-      JOIN surgical_cases sc ON sc.id = co.case_id
-      WHERE sc.vc_id = ${id}
-        AND co.is_current = true
-        AND sc.surgery_date >= (CURRENT_DATE - INTERVAL '180 days')
-    ),
-    case_count AS (
-      SELECT COUNT(*)::int AS n
-      FROM surgical_cases
-      WHERE vc_id = ${id}
-        AND case_status = 'completed'
-        AND surgery_date >= (CURRENT_DATE - INTERVAL '180 days')
-    )
-    SELECT
-      v.id, v.full_name, v.specialty, v.registration_no, v.status,
-      ls.composite::float AS composite,
-      ls.caseload_score::float AS caseload_score,
-      ls.outcomes_score::float AS outcomes_score,
-      ls.adherence_score::float AS adherence_score,
-      ls.tier, ls.low_confidence, ls.computed_at,
-      (SELECT n FROM obs_count) AS total_observations,
-      (SELECT n FROM case_count) AS case_count_window
-    FROM vcs v
-    LEFT JOIN latest ls ON ls.vc_id = v.id
-    WHERE v.id = ${id}
-  `) as Array<VcDetail>;
-  return rows[0] ?? null;
+interface ComponentStream {
+  stream_id: string;
+  sub_score: number;
+  n_observations: number;
+  weight_sum: number;
 }
 
-interface PageProps {
-  params: { id: string };
-}
+export default function VcDashboardPage({ params }: { params: { id: string } }) {
+  const [data, setData] = useState<DetailResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-export default async function VcDashboardPage({ params }: PageProps) {
-  if (!UUID_RE.test(params.id)) notFound();
-  const vc = await getVcDetail(params.id);
-  if (!vc) notFound();
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const r = await fetch(`/api/vcs/${params.id}/detail`);
+      const j: DetailResponse = await r.json();
+      if (!j.ok) throw new Error(j.error ?? "load failed");
+      setData(j);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [params.id]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  if (loading || !data) {
+    return (
+      <>
+        <TopNav />
+        <main className="max-w-[1400px] mx-auto px-8 py-8">
+          {error ? (
+            <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-900">
+              {error}
+            </div>
+          ) : (
+            <div className="text-sm text-stone-500">Loading…</div>
+          )}
+        </main>
+      </>
+    );
+  }
+
+  const { vc, result, streams, snapshot_history, cases, activity, required_stream_count, weights } = data;
+  const composite = result.composite;
+  const tier = result.tier;
+
+  // Sparkline data per component (use snapshot history if available).
+  const sparkComposite = snapshot_history.map((s) => s.composite);
+
+  // Cases: order by date desc, compute completion %.
+  const casesOrdered = [...cases].sort((a, b) =>
+    a.surgery_date < b.surgery_date ? 1 : a.surgery_date > b.surgery_date ? -1 : 0,
+  );
 
   return (
     <>
@@ -90,59 +131,199 @@ export default async function VcDashboardPage({ params }: PageProps) {
           <span className="text-stone-900">{vc.full_name}</span>
         </div>
 
+        {/* Hero card */}
         <div className="card p-6 mb-6 bg-white border border-stone-200 rounded-xl">
           <div className="flex items-start justify-between">
             <div className="flex-1">
               <div className="flex items-center gap-3 mb-2 flex-wrap">
                 <h1 className="text-2xl font-semibold tracking-tight">{vc.full_name}</h1>
-                {vc.tier && <TierChip tier={vc.tier} />}
-                <span className="pill text-xs px-2.5 py-1 rounded-full bg-stone-100 text-stone-600 font-medium capitalize">
+                <TierChip tier={tier} />
+                <span className="text-xs px-2.5 py-1 rounded-full bg-stone-100 text-stone-600 font-medium capitalize">
                   {vc.status}
                 </span>
-                {vc.low_confidence && (
-                  <span className="pill text-xs px-2.5 py-1 rounded-full bg-amber-50 text-amber-700 font-medium">
+                {result.low_confidence && (
+                  <span className="text-xs px-2.5 py-1 rounded-full bg-amber-50 text-amber-700 font-medium">
                     ⚠ Low confidence
                   </span>
                 )}
               </div>
               <div className="text-sm text-stone-500 num">
                 {vc.specialty}
-                {vc.registration_no && ` · ${vc.registration_no}`}
-                {" · "}
-                {vc.case_count_window} cases in last 6mo · {vc.total_observations} observations
+                {vc.registration_no && ` · ${vc.registration_no}`} ·{" "}
+                {result.case_count_window} cases in last 6mo · {result.total_observations} observations
+              </div>
+              <div className="text-xs text-stone-500 mt-1 num">
+                Weights: {weights.caseload_pct} / {weights.outcomes_pct} / {weights.adherence_pct} (Caseload / Outcomes / Adherence)
               </div>
             </div>
             <div className="text-right">
-              <div
-                className={`score-display text-6xl ${
-                  vc.tier ? TIER_TEXT_COLOR[vc.tier] : "text-stone-400"
-                }`}
-              >
-                {vc.composite !== null ? vc.composite.toFixed(1) : "—"}
+              <div className={`score-display text-6xl ${TIER_TEXT_COLOR[tier]}`}>
+                {composite.toFixed(1)}
               </div>
-              {vc.computed_at && (
+              {snapshot_history.length >= 2 && (
                 <div className="text-xs text-stone-500 mt-1 num">
-                  computed {new Date(vc.computed_at).toLocaleString()}
+                  {(() => {
+                    const prev = snapshot_history[snapshot_history.length - 2].composite;
+                    const delta = composite - prev;
+                    const arrow = delta > 0 ? "▲" : delta < 0 ? "▼" : "→";
+                    return `${arrow} ${Math.abs(delta).toFixed(1)} since prior snapshot`;
+                  })()}
                 </div>
               )}
             </div>
           </div>
 
           <div className="mt-6 pt-6 border-t border-stone-100 grid grid-cols-3 gap-6">
-            <ComponentCard label="Caseload" value={vc.caseload_score} tier={vc.tier} />
-            <ComponentCard label="Outcomes" value={vc.outcomes_score} tier={vc.tier} />
-            <ComponentCard label="Adherence" value={vc.adherence_score} tier={vc.tier} />
+            {[
+              { label: "Caseload", score: result.caseload.score, kind: "caseload" as const },
+              { label: "Outcomes", score: result.outcomes.score, kind: "outcomes" as const },
+              { label: "Adherence", score: result.adherence.score, kind: "adherence" as const },
+            ].map((c) => (
+              <div key={c.label}>
+                <div className="flex items-baseline justify-between mb-2">
+                  <div className="text-xs font-medium tracking-wider uppercase text-stone-500">{c.label}</div>
+                  <div className="num text-lg font-semibold">
+                    {c.score !== null ? Math.round(c.score) : <span className="text-stone-400">—</span>}
+                  </div>
+                </div>
+                <div className="bg-stone-100 rounded h-1.5 mb-2 overflow-hidden">
+                  {c.score !== null && (
+                    <div
+                      className={`h-full ${TIER_BAR_COLOR[tier]}`}
+                      style={{ width: `${Math.max(0, Math.min(100, c.score))}%` }}
+                    />
+                  )}
+                </div>
+                <div className="flex items-center gap-2 text-xs text-stone-500">
+                  <SparkLine values={sparkComposite.slice(-12)} color={TIER_BAR_HEX[tier]} />
+                  <span>
+                    {c.score !== null
+                      ? `${result[c.kind].scoreable_stream_count} of ${streams.filter((s) => s.component === c.kind).length} scoreable`
+                      : "Insufficient data"}
+                  </span>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
 
-        <div className="rounded-xl border border-stone-200 bg-stone-50 p-6 text-center">
-          <div className="text-sm font-medium text-stone-700 mb-1">
-            Per-VC dashboard ships in ELO.6b
+        <div className="grid grid-cols-3 gap-6">
+          {/* Left: Component breakdown + Activity feed */}
+          <div className="col-span-2 space-y-6">
+            <ComponentBreakdown
+              caseload={result.caseload}
+              outcomes={result.outcomes}
+              adherence={result.adherence}
+              streams={streams}
+              tier={tier}
+            />
+
+            <div className="card overflow-hidden bg-white border border-stone-200 rounded-xl">
+              <div className="px-5 py-4 border-b border-stone-100">
+                <div className="text-sm font-semibold">Recent observation activity</div>
+                <div className="text-xs text-stone-500 mt-0.5">
+                  Every input write timestamped for audit defensibility
+                </div>
+              </div>
+              <ActivityFeed rows={activity} streams={streams} />
+            </div>
           </div>
-          <div className="text-xs text-stone-500">
-            Component breakdown, sparklines, recent activity feed, cases list, and audit export
-            land in the next sub-sprint. The hero card above is from the leaderboard&apos;s latest
-            snapshot.
+
+          {/* Right column: actions + cases + trajectory */}
+          <div className="col-span-1 space-y-6">
+            <div className="card p-5 bg-white border border-stone-200 rounded-xl">
+              <div className="text-sm font-semibold mb-3">Committee actions</div>
+              {composite < 30 && (
+                <button className="w-full px-3 py-2 mb-2 bg-red-50 text-red-700 hover:bg-red-100 transition rounded-lg text-sm font-medium text-left">
+                  Convene suspension review
+                  <div className="text-xs font-normal opacity-75 mt-0.5">
+                    ELO &lt; 30 · requires 4 of 5 votes
+                  </div>
+                </button>
+              )}
+              {composite >= 30 && composite < 45 && (
+                <button className="w-full px-3 py-2 mb-2 bg-orange-50 text-orange-700 hover:bg-orange-100 transition rounded-lg text-sm font-medium text-left">
+                  Open Performance Improvement Plan
+                  <div className="text-xs font-normal opacity-75 mt-0.5">
+                    90-day · weekly check-ins
+                  </div>
+                </button>
+              )}
+              {composite >= 45 && composite < 60 && (
+                <button className="w-full px-3 py-2 mb-2 bg-amber-50 text-amber-700 hover:bg-amber-100 transition rounded-lg text-sm font-medium text-left">
+                  Schedule Watch review
+                  <div className="text-xs font-normal opacity-75 mt-0.5">
+                    Quarterly committee review
+                  </div>
+                </button>
+              )}
+              <a
+                href={`/api/vcs/${vc.id}/audit`}
+                download
+                className="block w-full px-3 py-2 bg-stone-50 text-stone-700 hover:bg-stone-100 transition rounded-lg text-sm font-medium text-left"
+              >
+                Export audit trail (CSV)
+                <div className="text-xs font-normal opacity-75 mt-0.5">
+                  All observations + supersession history
+                </div>
+              </a>
+            </div>
+
+            <div className="card overflow-hidden bg-white border border-stone-200 rounded-xl">
+              <div className="px-5 py-4 border-b border-stone-100 flex items-center justify-between">
+                <div className="text-sm font-semibold">Recent cases</div>
+                <span className="text-xs text-stone-500 num">{casesOrdered.length}</span>
+              </div>
+              <div className="divide-y divide-stone-100">
+                {casesOrdered.slice(0, 6).map((c) => {
+                  const pct =
+                    required_stream_count > 0
+                      ? Math.round((c.observation_count / required_stream_count) * 100)
+                      : 0;
+                  return (
+                    <div key={c.id} className="px-5 py-3">
+                      <div className="flex items-center justify-between">
+                        <span className="font-mono text-xs text-stone-600">{c.case_ref}</span>
+                        <span
+                          className={`text-[10px] px-1.5 py-0.5 rounded ${
+                            pct >= 100
+                              ? "bg-emerald-50 text-emerald-700"
+                              : pct > 0
+                                ? "bg-amber-50 text-amber-700"
+                                : "bg-stone-100 text-stone-500"
+                          }`}
+                        >
+                          {Math.min(100, pct)}% complete
+                        </span>
+                      </div>
+                      <div className="text-sm mt-1">
+                        {c.procedure_label ?? <span className="text-stone-400">—</span>}
+                      </div>
+                      <div className="text-xs text-stone-500 mt-0.5 num">
+                        {c.surgery_date} {c.patient_name && `· ${c.patient_name}`}
+                      </div>
+                    </div>
+                  );
+                })}
+                {casesOrdered.length === 0 && (
+                  <div className="px-5 py-6 text-sm text-stone-500 text-center">
+                    No cases yet.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="card p-5 bg-white border border-stone-200 rounded-xl">
+              <div className="text-sm font-semibold mb-3">90-day trajectory</div>
+              <TrajectoryChart
+                points={snapshot_history.map((s) => ({
+                  composite: s.composite,
+                  tier: s.tier,
+                  computed_at: s.computed_at,
+                }))}
+                currentTier={tier}
+              />
+            </div>
           </div>
         </div>
       </main>
@@ -150,38 +331,11 @@ export default async function VcDashboardPage({ params }: PageProps) {
   );
 }
 
-function ComponentCard({
-  label,
-  value,
-  tier,
-}: {
-  label: string;
-  value: number | null;
-  tier: Tier | null;
-}) {
-  return (
-    <div>
-      <div className="flex items-baseline justify-between mb-2">
-        <div className="text-xs font-medium tracking-wider uppercase text-stone-500">{label}</div>
-        <div className="num text-lg font-semibold">{value !== null ? value.toFixed(0) : "—"}</div>
-      </div>
-      <div className="bg-stone-100 h-1.5 rounded overflow-hidden">
-        {value !== null && tier && (
-          <div
-            className={`h-full ${
-              {
-                distinguished: "bg-tier-dist-bar",
-                standard: "bg-tier-std-bar",
-                watch: "bg-tier-watch-bar",
-                pip: "bg-tier-pip-bar",
-                suspension_review: "bg-tier-susp-bar",
-                no_recent_activity: "bg-tier-none-bar",
-              }[tier]
-            }`}
-            style={{ width: `${Math.max(0, Math.min(100, value))}%` }}
-          />
-        )}
-      </div>
-    </div>
-  );
-}
+const TIER_BAR_HEX: Record<string, string> = {
+  distinguished: "#16a34a",
+  standard: "#2563eb",
+  watch: "#d97706",
+  pip: "#ea580c",
+  suspension_review: "#dc2626",
+  no_recent_activity: "#71717a",
+};

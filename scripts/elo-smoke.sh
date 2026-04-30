@@ -92,6 +92,10 @@ check "GET /api/leaderboard"                  "$BASE_URL/api/leaderboard"
 check "GET /api/leaderboard?status=all"       "$BASE_URL/api/leaderboard?status=all"
 check "GET /vc/[invalid] (404)"               "$BASE_URL/vc/not-a-uuid" 404
 
+# ELO.6b — per-VC dashboard
+check "GET /api/vcs/[invalid]/detail (400)"   "$BASE_URL/api/vcs/not-a-uuid/detail" 400
+check "GET /api/vcs/[invalid]/audit (400)"    "$BASE_URL/api/vcs/not-a-uuid/audit" 400
+
 echo "─────────────────────────────────────"
 echo "  $PASS passed · $FAIL failed"
 echo ""
