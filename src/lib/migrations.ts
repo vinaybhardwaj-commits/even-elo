@@ -236,4 +236,15 @@ export const MIGRATIONS: Migration[] = [
       WHERE id = 'round_attendance';
     `,
   },
+
+  {
+    id: "006_insurance_denial_reason",
+    description:
+      "insurance_denial: optional reason field shown when val=true (denied). PRD §5 A8.",
+    sql: `
+      UPDATE streams
+      SET requires_reason_when = 'true:optional', updated_at = now()
+      WHERE id = 'insurance_denial';
+    `,
+  },
 ];

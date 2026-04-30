@@ -73,6 +73,16 @@ check "POST /api/observations (no body)"      "$BASE_URL/api/observations" 400 P
 check "GET /input/ms"                         "$BASE_URL/input/ms"
 check "GET /api/streams?team=MS"              "$BASE_URL/api/streams?team=MS"
 
+# ELO.5a — single-stream forms
+check "GET /input/icn"                        "$BASE_URL/input/icn"
+check "GET /input/pharmacy"                   "$BASE_URL/input/pharmacy"
+check "GET /input/billing"                    "$BASE_URL/input/billing"
+check "GET /input/unit-head"                  "$BASE_URL/input/unit-head"
+check "GET /api/streams?team=ICN"             "$BASE_URL/api/streams?team=ICN"
+check "GET /api/streams?team=Pharmacy"        "$BASE_URL/api/streams?team=Pharmacy"
+check "GET /api/streams?team=Billing"         "$BASE_URL/api/streams?team=Billing"
+check "GET /api/streams?team=UnitHead"        "$BASE_URL/api/streams?team=UnitHead"
+
 echo "─────────────────────────────────────"
 echo "  $PASS passed · $FAIL failed"
 echo ""
