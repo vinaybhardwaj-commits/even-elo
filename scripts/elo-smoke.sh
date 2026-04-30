@@ -83,6 +83,10 @@ check "GET /api/streams?team=Pharmacy"        "$BASE_URL/api/streams?team=Pharma
 check "GET /api/streams?team=Billing"         "$BASE_URL/api/streams?team=Billing"
 check "GET /api/streams?team=UnitHead"        "$BASE_URL/api/streams?team=UnitHead"
 
+# ELO.5b — Customer Care form (last input form)
+check "GET /input/cc"                         "$BASE_URL/input/cc"
+check "GET /api/streams?team=CC"              "$BASE_URL/api/streams?team=CC"
+
 echo "─────────────────────────────────────"
 echo "  $PASS passed · $FAIL failed"
 echo ""
