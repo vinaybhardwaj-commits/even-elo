@@ -41,6 +41,15 @@ check "GET /api/vcs?status=all"               "$BASE_URL/api/vcs?status=all"
 check "GET /api/positions"                    "$BASE_URL/api/positions"
 check "GET /api/vcs/[invalid] (400)"          "$BASE_URL/api/vcs/not-a-uuid" 400
 
+# ELO.2 — case lifecycle + position picker
+check "GET /input/cases"                      "$BASE_URL/input/cases"
+check "GET /input/cases/upload"               "$BASE_URL/input/cases/upload"
+check "GET /admin/cases"                      "$BASE_URL/admin/cases"
+check "GET /api/cases"                        "$BASE_URL/api/cases"
+check "GET /api/cases?status=all"             "$BASE_URL/api/cases?status=all"
+check "GET /api/cases/[invalid] (400)"        "$BASE_URL/api/cases/not-a-uuid" 400
+check "POST /api/recompute/[invalid] (400)"   "$BASE_URL/api/recompute/not-a-uuid" 400
+
 echo "─────────────────────────────────────"
 echo "  $PASS passed · $FAIL failed"
 echo ""

@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { AdminShell } from "@/components/AdminShell";
+import { getCurrentPosition } from "@/lib/position";
 
 interface VC {
   id: string;
@@ -13,8 +14,6 @@ interface VC {
   created_at: string;
   updated_at: string;
 }
-
-const ACTOR_STUB = "Committee Admin";
 
 export default function AdminVCsPage() {
   const [vcs, setVcs] = useState<VC[]>([]);
@@ -172,6 +171,7 @@ function VCDialog({
   const [status, setStatus] = useState<VC["status"]>(vc?.status ?? "active");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const actor = getCurrentPosition() ?? "Committee Admin";
 
   async function save() {
     setSaving(true);
@@ -186,7 +186,7 @@ function VCDialog({
             specialty,
             registration_no: registrationNo || null,
             notes: notes || null,
-            created_by_position: ACTOR_STUB,
+            created_by_position: actor,
           }
         : {
             full_name: fullName,
@@ -194,7 +194,7 @@ function VCDialog({
             registration_no: registrationNo || null,
             notes: notes || null,
             status,
-            actor_position: ACTOR_STUB,
+            actor_position: actor,
           };
       const r = await fetch(url, {
         method,
@@ -217,7 +217,7 @@ function VCDialog({
         <div className="px-6 py-5 border-b border-stone-100">
           <h2 className="text-lg font-semibold">{vc ? "Edit VC" : "Add Visiting Consultant"}</h2>
           <p className="text-xs text-stone-500 mt-0.5">
-            Stamped as <span className="font-medium text-stone-700">{ACTOR_STUB}</span>
+            Stamped as <span className="font-medium text-stone-700">{actor}</span>
           </p>
         </div>
         <div className="px-6 py-5 space-y-4">

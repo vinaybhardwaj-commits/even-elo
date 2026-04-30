@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { AdminShell } from "@/components/AdminShell";
+import { getCurrentPosition } from "@/lib/position";
 
 interface Position {
   id: string;
@@ -10,8 +11,6 @@ interface Position {
   description: string | null;
   active: boolean;
 }
-
-const ACTOR_STUB = "Committee Admin";
 
 export default function AdminPositionsPage() {
   const [positions, setPositions] = useState<Position[]>([]);
@@ -118,6 +117,7 @@ function PositionDialog({
   const [description, setDescription] = useState(position.description ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const actor = getCurrentPosition() ?? "Committee Admin";
 
   async function save() {
     setSaving(true);
@@ -129,7 +129,7 @@ function PositionDialog({
         body: JSON.stringify({
           position_name: position.position_name,
           description,
-          actor_position: ACTOR_STUB,
+          actor_position: actor,
         }),
       });
       const j = await r.json();
