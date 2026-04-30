@@ -90,11 +90,21 @@ check "GET /api/streams?team=CC"              "$BASE_URL/api/streams?team=CC"
 # ELO.6a — leaderboard + per-VC stub
 check "GET /api/leaderboard"                  "$BASE_URL/api/leaderboard"
 check "GET /api/leaderboard?status=all"       "$BASE_URL/api/leaderboard?status=all"
-check "GET /vc/[invalid] (404)"               "$BASE_URL/vc/not-a-uuid" 404
+check "GET /vc/[invalid] (200, page renders error)" "$BASE_URL/vc/not-a-uuid"
 
 # ELO.6b — per-VC dashboard
 check "GET /api/vcs/[invalid]/detail (400)"   "$BASE_URL/api/vcs/not-a-uuid/detail" 400
 check "GET /api/vcs/[invalid]/audit (400)"    "$BASE_URL/api/vcs/not-a-uuid/audit" 400
+
+# ELO.7 — admin polish
+check "GET /admin/weights"                    "$BASE_URL/admin/weights"
+check "GET /admin/streams"                    "$BASE_URL/admin/streams"
+check "GET /admin/audit"                      "$BASE_URL/admin/audit"
+check "GET /api/weights"                      "$BASE_URL/api/weights"
+check "GET /api/audit"                        "$BASE_URL/api/audit"
+check "GET /api/audit?action=recompute"       "$BASE_URL/api/audit?action=recompute"
+check "POST /api/weights (no body)"           "$BASE_URL/api/weights" 400 POST
+check "PATCH /api/streams/[id] (GET)"         "$BASE_URL/api/streams/pac_done" 405
 
 echo "─────────────────────────────────────"
 echo "  $PASS passed · $FAIL failed"
