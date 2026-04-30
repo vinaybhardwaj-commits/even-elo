@@ -28,8 +28,18 @@ echo ""
 echo "Even-ELO smoke matrix · $BASE_URL"
 echo "─────────────────────────────────────"
 
-# ELO.0 — single endpoint, expand per sprint.
-check "GET /"                            "$BASE_URL/"
+# ELO.0 — public surface
+check "GET /"                                 "$BASE_URL/"
+
+# ELO.1 — admin + DB-backed routes
+check "GET /admin"                            "$BASE_URL/admin"
+check "GET /admin/vcs"                        "$BASE_URL/admin/vcs"
+check "GET /admin/positions"                  "$BASE_URL/admin/positions"
+check "GET /api/admin/migrate (state)"        "$BASE_URL/api/admin/migrate"
+check "GET /api/vcs"                          "$BASE_URL/api/vcs"
+check "GET /api/vcs?status=all"               "$BASE_URL/api/vcs?status=all"
+check "GET /api/positions"                    "$BASE_URL/api/positions"
+check "GET /api/vcs/[invalid] (400)"          "$BASE_URL/api/vcs/not-a-uuid" 400
 
 echo "─────────────────────────────────────"
 echo "  $PASS passed · $FAIL failed"
