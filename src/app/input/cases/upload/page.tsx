@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { TopNav } from "@/components/TopNav";
-import { getCurrentPosition } from "@/lib/position";
+import { getCurrentPosition, onPositionChange } from "@/lib/position";
 
 interface PreviewedRow {
   index: number;
@@ -66,6 +66,7 @@ export default function UploadCasesPage() {
 
   useEffect(() => {
     setPosition(getCurrentPosition());
+    return onPositionChange((name) => setPosition(name));
   }, []);
 
   async function runPreview() {

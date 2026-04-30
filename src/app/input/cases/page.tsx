@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { TopNav } from "@/components/TopNav";
-import { getCurrentPosition } from "@/lib/position";
+import { getCurrentPosition, onPositionChange } from "@/lib/position";
 
 interface VC {
   id: string;
@@ -31,15 +31,14 @@ export default function NewCasePage() {
 
   useEffect(() => {
     setPosition(getCurrentPosition());
-    const onStorage = () => setPosition(getCurrentPosition());
-    window.addEventListener("storage", onStorage);
+    const off = onPositionChange((name) => setPosition(name));
     fetch("/api/vcs")
       .then((r) => r.json())
       .then((j) => {
         if (j.ok) setVcs(j.vcs);
       })
       .catch(() => {});
-    return () => window.removeEventListener("storage", onStorage);
+    return off;
   }, []);
 
   async function submit(e: React.FormEvent) {

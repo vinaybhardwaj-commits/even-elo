@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { AdminShell } from "@/components/AdminShell";
-import { getCurrentPosition } from "@/lib/position";
+import { getCurrentPosition, onPositionChange } from "@/lib/position";
 
 interface Case {
   id: string;
@@ -31,6 +31,7 @@ export default function AdminCasesPage() {
 
   useEffect(() => {
     setPosition(getCurrentPosition());
+    return onPositionChange((name) => setPosition(name));
   }, []);
 
   const load = useCallback(async () => {
