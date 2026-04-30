@@ -225,4 +225,15 @@ export const MIGRATIONS: Migration[] = [
       WHERE NOT EXISTS (SELECT 1 FROM weight_versions WHERE is_current = true);
     `,
   },
+
+  {
+    id: "005_round_attendance_reason",
+    description:
+      "round_attendance: optional reason field shown when val=false (Inadequate). PRD D20.",
+    sql: `
+      UPDATE streams
+      SET requires_reason_when = 'false:optional', updated_at = now()
+      WHERE id = 'round_attendance';
+    `,
+  },
 ];

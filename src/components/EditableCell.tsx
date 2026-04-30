@@ -10,7 +10,28 @@ export interface StreamConfig {
   direction: "higher_better" | "lower_better";
   floor_value: number | null;
   target_value: number | null;
+  /**
+   * Format: `<bool>[:optional]`. Examples:
+   *   - `'true'`         → reason field shown + REQUIRED when val=true (unit_head_anomaly)
+   *   - `'false:optional'` → reason field shown (optional) when val=false (round_attendance)
+   *   - `null`           → no reason field at all
+   */
   requires_reason_when: string | null;
+}
+
+export interface ReasonSpec {
+  /** When the reason field should appear (val=this triggers it). */
+  trigger: boolean;
+  /** If false, save is blocked when reason is empty + val matches trigger. */
+  optional: boolean;
+}
+
+export function parseReasonSpec(raw: string | null): ReasonSpec | null {
+  if (!raw) return null;
+  const [boolPart, ...mods] = raw.split(":");
+  const trigger = boolPart === "true";
+  if (boolPart !== "true" && boolPart !== "false") return null;
+  return { trigger, optional: mods.includes("optional") };
 }
 
 export interface CellValue {
@@ -117,41 +138,95 @@ export function EditableCell({ caseId, stream, current, onSave, disabled }: Edit
   }
 
   // Editor state.
+  const reasonSpec = parseReasonSpec(stream.requires_reason_when);
+  const reasonShown =
+    reasonSpec !== null &&
+    draft?.kind === "binary" &&
+    draft.val === reasonSpec.trigger;
+
+  function tryCommitBinary(val: boolean) {
+    const showReasonForVal = reasonSpec !== null && val === reasonSpec.trigger;
+    if (showReasonForVal && !reasonSpec.optional && !reason.trim()) {
+      setError("Reason required");
+      // Update draft so the reason field appears.
+      setDraft({ kind: "binary", val, reason: undefined });
+      return;
+    }
+    commit({
+      kind: "binary",
+      val,
+      reason: reasonSpec && val === reasonSpec.trigger && reason.trim() ? reason.trim() : undefined,
+    });
+  }
+
+  // Update draft on toggle so reasonShown re-evaluates.
+  function selectBinary(val: boolean) {
+    setDraft({ kind: "binary", val, reason: reason || undefined });
+    setError(null);
+  }
+
   return (
     <div
       ref={containerRef}
-      className="relative inline-block bg-white border border-brand rounded-md p-2 shadow-md"
-      style={{ minWidth: "180px", zIndex: 10 }}
+      className="relative inline-block bg-white border border-brand rounded-md p-2 shadow-md text-left"
+      style={{ minWidth: "200px", zIndex: 10 }}
     >
       {stream.data_type === "binary" && (
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => commit({ kind: "binary", val: true, reason: reason || undefined })}
-            disabled={saving}
-            className={`px-3 py-1 rounded text-xs font-medium ${
-              draft?.kind === "binary" && draft.val === true
-                ? "bg-emerald-600 text-white"
-                : "bg-stone-100 text-stone-700 hover:bg-stone-200"
-            }`}
-          >
-            Yes
-          </button>
-          <button
-            type="button"
-            onClick={() =>
-              commit({ kind: "binary", val: false, reason: reason || undefined })
-            }
-            disabled={saving}
-            className={`px-3 py-1 rounded text-xs font-medium ${
-              draft?.kind === "binary" && draft.val === false
-                ? "bg-red-600 text-white"
-                : "bg-stone-100 text-stone-700 hover:bg-stone-200"
-            }`}
-          >
-            No
-          </button>
-        </div>
+        <>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => selectBinary(true)}
+              disabled={saving}
+              className={`px-3 py-1 rounded text-xs font-medium ${
+                draft?.kind === "binary" && draft.val === true
+                  ? "bg-emerald-600 text-white"
+                  : "bg-stone-100 text-stone-700 hover:bg-stone-200"
+              }`}
+            >
+              {binaryYesLabel(stream)}
+            </button>
+            <button
+              type="button"
+              onClick={() => selectBinary(false)}
+              disabled={saving}
+              className={`px-3 py-1 rounded text-xs font-medium ${
+                draft?.kind === "binary" && draft.val === false
+                  ? "bg-red-600 text-white"
+                  : "bg-stone-100 text-stone-700 hover:bg-stone-200"
+              }`}
+            >
+              {binaryNoLabel(stream)}
+            </button>
+          </div>
+          {reasonShown && (
+            <div className="mt-2">
+              <input
+                type="text"
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder={
+                  reasonSpec?.optional ? "Reason (optional)" : "Reason (required)"
+                }
+                className="w-full px-2 py-1 border border-stone-200 rounded text-xs"
+              />
+            </div>
+          )}
+          <div className="mt-2 flex justify-end">
+            <button
+              type="button"
+              onClick={() => {
+                if (draft?.kind === "binary" && typeof draft.val === "boolean") {
+                  tryCommitBinary(draft.val);
+                }
+              }}
+              disabled={saving || draft?.kind !== "binary"}
+              className="px-3 py-1 rounded text-xs font-medium bg-brand text-white hover:bg-brand-hover disabled:opacity-50"
+            >
+              {saving ? "…" : "Save"}
+            </button>
+          </div>
+        </>
       )}
       {stream.data_type === "numeric" && (
         <NumericEditor
@@ -163,24 +238,18 @@ export function EditableCell({ caseId, stream, current, onSave, disabled }: Edit
           }
         />
       )}
-      {stream.requires_reason_when === "true" && (
-        <div className="mt-2">
-          <input
-            type="text"
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            placeholder={
-              draft?.kind === "binary" && draft.val === true
-                ? "Reason required when flagging"
-                : "Reason (optional)"
-            }
-            className="w-full px-2 py-1 border border-stone-200 rounded text-xs"
-          />
-        </div>
-      )}
       {error && <div className="text-[11px] text-red-700 mt-1">{error}</div>}
     </div>
   );
+}
+
+function binaryYesLabel(stream: StreamConfig): string {
+  if (stream.id === "round_attendance") return "Adequate";
+  return "Yes";
+}
+function binaryNoLabel(stream: StreamConfig): string {
+  if (stream.id === "round_attendance") return "Inadequate";
+  return "No";
 }
 
 function NumericEditor({
@@ -248,6 +317,8 @@ function renderValue(stream: StreamConfig, value: CellValue | null): React.React
     return <span className="text-stone-300">—</span>;
   }
   if (value.kind === "binary") {
+    const yesLabel = binaryYesLabel(stream);
+    const noLabel = binaryNoLabel(stream);
     if (stream.direction === "higher_better") {
       return (
         <span
@@ -257,20 +328,18 @@ function renderValue(stream: StreamConfig, value: CellValue | null): React.React
               : "bg-red-50 text-red-700"
           }`}
         >
-          {value.val ? "Yes" : "No"}
+          {value.val ? yesLabel : noLabel}
         </span>
       );
     }
-    // lower_better: true = bad event happened, red. false = good (no event), green-ish neutral.
+    // lower_better: true = bad event happened, red. false = good (no event), neutral.
     return (
       <span
         className={`px-1.5 py-0.5 rounded text-[11px] font-medium ${
-          value.val
-            ? "bg-red-50 text-red-700"
-            : "bg-stone-100 text-stone-600"
+          value.val ? "bg-red-50 text-red-700" : "bg-stone-100 text-stone-600"
         }`}
       >
-        {value.val ? "Yes" : "No"}
+        {value.val ? yesLabel : noLabel}
       </span>
     );
   }

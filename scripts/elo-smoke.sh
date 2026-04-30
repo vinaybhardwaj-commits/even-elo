@@ -69,6 +69,10 @@ check "GET /api/streams?team=OT"              "$BASE_URL/api/streams?team=OT"
 check "GET /api/observations (no args)"       "$BASE_URL/api/observations" 400
 check "POST /api/observations (no body)"      "$BASE_URL/api/observations" 400 POST
 
+# ELO.4b — Med Sup form
+check "GET /input/ms"                         "$BASE_URL/input/ms"
+check "GET /api/streams?team=MS"              "$BASE_URL/api/streams?team=MS"
+
 echo "─────────────────────────────────────"
 echo "  $PASS passed · $FAIL failed"
 echo ""

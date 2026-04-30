@@ -112,17 +112,23 @@ export async function POST(req: NextRequest) {
     }
     const stream = streamRows[0];
 
-    // requires_reason_when='true' means: if value.val === true, reason is mandatory
-    if (
-      stream.requires_reason_when === "true" &&
-      value.kind === "binary" &&
-      value.val === true &&
-      (!value.reason || typeof value.reason !== "string" || !value.reason.trim())
-    ) {
-      return NextResponse.json(
-        { ok: false, error: "Reason is required when flagging this stream" },
-        { status: 400 },
-      );
+    // requires_reason_when format: '<bool>[:optional]'
+    //   'true'           → reason mandatory when val=true
+    //   'false:optional' → reason field shown when val=false but optional
+    // We only block save when the trigger value matches AND :optional is absent.
+    if (stream.requires_reason_when && value.kind === "binary") {
+      const [boolPart, ...mods] = stream.requires_reason_when.split(":");
+      const trigger = boolPart === "true";
+      const isOptional = mods.includes("optional");
+      const triggered = value.val === trigger;
+      const hasReason =
+        value.reason && typeof value.reason === "string" && value.reason.trim().length > 0;
+      if (triggered && !isOptional && !hasReason) {
+        return NextResponse.json(
+          { ok: false, error: "Reason is required for this stream" },
+          { status: 400 },
+        );
+      }
     }
 
     // Look up the case's vc_id (also verifies case exists).

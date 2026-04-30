@@ -53,6 +53,7 @@ const DEFAULT_NAV: NavItem[] = [
   { label: "New Case", href: "/input/cases" },
   { label: "Anesthesia", href: "/input/anesthesia" },
   { label: "OT", href: "/input/ot" },
+  { label: "Med Sup", href: "/input/ms" },
   { label: "Cases", href: "/admin/cases" },
   { label: "Admin", href: "/admin" },
 ];
