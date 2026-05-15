@@ -19,6 +19,7 @@ export function TopNav({ nav }: { nav?: NavItem[] } = {}) {
   const [user, setUser] = useState<UserSummary | null>(null);
   const [pendingCount, setPendingCount] = useState<number>(0);
   const [openIncidentsCount, setOpenIncidentsCount] = useState<number>(0);
+  const [openVcCount, setOpenVcCount] = useState<number>(0);
 
   useEffect(() => {
     fetch("/api/auth/me")
@@ -45,9 +46,24 @@ export function TopNav({ nav }: { nav?: NavItem[] } = {}) {
       .catch(() => undefined);
   }, [user]);
 
+  useEffect(() => {
+    if (!user || !(user.is_super_admin || user.is_sgc_member)) {
+      // VC pipeline is super_admin/sgc/hr/site_med_head only — coarse gate ok
+    }
+    fetch("/api/vc-onboarding/prescreens")
+      .then((r) => r.json())
+      .then((j) => {
+        if (!j.ok) return;
+        const active = (j.rows ?? []).filter((r: { stage: string }) =>
+          ["prescreen","observation","decision"].includes(r.stage)).length;
+        setOpenVcCount(active);
+      })
+      .catch(() => undefined);
+  }, [user]);
+
   const showElo = !!user && (user.is_super_admin || user.is_sgc_member);
   const showAdmin = !!user && user.is_super_admin;
-  const navItems: NavItem[] = nav ?? defaultNav(showElo, showAdmin, pendingCount, openIncidentsCount);
+  const navItems: NavItem[] = nav ?? defaultNav(showElo, showAdmin, pendingCount, openIncidentsCount, openVcCount);
 
   return (
     <header className="bg-white border-b border-stone-200 sticky top-0 z-40">
@@ -92,11 +108,11 @@ export function TopNav({ nav }: { nav?: NavItem[] } = {}) {
   );
 }
 
-function defaultNav(showElo: boolean, showAdmin: boolean, pending: number, openIncidents: number): NavItem[] {
+function defaultNav(showElo: boolean, showAdmin: boolean, pending: number, openIncidents: number, openVc: number): NavItem[] {
   const items: NavItem[] = [
     { label: "Home", href: "/home" },
     { label: "Physicians", href: "/physicians" },
-    { label: "Onboarding", href: "#", pending: true },
+    { label: "Onboarding", href: "/onboarding", badge: openVc || undefined },
     { label: "Incidents", href: "/incidents", badge: openIncidents || undefined },
   ];
   if (showElo) items.push({ label: "Even ELO", href: "/surgical-elo" });

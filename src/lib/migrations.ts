@@ -450,5 +450,39 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_replies_incident ON incident_replies(incident_id, replied_at ASC);
     `,
   },
+
+  // ────────────────────────────────────────────────────────────
+  // EPI.3a — vc_prescreens (PRD §6.2 + locked decision #11/#31)
+  // ────────────────────────────────────────────────────────────
+  {
+    id: "010_vc_prescreens",
+    description: "VC onboarding pre-screen table. Physician row created only on decision='confirm_privileges' in EPI.3c; this table carries prospective email/name/specialty pre-confirmation. 12-month re-invitation cooldown enforced server-side; super_admin can override.",
+    sql: `
+      CREATE TABLE IF NOT EXISTS vc_prescreens (
+        id                       uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        prospective_email        text NOT NULL,
+        prospective_full_name    text NOT NULL,
+        prospective_specialty    text,
+        hospital_id              uuid NOT NULL REFERENCES hospitals(id),
+        years_post_postgraduate  integer,
+        prior_corporate_hospitals text[],
+        commitments_acknowledged jsonb,
+        red_flags                text,
+        decision                 text NOT NULL DEFAULT 'pending' CHECK (decision IN ('pending','invite','reject')),
+        decision_rationale       text,
+        cooldown_override        boolean NOT NULL DEFAULT false,
+        stage                    text NOT NULL DEFAULT 'prescreen' CHECK (stage IN ('prescreen','observation','decision','onboarded','rejected','terminated')),
+        prescreened_by           uuid NOT NULL REFERENCES profiles(id),
+        prescreened_at           timestamptz NOT NULL DEFAULT now(),
+        decided_at               timestamptz,
+        physician_id             uuid REFERENCES physicians(id),
+        created_at               timestamptz NOT NULL DEFAULT now(),
+        updated_at               timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_prescreens_stage    ON vc_prescreens(stage, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_prescreens_email    ON vc_prescreens(lower(prospective_email));
+      CREATE INDEX IF NOT EXISTS idx_prescreens_hospital ON vc_prescreens(hospital_id);
+    `,
+  },
 ];
 
