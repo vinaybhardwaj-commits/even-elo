@@ -115,11 +115,13 @@ export async function POST(req: NextRequest) {
   // Cooldown: refuse new pre-screens for emails rejected within COOLDOWN_MONTHS
   // unless super_admin sets cooldown_override.
   const lowerEmail = String(prospective_email).toLowerCase().trim();
+  // Use INTERVAL '1 month' * N — clean parameterised expression that Neon
+  // tagged templates accept without text concatenation hijinks.
   const recentReject = (await sql`
     SELECT id::text AS id, prescreened_at FROM vc_prescreens
     WHERE lower(prospective_email) = ${lowerEmail}
       AND decision = 'reject'
-      AND prescreened_at > NOW() - (${COOLDOWN_MONTHS} || ' months')::interval
+      AND prescreened_at > NOW() - (INTERVAL '1 month' * ${COOLDOWN_MONTHS})
     ORDER BY prescreened_at DESC LIMIT 1
   `) as Array<{ id: string; prescreened_at: string }>;
   if (recentReject.length > 0) {
