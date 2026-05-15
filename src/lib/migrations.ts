@@ -484,5 +484,33 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_prescreens_hospital ON vc_prescreens(hospital_id);
     `,
   },
+
+  // ────────────────────────────────────────────────────────────
+  // EPI.3b — vc_observation_cases (PRD §6.2 + locked decision #30)
+  // ────────────────────────────────────────────────────────────
+  {
+    id: "011_vc_observation_cases",
+    description: "VC observation cases (3 minimum, max 5). 6-dim scoring jsonb (teamwork/emr_documentation/ot_etiquette/protocol_adherence/outcome/demeanor each 1-5). flag_severity enum (none|concern|immediate_termination_recommended) per PRD.",
+    sql: `
+      CREATE TABLE IF NOT EXISTS vc_observation_cases (
+        id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        prescreen_id      uuid NOT NULL REFERENCES vc_prescreens(id) ON DELETE CASCADE,
+        case_number       integer NOT NULL CHECK (case_number BETWEEN 1 AND 5),
+        case_date         date NOT NULL,
+        procedure         text NOT NULL,
+        observer_role     text NOT NULL,
+        observer_user_id  uuid NOT NULL REFERENCES profiles(id),
+        observer_name     text NOT NULL,
+        scores            jsonb NOT NULL,
+        narrative_notes   text,
+        flag_severity     text NOT NULL DEFAULT 'none' CHECK (flag_severity IN ('none','concern','immediate_termination_recommended')),
+        created_at        timestamptz NOT NULL DEFAULT now(),
+        updated_at        timestamptz NOT NULL DEFAULT now(),
+        UNIQUE (prescreen_id, case_number)
+      );
+      CREATE INDEX IF NOT EXISTS idx_obs_cases_prescreen ON vc_observation_cases(prescreen_id, case_number);
+      CREATE INDEX IF NOT EXISTS idx_obs_cases_flag      ON vc_observation_cases(flag_severity) WHERE flag_severity <> 'none';
+    `,
+  },
 ];
 
