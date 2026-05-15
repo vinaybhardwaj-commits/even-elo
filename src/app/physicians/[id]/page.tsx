@@ -7,6 +7,7 @@ import { TopNav } from "@/components/TopNav";
 import { AddEngagementModal } from "@/components/AddEngagementModal";
 import { AddQualificationModal } from "@/components/AddQualificationModal";
 import { AddPrivilegeModal } from "@/components/AddPrivilegeModal";
+import { MiniLineChart } from "@/components/MiniLineChart";
 
 interface Physician {
   id: string;
@@ -64,6 +65,18 @@ interface Privilege {
   withdrawn_reason: string | null;
 }
 
+interface MetricsRow {
+  hospital_code: string;
+  year: number;
+  month: number;
+  opd_count: number | null;
+  ipd_admissions: number | null;
+  ot_cases: number | null;
+  revenue_inr: number | null;
+  uploaded_at: string;
+  uploaded_by_email: string | null;
+}
+
 interface UserSummary {
   is_super_admin: boolean;
   is_hr: boolean;
@@ -112,7 +125,7 @@ const SECTIONS = [
   { key: "overview", label: "Overview", available: true },
   { key: "engagements", label: "Engagements", available: true },
   { key: "qualifications", label: "Qualifications & privileges", available: true },
-  { key: "metrics", label: "Clinical metrics", available: false, sprint: "EPI.1d" },
+  { key: "metrics", label: "Clinical metrics", available: true },
   { key: "elo", label: "Surgical score · Even ELO", available: false, sprint: "Phase 3" },
   { key: "incidents", label: "Incidents", available: false, sprint: "EPI.2" },
   { key: "feedback", label: "Patient feedback", available: false, sprint: "EPI.4" },
@@ -143,6 +156,7 @@ export default function PhysicianProfilePage() {
   const [quals, setQuals] = useState<Qualification[]>([]);
   const [privs, setPrivs] = useState<Privilege[]>([]);
   const [me, setMe] = useState<UserSummary | null>(null);
+  const [metrics, setMetrics] = useState<MetricsRow[]>([]);
   const [addQual, setAddQual] = useState(false);
   const [addPriv, setAddPriv] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -159,8 +173,9 @@ export default function PhysicianProfilePage() {
       fetch(`/api/physicians/${id}/qualifications`).then((r) => r.json()),
       fetch(`/api/physicians/${id}/privileges`).then((r) => r.json()),
       fetch(`/api/auth/me`).then((r) => r.json()),
+      fetch(`/api/physicians/${id}/clinical-metrics?months=24`).then((r) => r.json()),
     ])
-      .then(([pj, aj, qj, prj, mj]) => {
+      .then(([pj, aj, qj, prj, mj, mxj]) => {
         if (!pj.ok) { setErr(pj.error || "Not found"); return; }
         setPhysician(pj.physician as Physician);
         setEngagements((pj.engagements ?? []) as Engagement[]);
@@ -168,6 +183,7 @@ export default function PhysicianProfilePage() {
         if (qj.ok) setQuals(qj.rows ?? []);
         if (prj.ok) setPrivs(prj.rows ?? []);
         if (mj.ok) setMe(mj.user as UserSummary);
+        if (mxj.ok) setMetrics(mxj.rows ?? []);
       })
       .catch((e) => setErr(e instanceof Error ? e.message : String(e)))
       .finally(() => setLoading(false));
@@ -542,7 +558,86 @@ export default function PhysicianProfilePage() {
             </div>
           )}
 
-          {!["overview", "engagements", "qualifications"].includes(section) && (
+
+          {section === "metrics" && (
+            <div className="space-y-4">
+              {metrics.length === 0 ? (
+                <section className="bg-white border border-stone-200 rounded-xl py-12 text-center">
+                  <div className="text-sm text-stone-700 font-medium">No clinical metrics yet</div>
+                  <div className="text-xs text-stone-500 mt-1">Super-admin uploads monthly CSVs from <Link href="/admin/metrics" className="text-brand font-medium">/admin/metrics</Link>.</div>
+                </section>
+              ) : (
+                (() => {
+                  const byHospital = new Map<string, MetricsRow[]>();
+                  for (const m of metrics) {
+                    const list = byHospital.get(m.hospital_code) ?? [];
+                    list.push(m);
+                    byHospital.set(m.hospital_code, list);
+                  }
+                  return Array.from(byHospital.entries()).map(([code, list]) => {
+                    const sorted = [...list].sort((a, b) => (a.year * 12 + a.month) - (b.year * 12 + b.month));
+                    const labels = sorted.map((m) => `${String(m.month).padStart(2, "0")}/${String(m.year).slice(2)}`);
+                    const series = (key: keyof MetricsRow) =>
+                      sorted.map((m, i) => ({ x: i, y: (m[key] as number | null) ?? null, label: labels[i] }));
+                    const fmt = (n: number | null) => n === null || n === undefined ? "—" : Number(n).toLocaleString("en-IN");
+                    return (
+                      <section key={code} className="bg-white border border-stone-200 rounded-xl">
+                        <div className="px-5 py-3.5 border-b border-stone-100 flex items-center justify-between">
+                          <h2 className="text-sm font-semibold">{code} <span className="text-[11px] text-stone-500 font-normal">· last {sorted.length} months</span></h2>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3 px-5 py-4">
+                          {[
+                            { key: "opd_count" as const, label: "OPD visits", color: "#0f766e" },
+                            { key: "ipd_admissions" as const, label: "IPD admissions", color: "#2563eb" },
+                            { key: "ot_cases" as const, label: "OT cases", color: "#d97706" },
+                            { key: "revenue_inr" as const, label: "Revenue (INR)", color: "#16a34a" },
+                          ].map((m) => {
+                            const last = sorted[sorted.length - 1];
+                            const lastVal = last ? (last[m.key] as number | null) : null;
+                            return (
+                              <div key={m.key} className="bg-stone-50 rounded-lg p-3">
+                                <div className="flex items-baseline justify-between mb-1.5">
+                                  <div className="text-[11px] font-medium text-stone-500 tracking-wider uppercase">{m.label}</div>
+                                  <div className="text-sm font-semibold num">{fmt(lastVal)}</div>
+                                </div>
+                                <MiniLineChart points={series(m.key)} color={m.color} />
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <div className="border-t border-stone-100 px-5 py-3 max-h-[260px] overflow-y-auto">
+                          <table className="w-full text-xs">
+                            <thead>
+                              <tr className="text-stone-500 text-left">
+                                <th className="py-1.5 font-medium">Month</th>
+                                <th className="py-1.5 font-medium text-right">OPD</th>
+                                <th className="py-1.5 font-medium text-right">IPD</th>
+                                <th className="py-1.5 font-medium text-right">OT</th>
+                                <th className="py-1.5 font-medium text-right">Revenue (INR)</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-stone-100">
+                              {[...sorted].reverse().map((m, i) => (
+                                <tr key={i}>
+                                  <td className="py-1.5 num">{String(m.month).padStart(2, "0")}/{m.year}</td>
+                                  <td className="py-1.5 text-right num">{fmt(m.opd_count)}</td>
+                                  <td className="py-1.5 text-right num">{fmt(m.ipd_admissions)}</td>
+                                  <td className="py-1.5 text-right num">{fmt(m.ot_cases)}</td>
+                                  <td className="py-1.5 text-right num">{fmt(m.revenue_inr)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </section>
+                    );
+                  });
+                })()
+              )}
+            </div>
+          )}
+
+          {!["overview", "engagements", "qualifications", "metrics"].includes(section) && (
             <div className="bg-white border border-stone-200 rounded-xl py-16 text-center">
               <div className="text-sm text-stone-500">This section ships in the next sprint.</div>
             </div>

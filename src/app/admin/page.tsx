@@ -30,7 +30,7 @@ export default async function AdminIndex() {
           <h1 className="text-[22px] font-semibold tracking-tight">Admin</h1>
           <div className="text-sm text-stone-500 mt-1">Super-admin tools</div>
         </div>
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <Link href="/admin/pending" className="card bg-white border border-stone-200 rounded-xl p-5 hover:border-stone-300">
             <div className="text-[11px] font-medium text-stone-500 tracking-wider uppercase">Pending approvals</div>
             <div className="num text-3xl font-semibold mt-2">{c.pending}</div>
@@ -45,6 +45,11 @@ export default async function AdminIndex() {
             <div className="text-[11px] font-medium text-stone-500 tracking-wider uppercase">Physicians</div>
             <div className="num text-3xl font-semibold mt-2">{c.physicians}</div>
             <div className="text-[12px] text-brand font-medium mt-2">Roster →</div>
+          </Link>
+          <Link href="/admin/metrics" className="card bg-white border border-stone-200 rounded-xl p-5 hover:border-stone-300">
+            <div className="text-[11px] font-medium text-stone-500 tracking-wider uppercase">Clinical metrics</div>
+            <div className="num text-xl font-semibold mt-2 text-stone-700">CSV upload</div>
+            <div className="text-[12px] text-brand font-medium mt-2">Open uploader →</div>
           </Link>
         </div>
       </main>

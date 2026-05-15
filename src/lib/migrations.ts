@@ -378,5 +378,32 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_audit_v2_time   ON audit_log_v2(created_at DESC);
     `,
   },
+
+  // ────────────────────────────────────────────────────────────
+  // EPI.1d — clinical_metrics_monthly (PRD §6.3 / §7.3)
+  // ────────────────────────────────────────────────────────────
+  {
+    id: "008_clinical_metrics_monthly",
+    description: "Monthly clinical metrics per (physician × hospital × month). Manual CSV upload from /admin/metrics.",
+    sql: `
+      CREATE TABLE IF NOT EXISTS clinical_metrics_monthly (
+        id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        physician_id    uuid NOT NULL REFERENCES physicians(id) ON DELETE CASCADE,
+        hospital_id     uuid NOT NULL REFERENCES hospitals(id),
+        year            integer NOT NULL CHECK (year >= 2020 AND year <= 2100),
+        month           integer NOT NULL CHECK (month BETWEEN 1 AND 12),
+        opd_count       integer,
+        ipd_admissions  integer,
+        ot_cases        integer,
+        revenue_inr     numeric(14,2),
+        uploaded_by     uuid REFERENCES profiles(id),
+        uploaded_at     timestamptz NOT NULL DEFAULT now(),
+        source_file     text,
+        UNIQUE (physician_id, hospital_id, year, month)
+      );
+      CREATE INDEX IF NOT EXISTS idx_metrics_physician ON clinical_metrics_monthly(physician_id, year DESC, month DESC);
+      CREATE INDEX IF NOT EXISTS idx_metrics_hospital  ON clinical_metrics_monthly(hospital_id);
+    `,
+  },
 ];
 
