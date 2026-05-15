@@ -1,0 +1,268 @@
+import { NextRequest, NextResponse } from "next/server";
+import { neon } from "@neondatabase/serverless";
+import { actorFromRequest } from "@/lib/auth";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+export const fetchCache = "force-no-store";
+export const runtime = "nodejs";
+
+const NO_STORE = { "Cache-Control": "no-store, max-age=0" };
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const CATEGORIES = new Set([
+  "clinical", "patient_safety", "medical_error", "professionalism",
+  "documentation", "etiquette", "vendor_compliance", "other",
+]);
+const SEVERITIES = new Set(["low", "medium", "high", "critical"]);
+
+interface IncidentListRow {
+  id: string;
+  target_physician_id: string;
+  target_physician_name: string;
+  target_physician_email: string | null;
+  submitted_at: string;
+  // submitter exposed conditionally: shown for super_admin OR if not anonymous
+  anonymous_flag: boolean;
+  submitter_label: string;  // either submitter_position_at_time + email OR "Anonymous"
+  hospital_code: string | null;
+  category: string;
+  severity: string;
+  narrative_preview: string;
+  status: string;
+  retracted_at: string | null;
+  retraction_reason: string | null;
+  reply_count: number;
+  last_reply_at: string | null;
+}
+
+/**
+ * GET /api/incidents?status=&severity=&category=&physician_id=&limit=
+ *
+ * Returns incidents the caller is permitted to see, with submitter
+ * identity masked (UI-level) when the row is anonymous and the caller
+ * isn't super_admin. Submitter identity is ALWAYS preserved in
+ * audit_log_v2 — this endpoint just decides what the UI displays.
+ *
+ * Visibility:
+ *   - Super_admin sees everything
+ *   - Site Medical Head sees incidents at their hospital (TODO when multi-hospital)
+ *   - The target physician sees incidents about themselves (real-time)
+ *   - Submitters see incidents they submitted
+ *   - Others see nothing
+ */
+export async function GET(req: NextRequest) {
+  let actor;
+  try { actor = await actorFromRequest(); }
+  catch { return NextResponse.json({ ok: false, error: "Unauthenticated" }, { status: 401, headers: NO_STORE }); }
+
+  const url = process.env.DATABASE_URL;
+  if (!url) return NextResponse.json({ ok: false, error: "DATABASE_URL not configured" }, { status: 500, headers: NO_STORE });
+  const sql = neon(url);
+
+  // Caller's flags (re-read in case JWT is stale)
+  const meRows = (await sql`
+    SELECT email, is_super_admin, is_site_medical_head FROM profiles WHERE id = ${actor.profileId}::uuid
+  `) as Array<{ email: string; is_super_admin: boolean; is_site_medical_head: boolean }>;
+  if (meRows.length === 0) return NextResponse.json({ ok: false, error: "no profile" }, { status: 401, headers: NO_STORE });
+  const me = meRows[0];
+
+  // Map caller's email to physicians.id (if any) for self-view of incidents-about-me
+  const myPhys = (await sql`SELECT id::text AS id FROM physicians WHERE lower(email) = ${me.email.toLowerCase()} LIMIT 1`) as Array<{ id: string }>;
+  const myPhysicianId = myPhys[0]?.id ?? null;
+
+  const params = req.nextUrl.searchParams;
+  const status = (params.get("status") ?? "").trim();
+  const severity = (params.get("severity") ?? "").trim();
+  const category = (params.get("category") ?? "").trim();
+  const physician_id = (params.get("physician_id") ?? "").trim();
+  const limit = Math.min(500, Math.max(1, parseInt(params.get("limit") ?? "100", 10) || 100));
+
+  // Compose WHERE: visibility predicate + filters
+  // Use a single tagged-template call. The visibility predicate is encoded as:
+  //   is_super_admin OR target=me OR submitter=me
+  const rows = (await sql`
+    WITH incl AS (
+      SELECT
+        i.id::text AS id,
+        i.target_physician_id::text AS target_physician_id,
+        ph.full_name AS target_physician_name,
+        ph.email AS target_physician_email,
+        i.submitted_at,
+        i.anonymous_flag,
+        i.submitter_user_id::text AS submitter_user_id,
+        sp.email AS submitter_email,
+        i.submitter_position_at_time,
+        h.code AS hospital_code,
+        i.category,
+        i.severity,
+        i.narrative,
+        i.status,
+        i.retracted_at,
+        i.retraction_reason,
+        (SELECT COUNT(*)::int FROM incident_replies r WHERE r.incident_id = i.id) AS reply_count,
+        (SELECT MAX(r.replied_at) FROM incident_replies r WHERE r.incident_id = i.id) AS last_reply_at
+      FROM incidents i
+      JOIN physicians ph ON ph.id = i.target_physician_id
+      LEFT JOIN hospitals h ON h.id = i.hospital_id
+      LEFT JOIN profiles sp ON sp.id = i.submitter_user_id
+      WHERE
+        (
+          ${me.is_super_admin}
+          OR i.submitter_user_id = ${actor.profileId}::uuid
+          OR (${myPhysicianId ?? ''} <> '' AND i.target_physician_id = ${myPhysicianId ?? '00000000-0000-0000-0000-000000000000'}::uuid)
+        )
+        AND (${status} = '' OR i.status = ${status})
+        AND (${severity} = '' OR i.severity = ${severity})
+        AND (${category} = '' OR i.category = ${category})
+        AND (${physician_id} = '' OR i.target_physician_id = ${physician_id || '00000000-0000-0000-0000-000000000000'}::uuid)
+      ORDER BY i.submitted_at DESC
+      LIMIT ${limit}
+    )
+    SELECT * FROM incl
+  `) as Array<Record<string, unknown>>;
+
+  const out: IncidentListRow[] = rows.map((r) => {
+    const isMine = r.submitter_user_id === actor.profileId;
+    const showSubmitter = me.is_super_admin || isMine || !r.anonymous_flag;
+    return {
+      id: r.id as string,
+      target_physician_id: r.target_physician_id as string,
+      target_physician_name: r.target_physician_name as string,
+      target_physician_email: (r.target_physician_email as string | null) ?? null,
+      submitted_at: r.submitted_at as string,
+      anonymous_flag: Boolean(r.anonymous_flag),
+      submitter_label: showSubmitter
+        ? `${(r.submitter_position_at_time as string) ?? ""}${r.submitter_email ? ` · ${r.submitter_email}` : ""}`
+        : "Anonymous",
+      hospital_code: (r.hospital_code as string | null) ?? null,
+      category: r.category as string,
+      severity: r.severity as string,
+      narrative_preview: ((r.narrative as string) ?? "").slice(0, 240),
+      status: r.status as string,
+      retracted_at: (r.retracted_at as string | null) ?? null,
+      retraction_reason: (r.retraction_reason as string | null) ?? null,
+      reply_count: Number(r.reply_count ?? 0),
+      last_reply_at: (r.last_reply_at as string | null) ?? null,
+    };
+  });
+
+  // Counts for the inbox header (status × severity)
+  const counts = (await sql`
+    SELECT status, severity, COUNT(*)::int AS n
+    FROM incidents i
+    WHERE (
+      ${me.is_super_admin}
+      OR i.submitter_user_id = ${actor.profileId}::uuid
+      OR (${myPhysicianId ?? ''} <> '' AND i.target_physician_id = ${myPhysicianId ?? '00000000-0000-0000-0000-000000000000'}::uuid)
+    )
+    GROUP BY status, severity
+  `) as Array<{ status: string; severity: string; n: number }>;
+
+  return NextResponse.json({ ok: true, rows: out, counts, total: out.length }, { headers: NO_STORE });
+}
+
+/**
+ * POST /api/incidents  — submit a new incident
+ *
+ * Body: { target_physician_id, anonymous_flag, category, severity, narrative,
+ *         evidence_urls?, attestation }
+ *
+ * Identity is ALWAYS recorded: submitter_user_id (from JWT) + IP +
+ * submitter_position_at_time (from JWT). The anonymous_flag only affects
+ * UI display; audit_log_v2 always sees the real submitter.
+ */
+export async function POST(req: NextRequest) {
+  let actor;
+  try { actor = await actorFromRequest(); }
+  catch { return NextResponse.json({ ok: false, error: "Unauthenticated" }, { status: 401, headers: NO_STORE }); }
+
+  const body = await req.json();
+  const {
+    target_physician_id,
+    anonymous_flag,
+    category,
+    severity,
+    narrative,
+    evidence_urls,
+    attestation,
+  } = body ?? {};
+
+  if (!attestation) {
+    return NextResponse.json({ ok: false, error: "attestation required" }, { status: 400, headers: NO_STORE });
+  }
+  if (!target_physician_id || !UUID_RE.test(target_physician_id)) {
+    return NextResponse.json({ ok: false, error: "valid target_physician_id required" }, { status: 400, headers: NO_STORE });
+  }
+  if (!category || !CATEGORIES.has(category)) {
+    return NextResponse.json({ ok: false, error: "category must be one of the 8 allowed" }, { status: 400, headers: NO_STORE });
+  }
+  if (!severity || !SEVERITIES.has(severity)) {
+    return NextResponse.json({ ok: false, error: "severity must be low|medium|high|critical" }, { status: 400, headers: NO_STORE });
+  }
+  if (!narrative || typeof narrative !== "string" || !narrative.trim()) {
+    return NextResponse.json({ ok: false, error: "narrative required" }, { status: 400, headers: NO_STORE });
+  }
+  const urls: string[] = Array.isArray(evidence_urls)
+    ? evidence_urls.filter((u: unknown) => typeof u === "string" && (u as string).trim().length > 0).slice(0, 10)
+    : [];
+
+  const url = process.env.DATABASE_URL;
+  if (!url) return NextResponse.json({ ok: false, error: "DATABASE_URL not configured" }, { status: 500, headers: NO_STORE });
+  const sql = neon(url);
+
+  // Look up the target physician + assign hospital_id from their first active engagement (if any)
+  const ph = (await sql`
+    SELECT
+      p.id::text AS id,
+      p.full_name,
+      (SELECT e.hospital_id::text FROM physician_engagements e WHERE e.physician_id = p.id AND e.status='active' ORDER BY e.start_date DESC LIMIT 1) AS hospital_id
+    FROM physicians p WHERE p.id = ${target_physician_id}::uuid
+  `) as Array<{ id: string; full_name: string; hospital_id: string | null }>;
+  if (ph.length === 0) return NextResponse.json({ ok: false, error: "target_physician not found" }, { status: 404, headers: NO_STORE });
+
+  // Best-effort IP from x-forwarded-for; if behind a proxy chain take the first
+  const xff = req.headers.get("x-forwarded-for") ?? "";
+  const ip = xff.split(",")[0].trim() || null;
+
+  const inserted = (await sql`
+    INSERT INTO incidents (
+      target_physician_id, submitted_from_ip, submitter_user_id, submitter_position_at_time,
+      anonymous_flag, hospital_id, category, severity, narrative, evidence_urls
+    ) VALUES (
+      ${target_physician_id}::uuid,
+      ${ip},
+      ${actor.profileId}::uuid,
+      ${actor.position_label},
+      ${Boolean(anonymous_flag)},
+      ${ph[0].hospital_id}::uuid,
+      ${category},
+      ${severity},
+      ${String(narrative).trim()},
+      ${urls.length > 0 ? urls : null}
+    )
+    RETURNING id::text AS id, target_physician_id::text AS target_physician_id, submitted_at, anonymous_flag, category, severity, status
+  `) as Array<Record<string, unknown>>;
+
+  // Audit row — captures the REAL submitter identity even for anonymous incidents
+  await sql`
+    INSERT INTO audit_log_v2 (actor_user_id, actor_ip, action, entity_type, entity_id, after_json)
+    VALUES (
+      ${actor.profileId}::uuid,
+      ${ip},
+      'create',
+      'incident',
+      ${inserted[0].id as string},
+      ${JSON.stringify({
+        physician_id: target_physician_id,
+        target_physician_name: ph[0].full_name,
+        anonymous_flag: Boolean(anonymous_flag),
+        category,
+        severity,
+        submitter_email: actor.email,
+        submitter_position: actor.position_label,
+      })}::jsonb
+    )
+  `;
+  return NextResponse.json({ ok: true, incident: inserted[0] }, { headers: NO_STORE });
+}

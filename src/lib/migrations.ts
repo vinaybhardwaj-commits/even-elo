@@ -405,5 +405,50 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_metrics_hospital  ON clinical_metrics_monthly(hospital_id);
     `,
   },
+
+  // ────────────────────────────────────────────────────────────
+  // EPI.2a — incidents + incident_replies (PRD §6.4 + locked §E.4)
+  // ────────────────────────────────────────────────────────────
+  {
+    id: "009_incidents",
+    description: "Incident submission + right-of-reply tables. 8 categories per locked decision #20; severity submitter-set with super-admin re-classify; anonymous flag with audit-log-only identity disclosure per #19.",
+    sql: `
+      CREATE TABLE IF NOT EXISTS incidents (
+        id                          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        target_physician_id         uuid NOT NULL REFERENCES physicians(id),
+        submitted_at                timestamptz NOT NULL DEFAULT now(),
+        submitted_from_ip           text,
+        submitter_user_id           uuid NOT NULL REFERENCES profiles(id),
+        submitter_position_at_time  text NOT NULL,
+        anonymous_flag              boolean NOT NULL DEFAULT false,
+        hospital_id                 uuid REFERENCES hospitals(id),
+        category                    text NOT NULL CHECK (category IN (
+          'clinical','patient_safety','medical_error','professionalism',
+          'documentation','etiquette','vendor_compliance','other'
+        )),
+        severity                    text NOT NULL CHECK (severity IN ('low','medium','high','critical')),
+        narrative                   text NOT NULL,
+        evidence_urls               text[],
+        status                      text NOT NULL DEFAULT 'open' CHECK (status IN ('open','closed','retracted')),
+        retracted_by                uuid REFERENCES profiles(id),
+        retracted_at                timestamptz,
+        retraction_reason           text,
+        created_at                  timestamptz NOT NULL DEFAULT now(),
+        updated_at                  timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_incidents_target   ON incidents(target_physician_id, submitted_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_incidents_status   ON incidents(status, submitted_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_incidents_submitter ON incidents(submitter_user_id);
+
+      CREATE TABLE IF NOT EXISTS incident_replies (
+        id                       uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        incident_id              uuid NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
+        replied_by_profile_id    uuid NOT NULL REFERENCES profiles(id),
+        reply_text               text NOT NULL,
+        replied_at               timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_replies_incident ON incident_replies(incident_id, replied_at ASC);
+    `,
+  },
 ];
 
