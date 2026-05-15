@@ -124,11 +124,13 @@ export async function POST(req: NextRequest) {
       AND decision = 'reject'
       AND prescreened_at > ${cutoff}::timestamptz
     ORDER BY prescreened_at DESC LIMIT 1
-  `) as Array<{ id: string; prescreened_at: string }>;
+  `) as Array<{ id: string; prescreened_at: string | Date }>;
   if (recentReject.length > 0) {
+    const rejAt = recentReject[0].prescreened_at;
+    const rejDateStr = (rejAt instanceof Date ? rejAt.toISOString() : String(rejAt)).slice(0, 10);
     if (!cooldown_override) {
       return NextResponse.json(
-        { ok: false, error: `Email is within ${COOLDOWN_MONTHS}-month cooldown after prior reject on ${(recentReject[0].prescreened_at as string).slice(0, 10)}. Set cooldown_override=true (super_admin only) to bypass.`, prior_reject_id: recentReject[0].id },
+        { ok: false, error: `Email is within ${COOLDOWN_MONTHS}-month cooldown after prior reject on ${rejDateStr}. Set cooldown_override=true (super_admin only) to bypass.`, prior_reject_id: recentReject[0].id },
         { status: 409, headers: NO_STORE },
       );
     }
