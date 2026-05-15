@@ -1,17 +1,25 @@
 /**
- * Position state — stored in localStorage, read by client components when
- * stamping observation/case writes.
+ * Position helpers (EPI.0b).
  *
- * Storage key: `even_elo_position`. Value: full position name string
- * (e.g., "Customer Care Lead").
+ * v1 stored the current position in localStorage via a chip-picker. EPI.0b
+ * derives position from the auth JWT instead. The login route sets two
+ * cookies:
+ *   epi_session  (httpOnly) — JWT for server verification
+ *   epi_position (readable) — current position label for client display
  *
- * Server components / API routes never read localStorage; they accept the
- * position via request body or query param.
+ * This file keeps the same exported names (`getCurrentPosition`, etc.) so
+ * v1 ELO pages that import them still type-check and run. Functions that
+ * used to mutate localStorage are now no-ops; auth is the source of truth.
+ *
+ * After EPI.0b's server-side refactor (task 28), the position label sent
+ * from client pages in write requests is IGNORED — the server uses the
+ * JWT. Client-side display can still read it via getCurrentPosition() for
+ * "Stamped as:" labels.
  */
 
-export const STORAGE_KEY = "even_elo_position";
+const POSITION_COOKIE = "epi_position";
 
-/** Hardcoded seed positions — must match migration 003_seed_positions. */
+/** v1 catalogue retained for components that render position lists. */
 export interface PositionSeed {
   name: string;
   team: string;
@@ -30,40 +38,42 @@ export const POSITION_SEEDS: PositionSeed[] = [
   { name: "Committee Admin",         team: "Admin",      description: "Roster, weights, stream config" },
 ];
 
+function readCookie(name: string): string | null {
+  if (typeof document === "undefined") return null;
+  const parts = document.cookie.split(";");
+  for (const p of parts) {
+    const [k, ...v] = p.trim().split("=");
+    if (k === name) return decodeURIComponent(v.join("="));
+  }
+  return null;
+}
+
+/** Returns the current user's position label from the readable cookie. */
 export function getCurrentPosition(): string | null {
-  if (typeof window === "undefined") return null;
-  return window.localStorage.getItem(STORAGE_KEY);
+  return readCookie(POSITION_COOKIE);
 }
 
-export const POSITION_CHANGE_EVENT = "even-elo-position-changed";
-
-export function setCurrentPosition(name: string): void {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(STORAGE_KEY, name);
-  window.dispatchEvent(new CustomEvent(POSITION_CHANGE_EVENT, { detail: name }));
+/** No-op — auth is the source of truth. Kept for back-compat. */
+export function setCurrentPosition(_name: string): void {
+  // intentionally empty
 }
 
+/** No-op — logout clears via /api/auth/logout. */
 export function clearCurrentPosition(): void {
-  if (typeof window === "undefined") return;
-  window.localStorage.removeItem(STORAGE_KEY);
-  window.dispatchEvent(new CustomEvent(POSITION_CHANGE_EVENT, { detail: null }));
+  // intentionally empty
 }
+
+export const POSITION_CHANGE_EVENT = "epi-position-changed";
 
 /**
- * React hook helper — subscribe to position changes across the app.
- * Listens to both same-tab CustomEvents (PositionChip dispatch) and
- * cross-tab `storage` events.
+ * Subscribe to position changes. Fires once on mount with the current value.
+ * Returns an unsubscribe function. Auth flows (login/logout) trigger a full
+ * page navigation so we don't need to poll cookies in practice.
  */
 export function onPositionChange(handler: (name: string | null) => void): () => void {
   if (typeof window === "undefined") return () => {};
-  const onCustom = (e: Event) => handler(((e as CustomEvent).detail ?? null) as string | null);
-  const onStorage = (e: StorageEvent) => {
-    if (e.key === STORAGE_KEY) handler(e.newValue);
-  };
-  window.addEventListener(POSITION_CHANGE_EVENT, onCustom);
-  window.addEventListener("storage", onStorage);
-  return () => {
-    window.removeEventListener(POSITION_CHANGE_EVENT, onCustom);
-    window.removeEventListener("storage", onStorage);
-  };
+  handler(getCurrentPosition());
+  return () => {};
 }
+
+export const STORAGE_KEY = POSITION_COOKIE;

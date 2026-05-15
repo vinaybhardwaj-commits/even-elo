@@ -75,7 +75,16 @@ export async function GET(req: NextRequest) {
 /** POST /api/cases — create new case via continuous entry. */
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
+        // EPI.0b — actor identity from JWT (server-side authoritative)
+    let _actor;
+    try {
+      const { actorFromRequest } = await import("@/lib/auth");
+      _actor = await actorFromRequest();
+    } catch {
+      return NextResponse.json({ ok: false, error: "Unauthenticated" }, { status: 401 });
+    }
+    const entered_by_position = _actor.position_label;
+const body = await req.json();
     const {
       vc_id,
       surgery_date,
@@ -83,7 +92,7 @@ export async function POST(req: NextRequest) {
       patient_name,
       patient_mrn,
       notes,
-      entered_by_position,
+      _unused_entered_by_position: _,
     } = body ?? {};
 
     if (!vc_id || !UUID_RE.test(vc_id)) {

@@ -26,8 +26,17 @@ export async function GET() {
 /** PATCH /api/positions — edit description by position_name */
 export async function PATCH(req: NextRequest) {
   try {
-    const body = await req.json();
-    const { position_name, description, actor_position } = body ?? {};
+        // EPI.0b — actor identity from JWT (server-side authoritative)
+    let _actor;
+    try {
+      const { actorFromRequest } = await import("@/lib/auth");
+      _actor = await actorFromRequest();
+    } catch {
+      return NextResponse.json({ ok: false, error: "Unauthenticated" }, { status: 401 });
+    }
+    const actor_position = _actor.position_label;
+const body = await req.json();
+    const { position_name, description, _unused_actor_position: _ } = body ?? {};
 
     if (!position_name || typeof position_name !== "string") {
       return NextResponse.json({ ok: false, error: "position_name required" }, { status: 400 });

@@ -39,7 +39,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "invalid vc UUID" }, { status: 400 });
   }
 
-  let triggered_by_position = "Committee Admin";
+  // EPI.0b — actor from JWT
+  let _actor;
+  try {
+    const { actorFromRequest } = await import("@/lib/auth");
+    _actor = await actorFromRequest();
+  } catch {
+    return NextResponse.json({ ok: false, error: "Unauthenticated" }, { status: 401 });
+  }
+  let triggered_by_position = _actor.position_label;
   let trigger: RecomputeInput["trigger"] = "manual";
   try {
     const body = await req.json();

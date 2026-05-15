@@ -25,8 +25,17 @@ export async function GET(req: NextRequest) {
 /** POST /api/vcs — create new VC */
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const { full_name, specialty, registration_no, notes, created_by_position } = body ?? {};
+        // EPI.0b — actor identity from JWT (server-side authoritative)
+    let _actor;
+    try {
+      const { actorFromRequest } = await import("@/lib/auth");
+      _actor = await actorFromRequest();
+    } catch {
+      return NextResponse.json({ ok: false, error: "Unauthenticated" }, { status: 401 });
+    }
+    const created_by_position = _actor.position_label;
+const body = await req.json();
+    const { full_name, specialty, registration_no, notes, _unused_created_by_position: _ } = body ?? {};
 
     if (!full_name || typeof full_name !== "string" || !full_name.trim()) {
       return NextResponse.json({ ok: false, error: "full_name required" }, { status: 400 });

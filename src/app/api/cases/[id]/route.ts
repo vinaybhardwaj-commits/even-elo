@@ -39,7 +39,16 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
 /** PATCH /api/cases/[id] — change status (void / cancel) or update fields. */
 export async function PATCH(req: NextRequest, { params }: RouteParams) {
   try {
-    if (!UUID_RE.test(params.id)) {
+        // EPI.0b — actor identity from JWT (server-side authoritative)
+    let _actor;
+    try {
+      const { actorFromRequest } = await import("@/lib/auth");
+      _actor = await actorFromRequest();
+    } catch {
+      return NextResponse.json({ ok: false, error: "Unauthenticated" }, { status: 401 });
+    }
+    const actor_position = _actor.position_label;
+if (!UUID_RE.test(params.id)) {
       return NextResponse.json({ ok: false, error: "invalid id" }, { status: 400 });
     }
     const body = await req.json();
@@ -51,7 +60,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       surgery_date,
       los_days,
       notes,
-      actor_position,
+      _unused_actor_position: _,
     } = body ?? {};
 
     if (!actor_position || typeof actor_position !== "string") {
@@ -140,7 +149,15 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
     if (!UUID_RE.test(params.id)) {
       return NextResponse.json({ ok: false, error: "invalid id" }, { status: 400 });
     }
-    const actor_position = req.nextUrl.searchParams.get("actor_position");
+    // EPI.0b — actor from JWT
+    let _actor2;
+    try {
+      const { actorFromRequest } = await import("@/lib/auth");
+      _actor2 = await actorFromRequest();
+    } catch {
+      return NextResponse.json({ ok: false, error: "Unauthenticated" }, { status: 401 });
+    }
+    const actor_position = _actor2.position_label;
     if (!actor_position) {
       return NextResponse.json(
         { ok: false, error: "actor_position query param required" },

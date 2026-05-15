@@ -1,14 +1,25 @@
 import { redirect } from "next/navigation";
+import { getCurrentUser } from "@/lib/auth";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+export const fetchCache = "force-no-store";
+export const runtime = "nodejs";
 
 /**
- * Root route — EPI.0a.
+ * Root route — EPI.0b.
  *
- * v1's leaderboard lives at `/surgical-elo` now. Until EPI.0b ships the new
- * Dashboard home at `/home`, the root redirects to the v1 ELO leaderboard.
+ * Auth-conditional redirect:
+ *   logged-in (active) → /home
+ *   anything else      → /auth/login
  *
- * EPI.0b will replace this with an auth-conditional redirect:
- *   logged-in → /home, logged-out → /auth/login.
+ * Middleware also enforces this for protected routes, but redirecting from /
+ * directly is faster + avoids a flash.
  */
-export default function RootRedirect() {
-  redirect("/surgical-elo");
+export default async function RootRedirect() {
+  const user = await getCurrentUser();
+  if (user && user.status === "active") {
+    redirect("/home");
+  }
+  redirect("/auth/login");
 }

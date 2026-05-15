@@ -41,8 +41,17 @@ interface PreviewedRow {
  */
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const { mode, rows, entered_by_position } = body ?? {};
+        // EPI.0b — actor identity from JWT (server-side authoritative)
+    let _actor;
+    try {
+      const { actorFromRequest } = await import("@/lib/auth");
+      _actor = await actorFromRequest();
+    } catch {
+      return NextResponse.json({ ok: false, error: "Unauthenticated" }, { status: 401 });
+    }
+    const entered_by_position = _actor.position_label;
+const body = await req.json();
+    const { mode, rows, _unused_entered_by_position: _ } = body ?? {};
 
     if (!entered_by_position || typeof entered_by_position !== "string") {
       return NextResponse.json(
