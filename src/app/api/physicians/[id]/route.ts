@@ -107,3 +107,26 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
   `;
   return NextResponse.json({ ok: true, physician: after[0] }, { headers: NO_STORE });
 }
+
+export async function DELETE(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const { id } = await ctx.params;
+  if (!UUID_RE.test(id)) return NextResponse.json({ ok: false, error: "invalid id" }, { status: 400, headers: NO_STORE });
+
+  let actor;
+  try { actor = await actorFromRequest(); }
+  catch { return NextResponse.json({ ok: false, error: "Unauthenticated" }, { status: 401, headers: NO_STORE }); }
+
+  const url = process.env.DATABASE_URL;
+  if (!url) return NextResponse.json({ ok: false, error: "DATABASE_URL not configured" }, { status: 500, headers: NO_STORE });
+  const sql = neon(url);
+
+  const before = (await sql`SELECT * FROM physicians WHERE id = ${id}::uuid`) as Array<Record<string, unknown>>;
+  if (before.length === 0) return NextResponse.json({ ok: false, error: "not found" }, { status: 404, headers: NO_STORE });
+
+  await sql`UPDATE physicians SET current_status = 'terminated', updated_at = NOW() WHERE id = ${id}::uuid`;
+  await sql`
+    INSERT INTO audit_log_v2 (actor_user_id, action, entity_type, entity_id, before_json, after_json)
+    VALUES (${actor.profileId}::uuid, 'delete', 'physician', ${id}, ${JSON.stringify(before[0])}::jsonb, ${JSON.stringify({ current_status: 'terminated' })}::jsonb)
+  `;
+  return NextResponse.json({ ok: true }, { headers: NO_STORE });
+}
