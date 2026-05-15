@@ -216,9 +216,10 @@ export async function POST(req: NextRequest) {
     SELECT
       p.id::text AS id,
       p.full_name,
+      p.email,
       (SELECT e.hospital_id::text FROM physician_engagements e WHERE e.physician_id = p.id AND e.status='active' ORDER BY e.start_date DESC LIMIT 1) AS hospital_id
     FROM physicians p WHERE p.id = ${target_physician_id}::uuid
-  `) as Array<{ id: string; full_name: string; hospital_id: string | null }>;
+  `) as Array<{ id: string; full_name: string; email: string | null; hospital_id: string | null }>;
   if (ph.length === 0) return NextResponse.json({ ok: false, error: "target_physician not found" }, { status: 404, headers: NO_STORE });
 
   // Best-effort IP from x-forwarded-for; if behind a proxy chain take the first
@@ -264,5 +265,19 @@ export async function POST(req: NextRequest) {
       })}::jsonb
     )
   `;
+  // EPI.2c — email send-stub. Resend integration is deferred to v1.x per
+  // locked decision. For now, log the would-be email to Vercel runtime so
+  // the post-submit notification path is exercised + observable.
+  console.log(JSON.stringify({
+    epi_email_stub: "incident_notification",
+    incident_id: inserted[0].id,
+    target_physician_id,
+    target_physician_email: ph[0].email,
+    severity,
+    category,
+    anonymous_flag: Boolean(anonymous_flag),
+    submitted_at: new Date().toISOString(),
+  }));
+
   return NextResponse.json({ ok: true, incident: inserted[0] }, { headers: NO_STORE });
 }

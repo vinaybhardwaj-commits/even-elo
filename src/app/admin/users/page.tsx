@@ -17,6 +17,8 @@ interface ProfileRow {
   hospital_code: string;
   last_login_at: string | null;
   created_at: string;
+  submitted_count: number;
+  retracted_count: number;
 }
 
 const STATUS_PILL: Record<string, string> = {
@@ -137,15 +139,16 @@ export default function UsersPage() {
                 <th className="px-4 py-3">Position</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Roles</th>
+                <th className="px-4 py-3">Reports</th>
                 <th className="px-4 py-3">Last login</th>
                 <th className="px-4 py-3 w-44">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-stone-100">
               {loading ? (
-                <tr><td colSpan={6} className="px-4 py-12 text-center text-sm text-stone-500">Loading…</td></tr>
+                <tr><td colSpan={7} className="px-4 py-12 text-center text-sm text-stone-500">Loading…</td></tr>
               ) : rows.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-12 text-center text-sm text-stone-500">No users in this filter.</td></tr>
+                <tr><td colSpan={7} className="px-4 py-12 text-center text-sm text-stone-500">No users in this filter.</td></tr>
               ) : rows.map((r) => (
                 <tr key={r.id} className="hover:bg-stone-50">
                   <td className="px-4 py-3">
@@ -188,6 +191,18 @@ export default function UsersPage() {
                         </button>
                       ))}
                     </div>
+                  </td>
+                  <td className="px-4 py-3 text-xs">
+                    {r.submitted_count > 0 ? (
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${
+                        r.retracted_count > 0 ? "bg-amber-50 text-amber-800" : "bg-stone-100 text-stone-700"
+                      }`} title={`${r.retracted_count} retracted of ${r.submitted_count} submitted`}>
+                        {r.retracted_count}/{r.submitted_count}
+                        {r.retracted_count > 0 ? " retracted" : ""}
+                      </span>
+                    ) : (
+                      <span className="text-stone-400">—</span>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-xs text-stone-500 num">
                     {r.last_login_at ? new Date(r.last_login_at).toISOString().slice(0, 10) : "never"}

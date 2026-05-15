@@ -65,6 +65,20 @@ interface Privilege {
   withdrawn_reason: string | null;
 }
 
+interface IncidentRow {
+  id: string;
+  submitted_at: string;
+  anonymous_flag: boolean;
+  submitter_label: string;
+  category: string;
+  severity: string;
+  narrative_preview: string;
+  status: string;
+  retracted_at: string | null;
+  retraction_reason: string | null;
+  reply_count: number;
+}
+
 interface MetricsRow {
   hospital_code: string;
   year: number;
@@ -127,7 +141,7 @@ const SECTIONS = [
   { key: "qualifications", label: "Qualifications & privileges", available: true },
   { key: "metrics", label: "Clinical metrics", available: true },
   { key: "elo", label: "Surgical score · Even ELO", available: false, sprint: "Phase 3" },
-  { key: "incidents", label: "Incidents", available: false, sprint: "EPI.2" },
+  { key: "incidents", label: "Incidents", available: true },
   { key: "feedback", label: "Patient feedback", available: false, sprint: "EPI.4" },
 ] as const;
 
@@ -157,6 +171,7 @@ export default function PhysicianProfilePage() {
   const [privs, setPrivs] = useState<Privilege[]>([]);
   const [me, setMe] = useState<UserSummary | null>(null);
   const [metrics, setMetrics] = useState<MetricsRow[]>([]);
+  const [incidentsList, setIncidentsList] = useState<IncidentRow[]>([]);
   const [addQual, setAddQual] = useState(false);
   const [addPriv, setAddPriv] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -174,8 +189,9 @@ export default function PhysicianProfilePage() {
       fetch(`/api/physicians/${id}/privileges`).then((r) => r.json()),
       fetch(`/api/auth/me`).then((r) => r.json()),
       fetch(`/api/physicians/${id}/clinical-metrics?months=24`).then((r) => r.json()),
+      fetch(`/api/incidents?physician_id=${id}&limit=100`).then((r) => r.json()),
     ])
-      .then(([pj, aj, qj, prj, mj, mxj]) => {
+      .then(([pj, aj, qj, prj, mj, mxj, inj]) => {
         if (!pj.ok) { setErr(pj.error || "Not found"); return; }
         setPhysician(pj.physician as Physician);
         setEngagements((pj.engagements ?? []) as Engagement[]);
@@ -184,6 +200,7 @@ export default function PhysicianProfilePage() {
         if (prj.ok) setPrivs(prj.rows ?? []);
         if (mj.ok) setMe(mj.user as UserSummary);
         if (mxj.ok) setMetrics(mxj.rows ?? []);
+        if (inj.ok) setIncidentsList(inj.rows ?? []);
       })
       .catch((e) => setErr(e instanceof Error ? e.message : String(e)))
       .finally(() => setLoading(false));
@@ -637,7 +654,76 @@ export default function PhysicianProfilePage() {
             </div>
           )}
 
-          {!["overview", "engagements", "qualifications", "metrics"].includes(section) && (
+
+          {section === "incidents" && (
+            <section className="bg-white border border-stone-200 rounded-xl">
+              <div className="px-5 py-3.5 border-b border-stone-100 flex items-center justify-between">
+                <h2 className="text-sm font-semibold">
+                  Incidents <span className="text-[11px] bg-stone-100 text-stone-600 rounded-full px-2 py-0.5 font-medium ml-1">{incidentsList.length}</span>
+                </h2>
+                <Link href={`/incidents/new?target=${id}`} className="text-[12px] text-brand font-medium">+ Report an incident</Link>
+              </div>
+              {incidentsList.length === 0 ? (
+                <div className="px-5 py-12 text-center text-sm text-stone-500">
+                  No incidents on this physician.
+                </div>
+              ) : (
+                <div className="divide-y divide-stone-100">
+                  {incidentsList.map((r) => {
+                    const sevPill: Record<string, string> = {
+                      low: "bg-stone-100 text-stone-700",
+                      medium: "bg-amber-50 text-amber-800",
+                      high: "bg-orange-50 text-orange-800",
+                      critical: "bg-red-50 text-red-800",
+                    };
+                    const statusPill: Record<string, string> = {
+                      open: "bg-emerald-50 text-emerald-700",
+                      closed: "bg-stone-100 text-stone-600",
+                      retracted: "bg-red-50 text-red-700",
+                    };
+                    const catLabel: Record<string, string> = {
+                      clinical: "Clinical", patient_safety: "Patient safety", medical_error: "Medical error",
+                      professionalism: "Professionalism", documentation: "Documentation",
+                      etiquette: "Etiquette", vendor_compliance: "Vendor compliance", other: "Other",
+                    };
+                    const isRetracted = r.status === "retracted";
+                    return (
+                      <Link
+                        key={r.id}
+                        href={`/incidents/${r.id}`}
+                        className={`block px-5 py-4 hover:bg-stone-50 ${isRetracted ? "opacity-70" : ""}`}
+                      >
+                        <div className="flex items-start gap-3">
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${sevPill[r.severity] ?? "bg-stone-100 text-stone-700"}`}>
+                            {r.severity}
+                          </span>
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${statusPill[r.status] ?? "bg-stone-100 text-stone-700"}`}>
+                            {r.status}
+                          </span>
+                          <span className="text-[11px] text-stone-500 px-2 py-0.5 rounded-full bg-stone-50">
+                            {catLabel[r.category] ?? r.category}
+                          </span>
+                          <div className="flex-1 min-w-0">
+                            <div className={`text-sm font-medium ${isRetracted ? "line-through text-stone-500" : "text-stone-900"}`}>
+                              {r.anonymous_flag ? "Anonymous submission" : (r.submitter_label || "Submitter")}
+                            </div>
+                            <div className="text-xs text-stone-500 mt-0.5 truncate">{r.narrative_preview}</div>
+                            <div className="text-[11px] text-stone-400 mt-1">
+                              {timeAgo(r.submitted_at)}
+                              {r.reply_count > 0 ? ` · ${r.reply_count} ${r.reply_count === 1 ? "reply" : "replies"}` : ""}
+                              {isRetracted && r.retraction_reason ? ` · retracted: ${r.retraction_reason}` : ""}
+                            </div>
+                          </div>
+                        </div>
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          )}
+
+          {!["overview", "engagements", "qualifications", "metrics", "incidents"].includes(section) && (
             <div className="bg-white border border-stone-200 rounded-xl py-16 text-center">
               <div className="text-sm text-stone-500">This section ships in the next sprint.</div>
             </div>
