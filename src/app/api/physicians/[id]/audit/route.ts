@@ -49,7 +49,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     WHERE
       (a.entity_type = 'physician' AND a.entity_id = ${id})
       OR (
-        a.entity_type IN ('engagement','qualification','privilege') AND (
+        a.entity_type IN ('engagement','qualification','privilege','incident') AND (
           a.after_json->>'physician_id' = ${id}
           OR a.before_json->>'physician_id' = ${id}
         )
