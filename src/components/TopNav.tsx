@@ -9,20 +9,23 @@ interface NavItem {
 }
 
 /**
- * Top nav bar — locked from EVEN-ELO-MOCKUPS.html mockup top header.
- * Same shape across user-facing and admin pages. Used by AppShell + AdminShell.
+ * Top nav bar — EPI shell.
+ *
+ * EPI.0a: hosts the v1 ELO surfaces (now at /surgical-elo/*) under the new
+ * EPI brand. EPI.0b will introduce a wider Home/Physicians/Onboarding/Incidents
+ * top-nav and replace PositionChip with an auth-derived user menu.
  */
 export function TopNav({ nav = DEFAULT_NAV }: { nav?: NavItem[] } = {}) {
   return (
     <header className="bg-white border-b border-stone-200 sticky top-0 z-40">
       <div className="max-w-[1400px] mx-auto px-8 py-3 flex items-center justify-between">
         <div className="flex items-center gap-8">
-          <Link href="/" className="flex items-center gap-2">
+          <Link href="/surgical-elo" className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-brand">
-              <span className="text-white text-sm font-bold">E</span>
+              <span className="text-white text-[11px] font-bold tracking-wide">EPI</span>
             </div>
-            <span className="font-semibold text-[15px]">Even-ELO</span>
-            <span className="text-xs text-stone-400 font-medium tracking-wide">EHRC</span>
+            <span className="font-semibold text-[15px]">Even Physician Index</span>
+            <span className="text-xs text-stone-400 font-medium tracking-wide">EHRC · Even ELO</span>
           </Link>
           <nav className="flex items-center gap-1">
             {nav.map((item) => (
@@ -49,11 +52,11 @@ export function TopNav({ nav = DEFAULT_NAV }: { nav?: NavItem[] } = {}) {
 }
 
 const DEFAULT_NAV: NavItem[] = [
-  { label: "Leaderboard", href: "/" },
-  { label: "New Case", href: "/input/cases" },
-  { label: "Anesthesia", href: "/input/anesthesia" },
-  { label: "OT", href: "/input/ot" },
-  { label: "Med Sup", href: "/input/ms" },
-  { label: "Cases", href: "/admin/cases" },
-  { label: "Admin", href: "/admin" },
+  { label: "Leaderboard", href: "/surgical-elo" },
+  { label: "New Case", href: "/surgical-elo/input/cases" },
+  { label: "Anesthesia", href: "/surgical-elo/input/anesthesia" },
+  { label: "OT", href: "/surgical-elo/input/ot" },
+  { label: "Med Sup", href: "/surgical-elo/input/ms" },
+  { label: "Cases", href: "/surgical-elo/admin/cases" },
+  { label: "Admin", href: "/surgical-elo/admin" },
 ];

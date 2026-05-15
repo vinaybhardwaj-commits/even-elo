@@ -247,4 +247,136 @@ export const MIGRATIONS: Migration[] = [
       WHERE id = 'insurance_denial';
     `,
   },
+  // ────────────────────────────────────────────────────────────
+  // EPI v2.0 — schema additions (lock-down spec §F.7 + EPI.0a plan)
+  // ────────────────────────────────────────────────────────────
+  {
+    id: "007_epi_schema",
+    description: "EPI v2.0 schema additions: hospitals, profiles, physicians, engagements, qualifications, privileges, audit_log_v2 + ALTER positions for hospital scoping",
+    sql: `
+      -- 1. hospitals (network-wide tenant table)
+      CREATE TABLE IF NOT EXISTS hospitals (
+        id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        code        text NOT NULL UNIQUE,
+        name        text NOT NULL,
+        is_active   boolean NOT NULL DEFAULT true,
+        created_at  timestamptz NOT NULL DEFAULT now()
+      );
+
+      -- 2. positions: drop v1 team CHECK (EPI broadens role list), add hospital_id
+      ALTER TABLE positions DROP CONSTRAINT IF EXISTS positions_team_check;
+      ALTER TABLE positions ADD COLUMN IF NOT EXISTS hospital_id uuid REFERENCES hospitals(id);
+      CREATE INDEX IF NOT EXISTS idx_positions_hospital ON positions(hospital_id);
+
+      -- 3. profiles (auth identity, 1:1 user-to-position-per-hospital)
+      CREATE TABLE IF NOT EXISTS profiles (
+        id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        email           text NOT NULL UNIQUE,
+        full_name       text NOT NULL,
+        password_hash   text NOT NULL,
+        position_id     uuid NOT NULL REFERENCES positions(id),
+        hospital_id     uuid NOT NULL REFERENCES hospitals(id),
+        status          text NOT NULL DEFAULT 'pending_approval'
+          CHECK (status IN ('pending_approval','active','suspended','rejected')),
+        is_super_admin       boolean NOT NULL DEFAULT false,
+        is_sgc_member        boolean NOT NULL DEFAULT false,
+        is_hr                boolean NOT NULL DEFAULT false,
+        is_site_medical_head boolean NOT NULL DEFAULT false,
+        last_login_at   timestamptz,
+        created_at      timestamptz NOT NULL DEFAULT now(),
+        updated_at      timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_profiles_hospital ON profiles(hospital_id);
+      CREATE INDEX IF NOT EXISTS idx_profiles_position ON profiles(position_id);
+      CREATE INDEX IF NOT EXISTS idx_profiles_status   ON profiles(status);
+
+      -- 4. physicians (network-wide; hospital relationships live in physician_engagements)
+      CREATE TABLE IF NOT EXISTS physicians (
+        id                   uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        full_name            text NOT NULL,
+        preferred_name       text,
+        primary_specialty    text,
+        registration_number  text,
+        registration_council text,
+        registration_expiry  date,
+        email                text,
+        phone                text,
+        date_joined_network  date,
+        current_status       text NOT NULL DEFAULT 'active'
+          CHECK (current_status IN ('active','inactive','terminated')),
+        notes                text,
+        created_at           timestamptz NOT NULL DEFAULT now(),
+        updated_at           timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_physicians_status ON physicians(current_status);
+
+      -- 5. physician_engagements (one row per physician × hospital × engagement_type)
+      CREATE TABLE IF NOT EXISTS physician_engagements (
+        id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        physician_id      uuid NOT NULL REFERENCES physicians(id) ON DELETE CASCADE,
+        hospital_id       uuid NOT NULL REFERENCES hospitals(id),
+        engagement_type   text NOT NULL
+          CHECK (engagement_type IN ('employed','part_time','visiting_consultant')),
+        start_date        date NOT NULL,
+        end_date          date,
+        specialty         text,
+        status            text NOT NULL DEFAULT 'active'
+          CHECK (status IN ('active','probation','terminated')),
+        terminated_reason text,
+        created_at        timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_engagements_physician ON physician_engagements(physician_id);
+      CREATE INDEX IF NOT EXISTS idx_engagements_hospital  ON physician_engagements(hospital_id);
+
+      -- 6. qualifications (file_data jsonb stores 2MB-cap base64-encoded cert per lock-down decision #26)
+      CREATE TABLE IF NOT EXISTS qualifications (
+        id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        physician_id    uuid NOT NULL REFERENCES physicians(id) ON DELETE CASCADE,
+        degree          text NOT NULL,
+        institution     text,
+        institution_tier text CHECK (institution_tier IN ('A','B','C','Unknown')),
+        year_completed  integer,
+        country         text,
+        verified        boolean NOT NULL DEFAULT false,
+        verified_by     uuid REFERENCES profiles(id),
+        verified_at     timestamptz,
+        file_data       jsonb,
+        created_at      timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_quals_physician ON qualifications(physician_id);
+
+      -- 7. privileges
+      CREATE TABLE IF NOT EXISTS privileges (
+        id                     uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        physician_id           uuid NOT NULL REFERENCES physicians(id) ON DELETE CASCADE,
+        hospital_id            uuid NOT NULL REFERENCES hospitals(id),
+        procedure_or_specialty text NOT NULL,
+        granted_date           date NOT NULL,
+        granted_by             uuid REFERENCES profiles(id),
+        withdrawn_date         date,
+        withdrawn_reason       text,
+        basis                  text CHECK (basis IN ('initial','annual_review','case_review','vc_observation_pass')),
+        created_at             timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_privs_physician ON privileges(physician_id);
+      CREATE INDEX IF NOT EXISTS idx_privs_hospital  ON privileges(hospital_id);
+
+      -- 8. audit_log_v2 (parallel to v1 audit_log; new EPI writes go here, v1 audit_log keeps history)
+      CREATE TABLE IF NOT EXISTS audit_log_v2 (
+        id            bigserial PRIMARY KEY,
+        actor_user_id uuid REFERENCES profiles(id),
+        actor_ip      text,
+        action        text NOT NULL,
+        entity_type   text NOT NULL,
+        entity_id     text,
+        before_json   jsonb,
+        after_json    jsonb,
+        created_at    timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_audit_v2_entity ON audit_log_v2(entity_type, entity_id);
+      CREATE INDEX IF NOT EXISTS idx_audit_v2_actor  ON audit_log_v2(actor_user_id);
+      CREATE INDEX IF NOT EXISTS idx_audit_v2_time   ON audit_log_v2(created_at DESC);
+    `,
+  },
 ];
+

@@ -15,9 +15,9 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Even-ELO",
+  title: "Even Physician Index",
   description:
-    "EHRC Surgical Governance Committee — Visiting Consultant scoring tool. Tracks Caseload / Outcomes / Adherence and recomputes the ELO score on every input.",
+    "Even Physician Index (EPI) — longitudinal physician record for the Even Hospital network. Even ELO surgical-scoring module included.",
   robots: { index: false, follow: false },
 };
 
