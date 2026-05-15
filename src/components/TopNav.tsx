@@ -18,6 +18,7 @@ interface NavItem {
 export function TopNav({ nav }: { nav?: NavItem[] } = {}) {
   const [user, setUser] = useState<UserSummary | null>(null);
   const [pendingCount, setPendingCount] = useState<number>(0);
+  const [openIncidentsCount, setOpenIncidentsCount] = useState<number>(0);
 
   useEffect(() => {
     fetch("/api/auth/me")
@@ -30,17 +31,23 @@ export function TopNav({ nav }: { nav?: NavItem[] } = {}) {
 
   useEffect(() => {
     if (!user?.is_super_admin) return;
-    const fetchCount = () =>
-      fetch("/api/admin/profiles?status=pending_approval")
-        .then((r) => r.json())
-        .then((j) => j.ok && setPendingCount((j.rows ?? []).length))
-        .catch(() => undefined);
-    fetchCount();
+    fetch("/api/admin/profiles?status=pending_approval")
+      .then((r) => r.json())
+      .then((j) => j.ok && setPendingCount((j.rows ?? []).length))
+      .catch(() => undefined);
   }, [user?.is_super_admin]);
+
+  useEffect(() => {
+    if (!user) return;
+    fetch("/api/incidents?status=open&limit=500")
+      .then((r) => r.json())
+      .then((j) => j.ok && setOpenIncidentsCount((j.rows ?? []).length))
+      .catch(() => undefined);
+  }, [user]);
 
   const showElo = !!user && (user.is_super_admin || user.is_sgc_member);
   const showAdmin = !!user && user.is_super_admin;
-  const navItems: NavItem[] = nav ?? defaultNav(showElo, showAdmin, pendingCount);
+  const navItems: NavItem[] = nav ?? defaultNav(showElo, showAdmin, pendingCount, openIncidentsCount);
 
   return (
     <header className="bg-white border-b border-stone-200 sticky top-0 z-40">
@@ -85,12 +92,12 @@ export function TopNav({ nav }: { nav?: NavItem[] } = {}) {
   );
 }
 
-function defaultNav(showElo: boolean, showAdmin: boolean, pending: number): NavItem[] {
+function defaultNav(showElo: boolean, showAdmin: boolean, pending: number, openIncidents: number): NavItem[] {
   const items: NavItem[] = [
     { label: "Home", href: "/home" },
     { label: "Physicians", href: "/physicians" },
     { label: "Onboarding", href: "#", pending: true },
-    { label: "Incidents", href: "#", pending: true },
+    { label: "Incidents", href: "/incidents", badge: openIncidents || undefined },
   ];
   if (showElo) items.push({ label: "Even ELO", href: "/surgical-elo" });
   if (showAdmin) items.push({ label: "Admin", href: "/admin", badge: pending || undefined });
