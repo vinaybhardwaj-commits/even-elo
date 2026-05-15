@@ -64,8 +64,8 @@ export async function POST() {
     await sql`DELETE FROM privileges`;
     await sql`DELETE FROM qualifications`;
     await sql`DELETE FROM physicians`;
-    await sql`DELETE FROM hospitals`;
     await sql`TRUNCATE positions RESTART IDENTITY CASCADE`;
+    await sql`DELETE FROM hospitals`;
     log.push("1. v1 data wiped (schema preserved)");
 
     // 2. EHRC hospital
