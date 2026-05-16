@@ -18,6 +18,7 @@ const ADMIN_BOOTSTRAP_ROUTES = [
   "/api/admin/seed-epi-base",
   "/api/admin/db-snapshot",
   "/api/admin/db-fresh",
+  "/api/admin/wipe-smoke-residue",
 ];
 
 function getJwtSecret() {
