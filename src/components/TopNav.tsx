@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { UserMenu, type UserSummary } from "./UserMenu";
+import { HospitalFilter } from "./HospitalFilter";
 
 interface NavItem {
   label: string;
@@ -74,10 +75,8 @@ export function TopNav({ nav }: { nav?: NavItem[] } = {}) {
               <span className="text-white text-[11px] font-bold tracking-wide">EPI</span>
             </div>
             <span className="font-semibold text-[15px]">Even Physician Index</span>
-            {user?.hospital_code && (
-              <span className="text-xs text-stone-400 font-medium tracking-wide">{user.hospital_code}</span>
-            )}
           </Link>
+          {user && <HospitalFilter />}
           <nav className="flex items-center gap-1">
             {navItems.map((item) => (
               <Link

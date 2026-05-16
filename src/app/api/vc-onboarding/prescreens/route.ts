@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { neon } from "@neondatabase/serverless";
+import { getHospitalFilterId } from "@/lib/hospital-filter";
 import { actorFromRequest } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
@@ -36,6 +37,8 @@ export async function GET(req: NextRequest) {
 
   const params = req.nextUrl.searchParams;
   const stage = (params.get("stage") ?? "").trim();
+  const hfid = await getHospitalFilterId();
+  const hospital_id_filter = hfid ?? "";
 
   const rows = (await sql`
     SELECT
@@ -60,6 +63,7 @@ export async function GET(req: NextRequest) {
     JOIN hospitals h  ON h.id = v.hospital_id
     JOIN profiles pp ON pp.id = v.prescreened_by
     WHERE (${stage} = '' OR v.stage = ${stage})
+      AND (${hospital_id_filter} = '' OR v.hospital_id = ${hospital_id_filter || '00000000-0000-0000-0000-000000000000'}::uuid OR EXISTS (SELECT 1 FROM vc_prescreen_hospitals vph WHERE vph.prescreen_id = v.id AND vph.hospital_id = ${hospital_id_filter || '00000000-0000-0000-0000-000000000000'}::uuid))
     ORDER BY v.created_at DESC
     LIMIT 500
   `) as Array<Record<string, unknown>>;

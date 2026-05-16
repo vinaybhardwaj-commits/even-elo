@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getHospitalFilterId } from "@/lib/hospital-filter";
 import { neon } from "@neondatabase/serverless";
 
 export const dynamic = "force-dynamic";
@@ -20,6 +21,8 @@ export async function GET(req: NextRequest) {
   const sql = neon(url);
   const params = req.nextUrl.searchParams;
   const status = (params.get("status") ?? "").trim();
+  const hfid = await getHospitalFilterId();
+  const hospital_id_filter = hfid ?? "";
 
   const rows = (await sql`
     SELECT
@@ -41,6 +44,7 @@ export async function GET(req: NextRequest) {
     JOIN positions pos ON pos.id = p.position_id
     JOIN hospitals h   ON h.id   = p.hospital_id
     WHERE (${status} = '' OR p.status = ${status})
+      AND (${hospital_id_filter} = '' OR p.hospital_id = ${hospital_id_filter || '00000000-0000-0000-0000-000000000000'}::uuid OR EXISTS (SELECT 1 FROM profile_hospital_roles r WHERE r.profile_id = p.id AND r.hospital_id = ${hospital_id_filter || '00000000-0000-0000-0000-000000000000'}::uuid))
     ORDER BY
       CASE p.status WHEN 'pending_approval' THEN 0 WHEN 'active' THEN 1 ELSE 2 END,
       p.created_at DESC

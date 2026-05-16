@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { neon } from "@neondatabase/serverless";
 import { actorFromRequest } from "@/lib/auth";
+import { getHospitalFilterId } from "@/lib/hospital-filter";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -77,6 +78,11 @@ export async function GET(req: NextRequest) {
   const category = (params.get("category") ?? "").trim();
   const physician_id = (params.get("physician_id") ?? "").trim();
   const limit = Math.min(500, Math.max(1, parseInt(params.get("limit") ?? "100", 10) || 100));
+  let hospital_id_filter = (params.get("hospital_id") ?? "").trim();
+  if (!hospital_id_filter) {
+    const fid = await getHospitalFilterId();
+    if (fid) hospital_id_filter = fid;
+  }
 
   // Compose WHERE: visibility predicate + filters
   // Use a single tagged-template call. The visibility predicate is encoded as:
@@ -116,6 +122,7 @@ export async function GET(req: NextRequest) {
         AND (${severity} = '' OR i.severity = ${severity})
         AND (${category} = '' OR i.category = ${category})
         AND (${physician_id} = '' OR i.target_physician_id = ${physician_id || '00000000-0000-0000-0000-000000000000'}::uuid)
+        AND (${hospital_id_filter} = '' OR i.hospital_id = ${hospital_id_filter || '00000000-0000-0000-0000-000000000000'}::uuid)
       ORDER BY i.submitted_at DESC
       LIMIT ${limit}
     )

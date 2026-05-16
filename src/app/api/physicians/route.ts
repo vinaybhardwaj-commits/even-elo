@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { neon } from "@neondatabase/serverless";
+import { getHospitalFilter } from "@/lib/hospital-filter";
 import { actorFromRequest } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
@@ -43,7 +44,11 @@ export async function GET(req: NextRequest) {
   const params = req.nextUrl.searchParams;
   const q = (params.get("q") ?? "").trim();
   const specialty = (params.get("specialty") ?? "").trim();
-  const hospitalCode = (params.get("hospital_code") ?? "").trim();
+  let hospitalCode = (params.get("hospital_code") ?? "").trim();
+  if (!hospitalCode) {
+    const cookieFilter = await getHospitalFilter();
+    if (cookieFilter !== "all") hospitalCode = cookieFilter;
+  }
   const status = (params.get("status") ?? "").trim();
 
   // Build dynamic SQL

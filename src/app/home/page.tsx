@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { neon } from "@neondatabase/serverless";
 import { getCurrentUser } from "@/lib/auth";
+import { getHospitalFilter, getHospitalFilterId } from "@/lib/hospital-filter";
 import { TopNav } from "@/components/TopNav";
 
 export const dynamic = "force-dynamic";
@@ -25,20 +26,37 @@ type AuditRow = {
   actor_position: string | null;
 };
 
-async function fetchData(): Promise<{
+async function fetchData(hospitalId: string | null): Promise<{
   counts: Counts;
   audit: AuditRow[];
 } | null> {
   const url = process.env.DATABASE_URL;
   if (!url) return null;
   const sql = neon(url);
-  const cRows = (await sql`
-    SELECT
-      (SELECT count(*)::int FROM physicians WHERE current_status = 'active')                                          AS active_physicians,
-      (SELECT count(*)::int FROM incidents WHERE status = 'open')                                                     AS open_incidents,
-      (SELECT count(*)::int FROM vc_prescreens WHERE stage IN ('prescreen','observation','decision'))                 AS vcs_in_pipeline,
-      0::int                                                                                                          AS tier_moves_30d
-  `) as Array<Counts>;
+  // KPIs respect the global filter. When hospitalId is null ("All Hospitals"),
+  // counts span the network; otherwise scope to the selected hospital.
+  const cRows = hospitalId
+    ? (await sql`
+        SELECT
+          (SELECT count(DISTINCT pe.physician_id)::int
+             FROM physician_engagements pe
+             JOIN physicians p ON p.id = pe.physician_id
+             WHERE pe.hospital_id = ${hospitalId}::uuid
+               AND pe.status = 'active'
+               AND p.current_status = 'active')                                                                       AS active_physicians,
+          (SELECT count(*)::int FROM incidents WHERE status = 'open' AND hospital_id = ${hospitalId}::uuid)            AS open_incidents,
+          (SELECT count(*)::int FROM vc_prescreens vp
+             WHERE vp.stage IN ('prescreen','observation','decision')
+               AND EXISTS (SELECT 1 FROM vc_prescreen_hospitals vph WHERE vph.prescreen_id = vp.id AND vph.hospital_id = ${hospitalId}::uuid)) AS vcs_in_pipeline,
+          0::int                                                                                                       AS tier_moves_30d
+      `) as Array<Counts>
+    : (await sql`
+        SELECT
+          (SELECT count(*)::int FROM physicians WHERE current_status = 'active')                                       AS active_physicians,
+          (SELECT count(*)::int FROM incidents WHERE status = 'open')                                                  AS open_incidents,
+          (SELECT count(*)::int FROM vc_prescreens WHERE stage IN ('prescreen','observation','decision'))              AS vcs_in_pipeline,
+          0::int                                                                                                       AS tier_moves_30d
+      `) as Array<Counts>;
   const aRows = (await sql`
     SELECT
       a.id,
@@ -77,7 +95,9 @@ export default async function HomePage() {
   if (!user) {
     return null; // middleware redirects; this is defensive
   }
-  const data = await fetchData();
+  const filterCode = await getHospitalFilter();
+  const filterId   = await getHospitalFilterId();
+  const data = await fetchData(filterId);
 
   const counts = data?.counts ?? {
     active_physicians: 0,
@@ -117,7 +137,7 @@ export default async function HomePage() {
               {today}
               {user.is_super_admin ? " · Super Admin" : ""}
               {user.position_label && user.position_label !== "Hospital PM" ? ` · ${user.position_label}` : (!user.is_super_admin ? ` · ${user.position_label}` : "")}
-              {" · viewing "}{user.hospital_code}
+              {" · viewing "}{filterCode === "all" ? "all hospitals" : filterCode}
             </div>
           </div>
         </div>
