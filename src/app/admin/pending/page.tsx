@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { TopNav } from "@/components/TopNav";
 
+interface RequestedRole { hospital_code: string; role: string; }
 interface ProfileRow {
   id: string;
   email: string;
@@ -12,7 +13,14 @@ interface ProfileRow {
   position_label: string;
   hospital_code: string;
   created_at: string;
+  requested_roles?: RequestedRole[];
 }
+
+const ROLE_LABEL: Record<string, string> = {
+  site_medical_head: "Site MH",
+  hr: "HR",
+  sgc_member: "SGC",
+};
 
 function timeAgo(iso: string): string {
   const t = new Date(iso).getTime();
@@ -54,13 +62,37 @@ export default function PendingPage() {
 
   useEffect(() => { load(); }, []);
 
+  // Per-row accepted-role overrides (key = profile.id, value = subset of requested_roles)
+  const [accepted, setAccepted] = useState<Record<string, RequestedRole[]>>({});
+
+  function toggleAccept(profileId: string, role: RequestedRole) {
+    setAccepted((prev) => {
+      const cur = prev[profileId] ?? rows.find((r) => r.id === profileId)?.requested_roles ?? [];
+      const key = `${role.hospital_code}|${role.role}`;
+      const hit = cur.find((x) => `${x.hospital_code}|${x.role}` === key);
+      const next = hit ? cur.filter((x) => `${x.hospital_code}|${x.role}` !== key) : [...cur, role];
+      return { ...prev, [profileId]: next };
+    });
+  }
+
+  function isAccepted(profileId: string, role: RequestedRole): boolean {
+    const cur = accepted[profileId] ?? rows.find((r) => r.id === profileId)?.requested_roles ?? [];
+    return !!cur.find((x) => x.hospital_code === role.hospital_code && x.role === role.role);
+  }
+
   async function act(id: string, status: "active" | "rejected") {
     setBusy(id);
     try {
+      const body: Record<string, unknown> = { status };
+      if (status === "active") {
+        // Default to the full requested set if admin didn't override
+        const requestedDefault = rows.find((r) => r.id === id)?.requested_roles ?? [];
+        body.accepted_roles_override = accepted[id] ?? requestedDefault;
+      }
       await fetch(`/api/admin/profiles/${id}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ status }),
+        body: JSON.stringify(body),
       });
       load();
     } finally {
@@ -107,6 +139,28 @@ export default function PendingPage() {
                   <div className="text-xs text-stone-500 mt-0.5">
                     {r.position_label} · {r.hospital_code} · requested {timeAgo(r.created_at)}
                   </div>
+                  {(r.requested_roles ?? []).length > 0 && (
+                    <div className="mt-2">
+                      <div className="text-[11px] font-medium text-stone-500 uppercase tracking-wider mb-1">Requested roles</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {(r.requested_roles ?? []).map((rr) => {
+                          const on = isAccepted(r.id, rr);
+                          return (
+                            <button
+                              key={`${rr.hospital_code}|${rr.role}`}
+                              type="button"
+                              onClick={() => toggleAccept(r.id, rr)}
+                              className={`px-2 py-0.5 rounded-full text-[11px] font-medium border ${on ? "bg-teal-100 text-teal-800 border-teal-200" : "bg-white text-stone-500 border-stone-200 line-through hover:bg-stone-50"}`}
+                              title={on ? "Click to strip this role from approval" : "Click to accept this role"}
+                            >
+                              {rr.hospital_code} · {ROLE_LABEL[rr.role] ?? rr.role}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <div className="text-[10px] text-stone-400 mt-1">Strike-through = will not be granted. Click to toggle.</div>
+                    </div>
+                  )}
                 </div>
                 <div className="flex gap-2">
                   <button

@@ -60,9 +60,9 @@ export async function POST(request: NextRequest) {
     }
     const hospitalId = hospRows[0].id;
 
-    // Position must exist + belong to this hospital
+    // Position must exist (shared catalogue in v3.0a — no hospital_id check)
     const posRows = (await sql`
-      SELECT id::text AS id FROM positions WHERE id = ${position_id}::uuid AND hospital_id = ${hospitalId}::uuid LIMIT 1
+      SELECT id::text AS id FROM positions WHERE id = ${position_id}::uuid LIMIT 1
     `) as Array<{ id: string }>;
     if (posRows.length === 0) {
       return NextResponse.json(
@@ -90,9 +90,28 @@ export async function POST(request: NextRequest) {
     const isSuperuser = isSuperuserEmail(email);
     const status = isSuperuser ? "active" : "pending_approval";
 
+    // Validate optional requested_roles (v3.0c). Drop unknown roles/hospital codes silently.
+    const validRoles = new Set(["site_medical_head", "hr", "sgc_member"]);
+    type Req = { hospital_code: string; role: string };
+    const reqRaw: unknown = (body as Record<string, unknown>)?.requested_roles;
+    const reqArr: Req[] = Array.isArray(reqRaw)
+      ? (reqRaw as Array<Record<string, unknown>>)
+          .map((r) => ({ hospital_code: String(r?.hospital_code ?? "").trim().toUpperCase(), role: String(r?.role ?? "").trim() }))
+          .filter((r) => r.hospital_code && validRoles.has(r.role))
+      : [];
+    // De-dup
+    const seen = new Set<string>();
+    const requestedRoles: Req[] = [];
+    for (const r of reqArr) {
+      const k = `${r.hospital_code}|${r.role}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      requestedRoles.push(r);
+    }
+
     const inserted = (await sql`
       INSERT INTO profiles (
-        email, full_name, password_hash, position_id, hospital_id, status, is_super_admin
+        email, full_name, password_hash, position_id, hospital_id, status, is_super_admin, requested_roles
       ) VALUES (
         ${String(email).toLowerCase()},
         ${String(full_name).trim()},
@@ -100,7 +119,8 @@ export async function POST(request: NextRequest) {
         ${position_id}::uuid,
         ${hospitalId}::uuid,
         ${status},
-        ${isSuperuser}
+        ${isSuperuser},
+        ${JSON.stringify(requestedRoles)}::jsonb
       )
       RETURNING id::text AS id, email, full_name, status
     `) as Array<Record<string, unknown>>;

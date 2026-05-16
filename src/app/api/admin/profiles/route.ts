@@ -38,6 +38,7 @@ export async function GET(req: NextRequest) {
       h.code              AS hospital_code,
       p.last_login_at,
       p.created_at,
+      p.requested_roles,
       (SELECT COUNT(*)::int FROM incidents i WHERE i.submitter_user_id = p.id)                                  AS submitted_count,
       (SELECT COUNT(*)::int FROM incidents i WHERE i.submitter_user_id = p.id AND i.status = 'retracted')        AS retracted_count
     FROM profiles_with_roles p

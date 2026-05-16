@@ -8,6 +8,19 @@ interface Position {
   id: string;
   position_name: string;
 }
+interface Hospital {
+  id: string;
+  code: string;
+}
+interface RoleRequest {
+  hospital_code: string;
+  role: string;
+}
+const ROLE_OPTS = [
+  { value: "site_medical_head", label: "Site Medical Head" },
+  { value: "hr", label: "HR" },
+  { value: "sgc_member", label: "SGC member" },
+];
 
 export default function SignupPage() {
   const [email, setEmail] = useState("");
@@ -15,6 +28,9 @@ export default function SignupPage() {
   const [positionId, setPositionId] = useState("");
   const [pin, setPin] = useState(["", "", "", ""]);
   const [positions, setPositions] = useState<Position[]>([]);
+  const [hospitals, setHospitals] = useState<Hospital[]>([]);
+  const [homeHospital, setHomeHospital] = useState("EHRC");
+  const [roleReqs, setRoleReqs] = useState<RoleRequest[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -26,6 +42,15 @@ export default function SignupPage() {
       .then((r) => r.json())
       .then((j) => {
         if (j.ok && Array.isArray(j.positions)) setPositions(j.positions);
+      })
+      .catch(() => undefined);
+    fetch("/api/hospitals-public")
+      .then((r) => r.json())
+      .then((j) => {
+        if (j.ok && Array.isArray(j.hospitals)) {
+          setHospitals(j.hospitals);
+          if (j.hospitals[0]?.code) setHomeHospital(j.hospitals[0].code);
+        }
       })
       .catch(() => undefined);
   }, []);
@@ -57,7 +82,8 @@ export default function SignupPage() {
           full_name: fullName,
           pin: fullPin,
           position_id: positionId,
-          hospital_code: "EHRC",
+          hospital_code: homeHospital,
+          requested_roles: roleReqs.filter((rr) => rr.hospital_code && rr.role),
         }),
       });
       const j = await r.json();
@@ -111,7 +137,16 @@ export default function SignupPage() {
             className="w-full px-3 py-2.5 border border-stone-200 rounded-lg text-sm outline-none focus:border-brand mb-4"
           />
 
-          <label className="block text-xs font-medium text-stone-500 mb-1.5">Your position at EHRC</label>
+          <label className="block text-xs font-medium text-stone-500 mb-1.5">Home hospital</label>
+          <select
+            value={homeHospital}
+            onChange={(e) => setHomeHospital(e.target.value)}
+            className="w-full px-3 py-2.5 border border-stone-200 rounded-lg text-sm outline-none focus:border-brand mb-4 bg-white"
+          >
+            {hospitals.map((h) => <option key={h.code} value={h.code}>{h.code}</option>)}
+          </select>
+
+          <label className="block text-xs font-medium text-stone-500 mb-1.5">Your position</label>
           <select
             value={positionId}
             onChange={(e) => setPositionId(e.target.value)}
@@ -122,6 +157,38 @@ export default function SignupPage() {
               <option key={p.id} value={p.id}>{p.position_name}</option>
             ))}
           </select>
+
+          <label className="block text-xs font-medium text-stone-500 mb-1.5">Hospital roles I need <span className="text-stone-400 font-normal">(optional — admin will review)</span></label>
+          <div className="mb-4 space-y-1.5">
+            {roleReqs.map((rr, i) => (
+              <div key={i} className="flex gap-2 items-center">
+                <select
+                  value={rr.hospital_code}
+                  onChange={(e) => setRoleReqs((prev) => prev.map((x, j) => j === i ? { ...x, hospital_code: e.target.value } : x))}
+                  className="flex-1 px-2 py-1.5 border border-stone-200 rounded-lg text-xs bg-white"
+                >
+                  <option value="">— hospital —</option>
+                  {hospitals.map((h) => <option key={h.code} value={h.code}>{h.code}</option>)}
+                </select>
+                <select
+                  value={rr.role}
+                  onChange={(e) => setRoleReqs((prev) => prev.map((x, j) => j === i ? { ...x, role: e.target.value } : x))}
+                  className="flex-1 px-2 py-1.5 border border-stone-200 rounded-lg text-xs bg-white"
+                >
+                  <option value="">— role —</option>
+                  {ROLE_OPTS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+                <button type="button" onClick={() => setRoleReqs((prev) => prev.filter((_, j) => j !== i))} className="text-stone-400 hover:text-red-700 px-1.5 text-base" title="Remove">×</button>
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={() => setRoleReqs((prev) => [...prev, { hospital_code: "", role: "" }])}
+              className="text-[12px] text-brand font-medium hover:underline"
+            >
+              + Request role
+            </button>
+          </div>
 
           <label className="block text-xs font-medium text-stone-500 mb-1.5">Choose a 4-digit PIN</label>
           <div className="flex gap-2 mb-5">

@@ -1,16 +1,21 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 interface Props {
   physicianId: string;
   defaultSpecialty?: string | null;
+  engagedHospitalCodes?: string[]; // hospitals where physician is already active — disabled in picker
   onClose: () => void;
   onSaved: () => void;
 }
 
-export function AddEngagementModal({ physicianId, defaultSpecialty, onClose, onSaved }: Props) {
-  const [hospitalCode, setHospitalCode] = useState("EHRC");
+interface HospitalOption { id: string; code: string; }
+
+export function AddEngagementModal({ physicianId, defaultSpecialty, engagedHospitalCodes = [], onClose, onSaved }: Props) {
+  const engaged = new Set(engagedHospitalCodes);
+  const [hospitals, setHospitals] = useState<HospitalOption[]>([]);
+  const [hospitalCode, setHospitalCode] = useState("");
   const [engagementType, setEngagementType] = useState<"employed" | "part_time" | "visiting_consultant">("visiting_consultant");
   const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10));
   const [endDate, setEndDate] = useState("");
@@ -18,8 +23,20 @@ export function AddEngagementModal({ physicianId, defaultSpecialty, onClose, onS
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    fetch("/api/hospitals").then((r) => r.json()).then((j) => {
+      if (j.ok) {
+        const opts = (j.hospitals as HospitalOption[]).filter((h) => !engaged.has(h.code));
+        setHospitals(opts);
+        if (opts.length > 0) setHospitalCode(opts[0].code);
+      }
+    }).catch(() => undefined);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (!hospitalCode) { setError("Pick a hospital"); return; }
     setError(null);
     setSubmitting(true);
     try {
@@ -60,9 +77,14 @@ export function AddEngagementModal({ physicianId, defaultSpecialty, onClose, onS
             <select
               value={hospitalCode}
               onChange={(e) => setHospitalCode(e.target.value)}
-              className="w-full px-3 py-2 border border-stone-200 rounded-lg text-sm bg-white"
+              disabled={hospitals.length === 0}
+              className="w-full px-3 py-2 border border-stone-200 rounded-lg text-sm bg-white disabled:bg-stone-50 disabled:text-stone-400"
             >
-              <option value="EHRC">EHRC — Even Hospital Race Course Road</option>
+              {hospitals.length === 0 ? (
+                <option value="">All hospitals already engaged</option>
+              ) : (
+                hospitals.map((h) => <option key={h.code} value={h.code}>{h.code}</option>)
+              )}
             </select>
           </div>
           <div>

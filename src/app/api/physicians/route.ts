@@ -131,6 +131,9 @@ export async function POST(req: NextRequest) {
     phone,
     date_joined_network,
     notes,
+    hospital_codes,           // new v3.0c — array of hospital codes to engage at
+    engagement_type,          // optional; defaults to 'employed'
+    extend_physician_id,      // optional; if provided, skip dupe check + INSERT, just add engagements
   } = body ?? {};
   if (!full_name || typeof full_name !== "string" || !full_name.trim()) {
     return NextResponse.json({ ok: false, error: "full_name required" }, { status: 400, headers: NO_STORE });
@@ -142,32 +145,120 @@ export async function POST(req: NextRequest) {
   }
   const sql = neon(url);
 
-  const rows = (await sql`
-    INSERT INTO physicians (
-      full_name, preferred_name, primary_specialty,
-      registration_number, registration_council, registration_expiry,
-      email, phone, date_joined_network, current_status, notes
-    ) VALUES (
-      ${full_name.trim()},
-      ${preferred_name ?? null},
-      ${primary_specialty ?? null},
-      ${registration_number ?? null},
-      ${registration_council ?? null},
-      ${registration_expiry ?? null},
-      ${email ?? null},
-      ${phone ?? null},
-      ${date_joined_network ?? null},
-      'active',
-      ${notes ?? null}
-    )
-    RETURNING id::text AS id, full_name, primary_specialty, current_status, created_at
-  `) as Array<Record<string, unknown>>;
-  const inserted = rows[0];
+  const hospitalCodesArr: string[] = Array.isArray(hospital_codes) ? hospital_codes.filter((c) => typeof c === "string" && c.trim().length > 0) : [];
+  const engType = (typeof engagement_type === "string" && engagement_type.trim()) ? engagement_type.trim() : "employed";
+  const joinDate = date_joined_network || new Date().toISOString().slice(0,10);
 
-  await sql`
-    INSERT INTO audit_log_v2 (actor_user_id, action, entity_type, entity_id, after_json)
-    VALUES (${actor.profileId}::uuid, 'create', 'physician', ${inserted.id as string}, ${JSON.stringify(inserted)}::jsonb)
-  `;
+  // Cross-site duplicate check (v3.0c decision #14). Only if email provided AND no extend_physician_id override.
+  const trimmedEmail = (email ?? "").trim().toLowerCase();
+  if (trimmedEmail && !extend_physician_id) {
+    const dupe = (await sql`
+      SELECT
+        p.id::text AS id,
+        p.full_name,
+        p.primary_specialty,
+        p.email,
+        p.current_status,
+        COALESCE(
+          (SELECT json_agg(json_build_object(
+            'hospital_code', h.code,
+            'hospital_id', h.id::text,
+            'status', e.status,
+            'engagement_type', e.engagement_type,
+            'start_date', e.start_date
+          ) ORDER BY h.code) FROM physician_engagements e JOIN hospitals h ON h.id = e.hospital_id WHERE e.physician_id = p.id),
+          '[]'::json
+        ) AS engagements
+      FROM physicians p
+      WHERE lower(p.email) = ${trimmedEmail}
+      LIMIT 1
+    `) as Array<Record<string, unknown>>;
+    if (dupe.length > 0) {
+      return NextResponse.json({
+        ok: false,
+        duplicate: true,
+        existing_physician: dupe[0],
+        error: "A physician with this email already exists. Confirm whether to add engagements at the new hospital(s) to the existing record.",
+      }, { status: 409, headers: NO_STORE });
+    }
+  }
 
-  return NextResponse.json({ ok: true, physician: inserted }, { headers: NO_STORE });
+  // Resolve hospital codes to ids (validate all before any insert)
+  const hospitalIds: Array<{ code: string; id: string }> = [];
+  for (const code of hospitalCodesArr) {
+    const h = (await sql`SELECT id::text AS id FROM hospitals WHERE code = ${code.toUpperCase()} AND is_active = true LIMIT 1`) as Array<{ id: string }>;
+    if (h.length === 0) {
+      return NextResponse.json({ ok: false, error: `Unknown or inactive hospital: ${code}` }, { status: 400, headers: NO_STORE });
+    }
+    hospitalIds.push({ code: code.toUpperCase(), id: h[0].id });
+  }
+
+  // Either create new physician OR add engagements to existing (extend flow)
+  let physicianId: string;
+  let inserted: Record<string, unknown> | null = null;
+  if (extend_physician_id && typeof extend_physician_id === "string") {
+    const ex = (await sql`SELECT id::text AS id FROM physicians WHERE id = ${extend_physician_id}::uuid LIMIT 1`) as Array<{ id: string }>;
+    if (ex.length === 0) {
+      return NextResponse.json({ ok: false, error: "extend_physician_id not found" }, { status: 404, headers: NO_STORE });
+    }
+    physicianId = ex[0].id;
+  } else {
+    const rows = (await sql`
+      INSERT INTO physicians (
+        full_name, preferred_name, primary_specialty,
+        registration_number, registration_council, registration_expiry,
+        email, phone, date_joined_network, current_status, notes
+      ) VALUES (
+        ${full_name.trim()},
+        ${preferred_name ?? null},
+        ${primary_specialty ?? null},
+        ${registration_number ?? null},
+        ${registration_council ?? null},
+        ${registration_expiry ?? null},
+        ${trimmedEmail || null},
+        ${phone ?? null},
+        ${date_joined_network ?? null},
+        'active',
+        ${notes ?? null}
+      )
+      RETURNING id::text AS id, full_name, primary_specialty, current_status, created_at
+    `) as Array<Record<string, unknown>>;
+    inserted = rows[0];
+    physicianId = inserted.id as string;
+    await sql`
+      INSERT INTO audit_log_v2 (actor_user_id, action, entity_type, entity_id, after_json)
+      VALUES (${actor.profileId}::uuid, 'create', 'physician', ${physicianId}, ${JSON.stringify(inserted)}::jsonb)
+    `;
+  }
+
+  // Create engagements at each chosen hospital (skip if already engaged there)
+  const createdEngagements: Array<{ hospital_code: string }> = [];
+  for (const h of hospitalIds) {
+    const exists = (await sql`
+      SELECT 1 FROM physician_engagements
+      WHERE physician_id = ${physicianId}::uuid AND hospital_id = ${h.id}::uuid AND status = 'active'
+      LIMIT 1
+    `) as Array<unknown>;
+    if (exists.length > 0) continue;
+    await sql`
+      INSERT INTO physician_engagements (
+        physician_id, hospital_id, engagement_type, start_date, specialty, status
+      ) VALUES (
+        ${physicianId}::uuid, ${h.id}::uuid, ${engType}, ${joinDate}, ${primary_specialty ?? null}, 'active'
+      )
+    `;
+    await sql`
+      INSERT INTO audit_log_v2 (actor_user_id, action, entity_type, entity_id, after_json)
+      VALUES (${actor.profileId}::uuid, 'create', 'physician_engagement', ${physicianId},
+        ${JSON.stringify({ hospital_code: h.code, engagement_type: engType, start_date: joinDate, via: extend_physician_id ? "extend" : "create" })}::jsonb)
+    `;
+    createdEngagements.push({ hospital_code: h.code });
+  }
+
+  return NextResponse.json({
+    ok: true,
+    physician: inserted ?? { id: physicianId },
+    extended: Boolean(extend_physician_id),
+    created_engagements: createdEngagements,
+  }, { headers: NO_STORE });
 }

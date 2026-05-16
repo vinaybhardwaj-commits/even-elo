@@ -9,6 +9,8 @@ const PUBLIC_API_ROUTES = [
   "/api/auth/login",
   "/api/auth/signup",
   "/api/auth/logout",
+  "/api/hospitals-public",
+  "/api/positions",
 ];
 
 // Admin-bootstrap routes — URL-gated like v1 (no auth required so we can run

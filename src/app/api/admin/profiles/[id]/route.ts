@@ -71,6 +71,32 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     WHERE id = ${id}::uuid
   `;
 
+  // 1b. On status transition pending_approval → active, apply accepted requested_roles
+  //     to profile_hospital_roles + clear requested_roles. (PRD §H.4)
+  //     Body may include accepted_roles_override [{hospital_code, role}, ...] from /admin/pending UI;
+  //     otherwise the full requested_roles set is applied as-is.
+  if (b.status === "pending_approval" && nextStatus === "active") {
+    type Req = { hospital_code: string; role: string };
+    const validRoles = new Set(["site_medical_head", "hr", "sgc_member"]);
+    const fromBody: unknown = body?.accepted_roles_override;
+    const fromProfile: unknown = b.requested_roles;
+    const source = Array.isArray(fromBody) ? fromBody : (Array.isArray(fromProfile) ? fromProfile : []);
+    const toApply: Req[] = (source as Array<Record<string, unknown>>)
+      .map((r) => ({ hospital_code: String(r?.hospital_code ?? "").trim().toUpperCase(), role: String(r?.role ?? "").trim() }))
+      .filter((r) => r.hospital_code && validRoles.has(r.role));
+    for (const r of toApply) {
+      const h = (await sql`SELECT id::text AS id FROM hospitals WHERE code = ${r.hospital_code} AND is_active = true LIMIT 1`) as Array<{ id: string }>;
+      if (h.length === 0) continue;
+      await sql`
+        INSERT INTO profile_hospital_roles (profile_id, hospital_id, role, granted_by)
+        VALUES (${id}::uuid, ${h[0].id}::uuid, ${r.role}, ${actor.profileId}::uuid)
+        ON CONFLICT DO NOTHING
+      `;
+    }
+    // Clear the requested_roles field once applied
+    await sql`UPDATE profiles SET requested_roles = '[]'::jsonb WHERE id = ${id}::uuid`;
+  }
+
   // 2. Per-role flag toggles → profile_hospital_roles at home hospital
   const homeHospitalId = b.hospital_id as string | null;
   for (const [flag, role] of Object.entries(FLAG_TO_ROLE)) {

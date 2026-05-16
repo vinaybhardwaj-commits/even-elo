@@ -827,6 +827,7 @@ export default function PhysicianProfilePage() {
         <AddEngagementModal
           physicianId={id!}
           defaultSpecialty={physician.primary_specialty}
+          engagedHospitalCodes={engagements.filter((e) => e.status === "active").map((e) => e.hospital_code)}
           onClose={() => setAddEng(false)}
           onSaved={() => { setAddEng(false); load(); }}
         />

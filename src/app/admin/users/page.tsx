@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { TopNav } from "@/components/TopNav";
 
@@ -44,12 +44,66 @@ function colorFor(name: string): string {
   return AVATAR_COLORS[h % AVATAR_COLORS.length];
 }
 
+interface HospitalOption { id: string; code: string; }
+interface RoleRow { role: string; hospital_code: string; }
+
 export default function UsersPage() {
   const [rows, setRows] = useState<ProfileRow[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [filter, setFilter] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [hospitals, setHospitals] = useState<HospitalOption[]>([]);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [rolesByProfile, setRolesByProfile] = useState<Record<string, Set<string>>>({});
+
+  // load hospitals once (drives the grid columns)
+  useEffect(() => {
+    fetch("/api/hospitals").then((r) => r.json()).then((j) => {
+      if (j.ok) setHospitals(j.hospitals as HospitalOption[]);
+    }).catch(() => undefined);
+  }, []);
+
+  async function loadRolesFor(profileId: string) {
+    const r = await fetch(`/api/admin/profiles/${profileId}/roles`);
+    const j = await r.json();
+    if (j.ok) {
+      const set = new Set<string>();
+      for (const row of j.roles as RoleRow[]) set.add(`${row.hospital_code}|${row.role}`);
+      setRolesByProfile((prev) => ({ ...prev, [profileId]: set }));
+    }
+  }
+
+  async function toggleRoleCell(profileId: string, hospital_code: string, role: string, currentlyGranted: boolean) {
+    const key = `${hospital_code}|${role}`;
+    // Optimistic update
+    setRolesByProfile((prev) => {
+      const set = new Set(prev[profileId] ?? []);
+      if (currentlyGranted) set.delete(key); else set.add(key);
+      return { ...prev, [profileId]: set };
+    });
+    try {
+      await fetch(`/api/admin/profiles/${profileId}/roles`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ hospital_code, role, granted: !currentlyGranted }),
+      });
+    } catch {
+      // revert on failure
+      await loadRolesFor(profileId);
+    }
+    // Refresh the rolled-up aggregated booleans on the directory row
+    load();
+  }
+
+  function expand(profileId: string) {
+    if (expandedId === profileId) {
+      setExpandedId(null);
+      return;
+    }
+    setExpandedId(profileId);
+    if (!rolesByProfile[profileId]) loadRolesFor(profileId);
+  }
 
   function load() {
     setLoading(true);
@@ -150,7 +204,8 @@ export default function UsersPage() {
               ) : rows.length === 0 ? (
                 <tr><td colSpan={7} className="px-4 py-12 text-center text-sm text-stone-500">No users in this filter.</td></tr>
               ) : rows.map((r) => (
-                <tr key={r.id} className="hover:bg-stone-50">
+              <React.Fragment key={r.id}>
+                <tr className="hover:bg-stone-50">
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">
                       <span className={`w-8 h-8 rounded-full inline-flex items-center justify-center text-[11px] font-medium ${colorFor(r.full_name)}`}>
@@ -169,27 +224,28 @@ export default function UsersPage() {
                     </span>
                   </td>
                   <td className="px-4 py-3">
-                    <div className="flex flex-wrap gap-1.5 text-[10px]">
-                      {[
-                        ["is_super_admin", "Super", r.is_super_admin],
-                        ["is_sgc_member", "SGC", r.is_sgc_member],
-                        ["is_hr", "HR", r.is_hr],
-                        ["is_site_medical_head", "Site MH", r.is_site_medical_head],
-                      ].map(([k, label, val]) => (
-                        <button
-                          key={k as string}
-                          onClick={() => toggleFlag(r.id, k as string, !val)}
-                          disabled={busy === r.id}
-                          className={`px-2 py-0.5 rounded-full font-medium ${
-                            val
-                              ? "bg-teal-100 text-teal-800"
-                              : "bg-stone-100 text-stone-500 hover:bg-stone-200"
-                          }`}
-                          title={val ? `Click to remove ${label}` : `Click to grant ${label}`}
-                        >
+                    <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+                      <button
+                        onClick={() => toggleFlag(r.id, "is_super_admin", !r.is_super_admin)}
+                        disabled={busy === r.id}
+                        className={`px-2 py-0.5 rounded-full font-medium ${r.is_super_admin ? "bg-teal-100 text-teal-800" : "bg-stone-100 text-stone-500 hover:bg-stone-200"}`}
+                        title={r.is_super_admin ? "Click to revoke Super Admin (network-wide)" : "Click to grant Super Admin (network-wide)"}
+                      >
+                        Super
+                      </button>
+                      {[["SGC", r.is_sgc_member], ["HR", r.is_hr], ["Site MH", r.is_site_medical_head]].map(([label, val]) => (
+                        <span key={label as string} className={`px-2 py-0.5 rounded-full font-medium ${val ? "bg-emerald-50 text-emerald-700" : "bg-stone-100 text-stone-400"}`}
+                          title={val ? `Has ${label} role at ≥1 hospital — click Roles ▾ to manage per-site` : `No ${label} role anywhere`}>
                           {label}
-                        </button>
+                        </span>
                       ))}
+                      <button
+                        onClick={() => expand(r.id)}
+                        className={`px-2 py-0.5 rounded-full font-medium border ${expandedId === r.id ? "bg-brand text-white border-brand" : "bg-white text-stone-700 border-stone-200 hover:bg-stone-50"}`}
+                        title="Toggle per-hospital role grid"
+                      >
+                        Roles {expandedId === r.id ? "▴" : "▾"}
+                      </button>
                     </div>
                   </td>
                   <td className="px-4 py-3 text-xs">
@@ -221,6 +277,50 @@ export default function UsersPage() {
                     </select>
                   </td>
                 </tr>
+                {expandedId === r.id && (
+                  <tr className="bg-stone-50/60 border-b border-stone-200">
+                    <td colSpan={7} className="px-4 py-4">
+                      <div className="text-[11px] font-medium text-stone-500 uppercase tracking-wider mb-2">Per-hospital roles</div>
+                      <div className="overflow-x-auto">
+                        <table className="text-[12px]">
+                          <thead>
+                            <tr className="text-stone-500">
+                              <th className="text-left pr-3 py-1 font-medium">Hospital</th>
+                              {(["site_medical_head","hr","sgc_member"] as const).map((role) => (
+                                <th key={role} className="px-3 py-1 font-medium text-center">{role === "site_medical_head" ? "Site MH" : role === "hr" ? "HR" : "SGC"}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {hospitals.map((h) => (
+                              <tr key={h.code} className="border-t border-stone-200/50">
+                                <td className="pr-3 py-1.5 font-medium text-stone-700">{h.code}</td>
+                                {(["site_medical_head","hr","sgc_member"] as const).map((role) => {
+                                  const key = `${h.code}|${role}`;
+                                  const on = rolesByProfile[r.id]?.has(key) ?? false;
+                                  return (
+                                    <td key={role} className="px-3 py-1.5 text-center">
+                                      <label className="inline-flex items-center cursor-pointer">
+                                        <input
+                                          type="checkbox"
+                                          checked={on}
+                                          onChange={() => toggleRoleCell(r.id, h.code, role, on)}
+                                          className="w-4 h-4 accent-teal-600 cursor-pointer"
+                                        />
+                                      </label>
+                                    </td>
+                                  );
+                                })}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div className="text-[11px] text-stone-400 mt-2">Grants are immediate. Super Admin is network-wide and managed via the pill above.</div>
+                    </td>
+                  </tr>
+                )}
+              </React.Fragment>
               ))}
             </tbody>
           </table>
