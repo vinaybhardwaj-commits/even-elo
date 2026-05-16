@@ -38,6 +38,7 @@ interface Prescreen {
   prescreened_by_email: string;
   prescreened_at: string;
   decided_at: string | null;
+  physician_id: string | null;
 }
 
 const COMMITMENT_LABEL: Record<string, string> = {
@@ -65,7 +66,12 @@ export default function OnboardingDetailPage() {
   const [loading, setLoading] = useState(true);
   const [cases, setCases] = useState<ObservationCase[]>([]);
   const [allowedRoles, setAllowedRoles] = useState<string[]>([]);
+  const [me, setMe] = useState<{ is_super_admin: boolean; is_site_medical_head: boolean } | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  const [decisionMode, setDecisionMode] = useState<"confirm_privileges" | "extend_observation" | "terminate" | null>(null);
+  const [decisionRationale, setDecisionRationale] = useState("");
+  const [decisionWorking, setDecisionWorking] = useState(false);
+  const [decisionResult, setDecisionResult] = useState<{ stage: string; physician_id: string | null } | null>(null);
 
   function load() {
     if (!id) return;
@@ -73,18 +79,45 @@ export default function OnboardingDetailPage() {
     Promise.all([
       fetch(`/api/vc-onboarding/prescreens/${id}`).then((r) => r.json()),
       fetch(`/api/vc-onboarding/prescreens/${id}/observations`).then((r) => r.json()),
+      fetch(`/api/auth/me`).then((r) => r.json()),
     ])
-      .then(([pj, oj]) => {
+      .then(([pj, oj, mj]) => {
         if (!pj.ok) { setError(pj.error || "Not found"); return; }
         setData(pj.prescreen as Prescreen);
         if (oj.ok) {
           setCases((oj.rows ?? []) as ObservationCase[]);
           setAllowedRoles(oj.allowed_roles ?? []);
         }
+        if (mj.ok) setMe(mj.user as { is_super_admin: boolean; is_site_medical_head: boolean });
       })
       .finally(() => setLoading(false));
   }
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [id]);
+
+
+  async function submitDecision() {
+    if (!decisionMode) return;
+    if (!decisionRationale.trim()) return;
+    setDecisionWorking(true);
+    try {
+      const r = await fetch(`/api/vc-onboarding/prescreens/${id}/decision`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ decision: decisionMode, rationale: decisionRationale.trim() }),
+      });
+      const j = await r.json();
+      if (!r.ok || !j.ok) {
+        alert(j.error || "Decision failed");
+        return;
+      }
+      setDecisionResult({ stage: j.stage, physician_id: j.physician_id });
+      setDecisionMode(null);
+      setDecisionRationale("");
+      load();
+    } finally {
+      setDecisionWorking(false);
+    }
+  }
 
   if (loading) return (<><TopNav /><main className="max-w-[900px] mx-auto px-8 py-8 text-sm text-stone-500">Loading…</main></>);
   if (error || !data) return (
@@ -232,6 +265,108 @@ export default function OnboardingDetailPage() {
                 ⏳ Decision stage — super-admin can confirm / extend / terminate (ships in EPI.3c).
               </div>
             )}
+          </section>
+        )}
+
+        {data.stage === "decision" && (
+          <section className="bg-white border border-stone-200 rounded-xl">
+            <div className="px-5 py-3.5 border-b border-stone-100">
+              <h2 className="text-sm font-semibold">Final decision</h2>
+              <div className="text-xs text-stone-500 mt-0.5">
+                {cases.length} {cases.length === 1 ? "case" : "cases"} observed.
+                {cases.length > 0 && (
+                  (() => {
+                    const allScores = cases.flatMap((c) => Object.values(c.scores));
+                    const avg = allScores.length > 0 ? allScores.reduce((a, b) => a + b, 0) / allScores.length : 0;
+                    const flags = cases.filter((c) => c.flag_severity !== "none").length;
+                    return ` Overall avg ${avg.toFixed(2)}/5${flags > 0 ? ` · ${flags} ${flags === 1 ? "flag" : "flags"}` : ""}.`;
+                  })()
+                )}
+              </div>
+            </div>
+
+            {(me?.is_super_admin || me?.is_site_medical_head) ? (
+              <>
+                <div className="px-5 py-4 grid grid-cols-3 gap-2">
+                  <button
+                    onClick={() => setDecisionMode("confirm_privileges")}
+                    className={`px-3 py-3 rounded-lg text-sm font-medium border-2 ${decisionMode === "confirm_privileges" ? "bg-emerald-600 text-white border-emerald-600" : "bg-white text-emerald-700 border-emerald-200 hover:bg-emerald-50"}`}
+                  >
+                    ✓ Confirm privileges
+                  </button>
+                  <button
+                    onClick={() => setDecisionMode("extend_observation")}
+                    className={`px-3 py-3 rounded-lg text-sm font-medium border-2 ${decisionMode === "extend_observation" ? "bg-amber-600 text-white border-amber-600" : "bg-white text-amber-700 border-amber-200 hover:bg-amber-50"}`}
+                  >
+                    + Extend observation (max 5)
+                  </button>
+                  <button
+                    onClick={() => setDecisionMode("terminate")}
+                    className={`px-3 py-3 rounded-lg text-sm font-medium border-2 ${decisionMode === "terminate" ? "bg-red-600 text-white border-red-600" : "bg-white text-red-700 border-red-200 hover:bg-red-50"}`}
+                  >
+                    ✕ Terminate
+                  </button>
+                </div>
+
+                {decisionMode && (
+                  <div className="px-5 pb-5">
+                    <label className="block text-xs font-medium text-stone-500 mb-1.5">
+                      Rationale (required, audited)
+                    </label>
+                    <textarea
+                      value={decisionRationale}
+                      onChange={(e) => setDecisionRationale(e.target.value)}
+                      rows={3}
+                      placeholder={
+                        decisionMode === "confirm_privileges"
+                          ? "Why this VC is being confirmed for privileges?"
+                          : decisionMode === "extend_observation"
+                          ? "Why extend to additional observation cases?"
+                          : "Why is this VC being terminated?"
+                      }
+                      className="w-full px-3 py-2 border border-stone-200 rounded-lg text-sm outline-none focus:border-brand font-sans leading-relaxed"
+                    />
+                    <div className="flex justify-end gap-2 mt-3">
+                      <button onClick={() => { setDecisionMode(null); setDecisionRationale(""); }} className="btn-ghost">Cancel</button>
+                      <button
+                        onClick={submitDecision}
+                        disabled={!decisionRationale.trim() || decisionWorking}
+                        className={`px-4 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-50 ${
+                          decisionMode === "confirm_privileges" ? "bg-emerald-600 hover:bg-emerald-700"
+                          : decisionMode === "extend_observation" ? "bg-amber-600 hover:bg-amber-700"
+                          : "bg-red-600 hover:bg-red-700"
+                        }`}
+                      >
+                        {decisionWorking ? "Working…" : "Submit decision"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="px-5 py-8 text-center text-sm text-stone-500">
+                Awaiting Site Medical Head or super-admin to make the final decision.
+              </div>
+            )}
+          </section>
+        )}
+
+        {data.stage === "onboarded" && (
+          <section className="bg-emerald-50 border border-emerald-200 rounded-xl px-5 py-4 text-sm text-emerald-800">
+            ✓ <strong>Onboarded</strong>{decisionResult?.physician_id || data.physician_id ? (
+              <>
+                {" "}— physician record live.
+                <Link href={`/physicians/${decisionResult?.physician_id || data.physician_id}`} className="ml-2 text-emerald-900 font-medium underline">
+                  Open physician profile →
+                </Link>
+              </>
+            ) : null}
+          </section>
+        )}
+
+        {data.stage === "terminated" && (
+          <section className="bg-red-50 border border-red-200 rounded-xl px-5 py-4 text-sm text-red-800">
+            ✕ <strong>Terminated.</strong> Re-onboarding requires super-admin override + documented re-evaluation per locked decision #32.
           </section>
         )}
       </main>

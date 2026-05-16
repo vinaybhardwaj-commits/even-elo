@@ -1,0 +1,141 @@
+import { NextRequest, NextResponse } from "next/server";
+import { neon } from "@neondatabase/serverless";
+import { actorFromRequest } from "@/lib/auth";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+export const fetchCache = "force-no-store";
+export const runtime = "nodejs";
+
+const NO_STORE = { "Cache-Control": "no-store, max-age=0" };
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const ALLOWED_DECISIONS = new Set(["confirm_privileges", "extend_observation", "terminate"]);
+
+/**
+ * POST /api/vc-onboarding/prescreens/[id]/decision
+ *
+ * Body: { decision: 'confirm_privileges'|'extend_observation'|'terminate', rationale }
+ *
+ * Gated to super_admin OR is_site_medical_head.
+ *
+ * Effects per decision:
+ *   confirm_privileges  → creates physicians + physician_engagements (visiting_consultant,
+ *                          status='active', start_date=today). Links prescreen.physician_id.
+ *                          Sets stage='onboarded'. Audit row.
+ *   extend_observation  → stage back to 'observation' (cap stays at 5 cases). Audit row.
+ *   terminate           → stage='terminated'. Audit row.
+ *
+ * One-shot: refuses if stage already 'onboarded' or 'terminated'.
+ */
+export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const { id } = await ctx.params;
+  if (!UUID_RE.test(id)) return NextResponse.json({ ok: false, error: "invalid id" }, { status: 400, headers: NO_STORE });
+
+  let actor;
+  try { actor = await actorFromRequest(); }
+  catch { return NextResponse.json({ ok: false, error: "Unauthenticated" }, { status: 401, headers: NO_STORE }); }
+
+  const body = await req.json();
+  const { decision, rationale } = body ?? {};
+  if (!decision || !ALLOWED_DECISIONS.has(decision)) {
+    return NextResponse.json({ ok: false, error: "decision must be confirm_privileges | extend_observation | terminate" }, { status: 400, headers: NO_STORE });
+  }
+  if (!rationale || !String(rationale).trim()) {
+    return NextResponse.json({ ok: false, error: "rationale required" }, { status: 400, headers: NO_STORE });
+  }
+
+  const url = process.env.DATABASE_URL;
+  if (!url) return NextResponse.json({ ok: false, error: "DATABASE_URL not configured" }, { status: 500, headers: NO_STORE });
+  const sql = neon(url);
+
+  // Role gate
+  const me = (await sql`SELECT is_super_admin, is_site_medical_head FROM profiles WHERE id = ${actor.profileId}::uuid`) as Array<{ is_super_admin: boolean; is_site_medical_head: boolean }>;
+  if (me.length === 0 || !(me[0].is_super_admin || me[0].is_site_medical_head)) {
+    return NextResponse.json({ ok: false, error: "Decision requires super_admin or Site Medical Head" }, { status: 403, headers: NO_STORE });
+  }
+
+  // Load the prescreen
+  const psRows = (await sql`
+    SELECT id::text AS id, prospective_email, prospective_full_name, prospective_specialty,
+           hospital_id::text AS hospital_id, stage, physician_id::text AS physician_id
+    FROM vc_prescreens WHERE id = ${id}::uuid
+  `) as Array<{ id: string; prospective_email: string; prospective_full_name: string; prospective_specialty: string | null; hospital_id: string; stage: string; physician_id: string | null }>;
+  if (psRows.length === 0) return NextResponse.json({ ok: false, error: "prescreen not found" }, { status: 404, headers: NO_STORE });
+  const ps = psRows[0];
+
+  // Final stages are one-shot
+  if (ps.stage === "onboarded" || ps.stage === "terminated") {
+    return NextResponse.json({ ok: false, error: `Cannot override stage '${ps.stage}'` }, { status: 409, headers: NO_STORE });
+  }
+  // Decision must come from observation or decision stage
+  if (!["observation", "decision"].includes(ps.stage)) {
+    return NextResponse.json({ ok: false, error: `Decision not allowed in stage '${ps.stage}'` }, { status: 409, headers: NO_STORE });
+  }
+
+  let newStage: string = ps.stage;
+  let physicianId: string | null = ps.physician_id;
+  let engagementId: string | null = null;
+
+  if (decision === "confirm_privileges") {
+    // Create physician (or reuse if email already maps to one — defensive)
+    const existing = (await sql`SELECT id::text AS id FROM physicians WHERE lower(email) = ${ps.prospective_email.toLowerCase()} LIMIT 1`) as Array<{ id: string }>;
+    if (existing.length > 0) {
+      physicianId = existing[0].id;
+    } else {
+      const newPhys = (await sql`
+        INSERT INTO physicians (full_name, primary_specialty, email, date_joined_network, current_status)
+        VALUES (${ps.prospective_full_name}, ${ps.prospective_specialty}, ${ps.prospective_email}, CURRENT_DATE, 'active')
+        RETURNING id::text AS id
+      `) as Array<{ id: string }>;
+      physicianId = newPhys[0].id;
+    }
+
+    // Create active VC engagement at the prescreen's hospital
+    const eng = (await sql`
+      INSERT INTO physician_engagements (
+        physician_id, hospital_id, engagement_type, start_date, specialty, status
+      ) VALUES (
+        ${physicianId}::uuid, ${ps.hospital_id}::uuid, 'visiting_consultant',
+        CURRENT_DATE, ${ps.prospective_specialty}, 'active'
+      )
+      RETURNING id::text AS id
+    `) as Array<{ id: string }>;
+    engagementId = eng[0].id;
+
+    // Link + advance
+    await sql`
+      UPDATE vc_prescreens SET stage='onboarded', physician_id=${physicianId}::uuid, decided_at=NOW(), updated_at=NOW()
+      WHERE id = ${id}::uuid
+    `;
+    newStage = "onboarded";
+  } else if (decision === "extend_observation") {
+    await sql`UPDATE vc_prescreens SET stage='observation', updated_at=NOW() WHERE id = ${id}::uuid`;
+    newStage = "observation";
+  } else if (decision === "terminate") {
+    await sql`UPDATE vc_prescreens SET stage='terminated', decided_at=NOW(), updated_at=NOW() WHERE id = ${id}::uuid`;
+    newStage = "terminated";
+  }
+
+  await sql`
+    INSERT INTO audit_log_v2 (actor_user_id, action, entity_type, entity_id, before_json, after_json)
+    VALUES (
+      ${actor.profileId}::uuid,
+      ${`decision_${decision}`},
+      'vc_prescreen',
+      ${id},
+      ${JSON.stringify({ stage: ps.stage, physician_id: ps.physician_id })}::jsonb,
+      ${JSON.stringify({
+        stage: newStage,
+        physician_id: physicianId,
+        engagement_id: engagementId,
+        rationale: String(rationale).trim(),
+      })}::jsonb
+    )
+  `;
+
+  return NextResponse.json(
+    { ok: true, decision, stage: newStage, physician_id: physicianId, engagement_id: engagementId },
+    { headers: NO_STORE },
+  );
+}
