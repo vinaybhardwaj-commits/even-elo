@@ -662,5 +662,24 @@ export const MIGRATIONS: Migration[] = [
       ALTER TABLE profiles ADD COLUMN IF NOT EXISTS requested_roles jsonb NOT NULL DEFAULT '[]'::jsonb;
     `,
   },
+
+  // ────────────────────────────────────────────────────────────
+  // EPI v3.0c fixup — refresh profiles_with_roles view to include
+  // requested_roles (added to profiles AFTER the view was created in v14)
+  // ────────────────────────────────────────────────────────────
+  {
+    id: "015_profiles_view_refresh",
+    description: "DROP + recreate profiles_with_roles view so SELECT p.* picks up requested_roles. Idempotent.",
+    sql: `
+      DROP VIEW IF EXISTS profiles_with_roles;
+      CREATE VIEW profiles_with_roles AS
+      SELECT
+        p.*,
+        EXISTS (SELECT 1 FROM profile_hospital_roles r WHERE r.profile_id = p.id AND r.role = 'site_medical_head') AS is_site_medical_head,
+        EXISTS (SELECT 1 FROM profile_hospital_roles r WHERE r.profile_id = p.id AND r.role = 'hr')                AS is_hr,
+        EXISTS (SELECT 1 FROM profile_hospital_roles r WHERE r.profile_id = p.id AND r.role = 'sgc_member')        AS is_sgc_member
+      FROM profiles p;
+    `,
+  },
 ];
 
