@@ -20,11 +20,13 @@ const FLAG_OPTIONS = [
 export function AddObservationModal({
   prescreenId,
   allowedRoles,
+  hospitalOptions,
   onClose,
   onSaved,
 }: {
   prescreenId: string;
   allowedRoles: string[];
+  hospitalOptions: Array<{ id: string; code: string }>;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -36,6 +38,7 @@ export function AddObservationModal({
   const [flagSeverity, setFlagSeverity] = useState<"none" | "concern" | "immediate_termination_recommended">("none");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [hospitalId, setHospitalId] = useState<string>(hospitalOptions[0]?.id ?? "");
 
   useEffect(() => {
     if (!observerRole && allowedRoles.length > 0) setObserverRole(allowedRoles[0]);
@@ -54,6 +57,7 @@ export function AddObservationModal({
     e.preventDefault();
     if (!procedure.trim()) { setError("Procedure required."); return; }
     if (!observerRole) { setError("Observer role required."); return; }
+    if (!hospitalId) { setError("Hospital required."); return; }
     if (!allScored) { setError("All 6 dimensions must be scored 1-5."); return; }
     setError(null);
     setSubmitting(true);
@@ -65,6 +69,7 @@ export function AddObservationModal({
           case_date: caseDate,
           procedure: procedure.trim(),
           observer_role: observerRole,
+          hospital_id: hospitalId,
           scores,
           narrative_notes: narrative.trim() || null,
           flag_severity: flagSeverity,
