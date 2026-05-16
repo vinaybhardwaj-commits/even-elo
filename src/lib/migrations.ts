@@ -646,8 +646,7 @@ export const MIGRATIONS: Migration[] = [
       ALTER TABLE vc_observation_cases ALTER COLUMN hospital_id SET NOT NULL;
       CREATE INDEX IF NOT EXISTS idx_obs_cases_hospital ON vc_observation_cases(hospital_id);
 
-      -- 7. positions UNIQUE on position_name (post-refactor cleanup)
-      ALTER TABLE positions ADD CONSTRAINT positions_position_name_key UNIQUE (position_name);
+      -- 7. (skipped — position_name UNIQUE already established in migration v1)
 
       -- 8. profiles.requested_roles jsonb (populated at /auth/signup in v3.0c)
       ALTER TABLE profiles ADD COLUMN IF NOT EXISTS requested_roles jsonb NOT NULL DEFAULT '[]'::jsonb;
