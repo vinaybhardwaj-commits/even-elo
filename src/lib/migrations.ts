@@ -537,5 +537,24 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_pf_hospital  ON patient_feedback(hospital_id);
     `,
   },
+
+  // ────────────────────────────────────────────────────────────
+  // EPI post-launch — add 'Medical Administrator' position to EHRC
+  // ────────────────────────────────────────────────────────────
+  {
+    id: "013_position_medical_administrator",
+    description: "Add 'Medical Administrator' as a 14th position at EHRC. Idempotent insert; safe to re-run.",
+    sql: `
+      INSERT INTO positions (position_name, team, description, hospital_id)
+      SELECT 'Medical Administrator', 'Admin', 'Senior medical administration / governance support', h.id
+      FROM hospitals h
+      WHERE h.code = 'EHRC'
+        AND NOT EXISTS (
+          SELECT 1 FROM positions p
+          WHERE p.position_name = 'Medical Administrator'
+            AND p.hospital_id = h.id
+        );
+    `,
+  },
 ];
 

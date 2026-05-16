@@ -14,7 +14,7 @@ export const runtime = "nodejs";
  *      weight_versions + audit_log + profiles/engagements/privileges/
  *      physicians/hospitals/positions.
  *   2. Inserts EHRC hospital row.
- *   3. Inserts 13 EPI positions, all scoped to EHRC (lock-down decision #17).
+ *   3. Inserts 14 EPI positions, all scoped to EHRC (lock-down decision #17).
  *   4. Inserts pilot weight_version 33/34/33 so v1 ELO recompute logic still works.
  *   5. Inserts V (Vinay Bhardwaj) as a physician + engagement + profile.
  *      PIN=1981 (bcrypt hash precomputed; EPI.0b's auth route will verify).
@@ -39,6 +39,7 @@ const EHRC_POSITIONS = [
   { name: "Site Medical Head", team: "Admin", desc: "Hospital-scoped governance, VC onboarding pipeline" },
   { name: "Hospital PM", team: "Admin", desc: "Hospital product management / GM" },
   { name: "Staff", team: "Admin", desc: "Catch-all clinical staff who can submit incidents" },
+  { name: "Medical Administrator", team: "Admin", desc: "Senior medical administration / governance support" },
 ];
 
 export async function POST() {
@@ -77,7 +78,7 @@ export async function POST() {
     const hospitalId = hosp[0].id;
     log.push(`2. EHRC hospital_id = ${hospitalId}`);
 
-    // 3. 13 EPI positions
+    // 3. 14 EPI positions
     for (const p of EHRC_POSITIONS) {
       await sql`
         INSERT INTO positions (position_name, team, description, hospital_id)
