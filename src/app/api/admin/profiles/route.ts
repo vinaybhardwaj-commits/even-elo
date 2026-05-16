@@ -37,7 +37,7 @@ export async function GET(req: NextRequest) {
       p.created_at,
       (SELECT COUNT(*)::int FROM incidents i WHERE i.submitter_user_id = p.id)                                  AS submitted_count,
       (SELECT COUNT(*)::int FROM incidents i WHERE i.submitter_user_id = p.id AND i.status = 'retracted')        AS retracted_count
-    FROM profiles p
+    FROM profiles_with_roles p
     JOIN positions pos ON pos.id = p.position_id
     JOIN hospitals h   ON h.id   = p.hospital_id
     WHERE (${status} = '' OR p.status = ${status})

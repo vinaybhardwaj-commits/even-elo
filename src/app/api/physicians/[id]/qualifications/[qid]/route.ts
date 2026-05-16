@@ -44,7 +44,7 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
   let setVerifiedAt: string | null = b.verified_at as string | null;
   if (body.verified === true) {
     // role check
-    const me = await sql`SELECT is_super_admin, is_hr, is_site_medical_head FROM profiles WHERE id = ${actor.profileId}::uuid`;
+    const me = await sql`SELECT is_super_admin, is_hr, is_site_medical_head FROM profiles_with_roles WHERE id = ${actor.profileId}::uuid`;
     const meRow = (me as Array<Record<string, unknown>>)[0];
     if (!meRow.is_super_admin && !meRow.is_hr && !meRow.is_site_medical_head) {
       return NextResponse.json({ ok: false, error: "Only super_admin, HR, or Site Medical Head can verify" }, { status: 403, headers: NO_STORE });

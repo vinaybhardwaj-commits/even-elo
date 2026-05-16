@@ -62,7 +62,7 @@ export async function GET(req: NextRequest) {
 
   // Caller's flags (re-read in case JWT is stale)
   const meRows = (await sql`
-    SELECT email, is_super_admin, is_site_medical_head FROM profiles WHERE id = ${actor.profileId}::uuid
+    SELECT email, is_super_admin, is_site_medical_head FROM profiles_with_roles WHERE id = ${actor.profileId}::uuid
   `) as Array<{ email: string; is_super_admin: boolean; is_site_medical_head: boolean }>;
   if (meRows.length === 0) return NextResponse.json({ ok: false, error: "no profile" }, { status: 401, headers: NO_STORE });
   const me = meRows[0];

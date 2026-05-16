@@ -60,6 +60,9 @@ export async function POST() {
     await sql`TRUNCATE vcs RESTART IDENTITY CASCADE`;
     await sql`TRUNCATE weight_versions RESTART IDENTITY CASCADE`;
     await sql`TRUNCATE audit_log RESTART IDENTITY CASCADE`;
+    // v3.0a: wipe join tables before parents so the migration view + FKs don't trip
+    await sql`DELETE FROM profile_hospital_roles`;
+    await sql`DELETE FROM vc_prescreen_hospitals`;
     await sql`DELETE FROM profiles`;
     await sql`DELETE FROM physician_engagements`;
     await sql`DELETE FROM privileges`;
@@ -69,23 +72,28 @@ export async function POST() {
     await sql`DELETE FROM hospitals`;
     log.push("1. v1 data wiped (schema preserved)");
 
-    // 2. EHRC hospital
-    const hosp = (await sql`
-      INSERT INTO hospitals (code, name, is_active)
-      VALUES ('EHRC', 'Even Hospital Race Course Road', true)
-      RETURNING id::text AS id
-    `) as Array<{ id: string }>;
-    const hospitalId = hosp[0].id;
-    log.push(`2. EHRC hospital_id = ${hospitalId}`);
+    // 2. Seed all 4 hospitals (PRD §A.1)
+    const hospInsert = (await sql`
+      INSERT INTO hospitals (code, name, is_active) VALUES
+        ('EHRC', 'EHRC', true),
+        ('EHBR', 'EHBR', true),
+        ('EHIN', 'EHIN', true),
+        ('EHBO', 'EHBO', true)
+      RETURNING id::text AS id, code
+    `) as Array<{ id: string; code: string }>;
+    const hospByCode: Record<string, string> = {};
+    for (const h of hospInsert) hospByCode[h.code] = h.id;
+    const hospitalId = hospByCode["EHRC"]; // V remains EHRC-homed
+    log.push(`2. 4 hospitals seeded (EHRC=${hospitalId})`);
 
-    // 3. 14 EPI positions
+    // 3. 14 EPI positions (shared catalogue, v3.0a — no hospital_id)
     for (const p of EHRC_POSITIONS) {
       await sql`
-        INSERT INTO positions (position_name, team, description, hospital_id)
-        VALUES (${p.name}, ${p.team}, ${p.desc}, ${hospitalId}::uuid)
+        INSERT INTO positions (position_name, team, description)
+        VALUES (${p.name}, ${p.team}, ${p.desc})
       `;
     }
-    log.push(`3. ${EHRC_POSITIONS.length} positions inserted at EHRC`);
+    log.push(`3. ${EHRC_POSITIONS.length} positions inserted (shared catalogue)`);
 
     // 4. Pilot weight_version
     await sql`
@@ -118,7 +126,7 @@ export async function POST() {
 
     const msPos = (await sql`
       SELECT id::text AS id FROM positions
-      WHERE position_name = 'Medical Superintendent' AND hospital_id = ${hospitalId}::uuid
+      WHERE position_name = 'Medical Superintendent'
       LIMIT 1
     `) as Array<{ id: string }>;
     const msPositionId = msPos[0].id;
@@ -126,14 +134,14 @@ export async function POST() {
     await sql`
       INSERT INTO profiles (
         email, full_name, password_hash, position_id, hospital_id,
-        status, is_super_admin, is_sgc_member, is_hr, is_site_medical_head
+        status, is_super_admin
       ) VALUES (
         'vinay.bhardwaj@even.in', 'Vinay Bhardwaj', ${V_PIN_HASH},
         ${msPositionId}::uuid, ${hospitalId}::uuid,
-        'active', true, false, false, false
+        'active', true
       )
     `;
-    log.push("5c. V profile (Medical Superintendent, super_admin, active, PIN=1981) inserted");
+    log.push("5c. V profile (Medical Superintendent, super_admin, active, PIN=1981) inserted — per-site roles via profile_hospital_roles");
 
     // Verify
     const counts = (await sql`

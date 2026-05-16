@@ -122,7 +122,7 @@ export async function POST(request: NextRequest) {
           p.is_sgc_member,
           p.is_hr,
           p.is_site_medical_head
-        FROM profiles p
+        FROM profiles_with_roles p
         JOIN positions pos ON pos.id = p.position_id
         JOIN hospitals h   ON h.id   = p.hospital_id
         WHERE p.id = ${newProfile.id as string}::uuid

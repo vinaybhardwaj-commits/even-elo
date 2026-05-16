@@ -556,5 +556,102 @@ export const MIGRATIONS: Migration[] = [
         );
     `,
   },
+
+  // ────────────────────────────────────────────────────────────
+  // EPI v3.0a — MULTI-HOSPITAL CUTOVER (PRD §G, 8 steps)
+  // ────────────────────────────────────────────────────────────
+  {
+    id: "014_multi_hospital_v3",
+    description: "v3.0a: seed 3 new hospitals (EHBR/EHIN/EHBO), drop positions.hospital_id (shared catalogue), profile_hospital_roles + backfill + drop per-site flags + profiles_with_roles view, incidents.hospital_id NOT NULL, vc_prescreen_hospitals join, vc_observation_cases.hospital_id, positions UNIQUE, profiles.requested_roles jsonb.",
+    sql: `
+      -- 1. Seed 3 new hospitals
+      INSERT INTO hospitals (code, name, is_active) VALUES
+        ('EHBR', 'EHBR', true),
+        ('EHIN', 'EHIN', true),
+        ('EHBO', 'EHBO', true)
+      ON CONFLICT (code) DO NOTHING;
+
+      -- 2. Drop positions.hospital_id (shared catalogue). EPI v1 only seeded EHRC,
+      --    so the 14 position rows already have unique position_names. No de-dup needed.
+      DROP INDEX IF EXISTS idx_positions_hospital;
+      ALTER TABLE positions DROP CONSTRAINT IF EXISTS positions_hospital_id_fkey;
+      ALTER TABLE positions DROP COLUMN IF EXISTS hospital_id;
+
+      -- 3. profile_hospital_roles table (replaces per-site flags on profiles)
+      CREATE TABLE IF NOT EXISTS profile_hospital_roles (
+        profile_id   uuid NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        hospital_id  uuid NOT NULL REFERENCES hospitals(id) ON DELETE CASCADE,
+        role         text NOT NULL CHECK (role IN ('site_medical_head','hr','sgc_member')),
+        granted_by   uuid REFERENCES profiles(id),
+        granted_at   timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY (profile_id, hospital_id, role)
+      );
+      CREATE INDEX IF NOT EXISTS idx_phr_profile  ON profile_hospital_roles(profile_id);
+      CREATE INDEX IF NOT EXISTS idx_phr_hospital ON profile_hospital_roles(hospital_id);
+      CREATE INDEX IF NOT EXISTS idx_phr_role     ON profile_hospital_roles(role);
+
+      -- 3a. Backfill from existing boolean flags. Each user-with-flag gets a row
+      --     at their profile.hospital_id (their home hospital).
+      INSERT INTO profile_hospital_roles (profile_id, hospital_id, role, granted_by, granted_at)
+        SELECT id, hospital_id, 'site_medical_head', NULL, now() FROM profiles
+          WHERE is_site_medical_head = true AND hospital_id IS NOT NULL
+        ON CONFLICT DO NOTHING;
+      INSERT INTO profile_hospital_roles (profile_id, hospital_id, role, granted_by, granted_at)
+        SELECT id, hospital_id, 'hr', NULL, now() FROM profiles
+          WHERE is_hr = true AND hospital_id IS NOT NULL
+        ON CONFLICT DO NOTHING;
+      INSERT INTO profile_hospital_roles (profile_id, hospital_id, role, granted_by, granted_at)
+        SELECT id, hospital_id, 'sgc_member', NULL, now() FROM profiles
+          WHERE is_sgc_member = true AND hospital_id IS NOT NULL
+        ON CONFLICT DO NOTHING;
+
+      -- 3b. Drop the boolean columns
+      ALTER TABLE profiles DROP COLUMN IF EXISTS is_site_medical_head;
+      ALTER TABLE profiles DROP COLUMN IF EXISTS is_hr;
+      ALTER TABLE profiles DROP COLUMN IF EXISTS is_sgc_member;
+
+      -- 3c. Create profiles_with_roles view (derives the booleans as EXISTS subqueries).
+      --     All read paths SELECT FROM this view; writes still go to profiles + PHR.
+      CREATE OR REPLACE VIEW profiles_with_roles AS
+      SELECT
+        p.*,
+        EXISTS (SELECT 1 FROM profile_hospital_roles r WHERE r.profile_id = p.id AND r.role = 'site_medical_head') AS is_site_medical_head,
+        EXISTS (SELECT 1 FROM profile_hospital_roles r WHERE r.profile_id = p.id AND r.role = 'hr')                AS is_hr,
+        EXISTS (SELECT 1 FROM profile_hospital_roles r WHERE r.profile_id = p.id AND r.role = 'sgc_member')        AS is_sgc_member
+      FROM profiles p;
+
+      -- 4. Incidents.hospital_id NOT NULL (backfill any nulls to EHRC first)
+      UPDATE incidents SET hospital_id = (SELECT id FROM hospitals WHERE code = 'EHRC')
+        WHERE hospital_id IS NULL;
+      ALTER TABLE incidents ALTER COLUMN hospital_id SET NOT NULL;
+
+      -- 5. vc_prescreen_hospitals join table (one row per (prescreen, hospital))
+      CREATE TABLE IF NOT EXISTS vc_prescreen_hospitals (
+        prescreen_id uuid NOT NULL REFERENCES vc_prescreens(id) ON DELETE CASCADE,
+        hospital_id  uuid NOT NULL REFERENCES hospitals(id)     ON DELETE CASCADE,
+        PRIMARY KEY (prescreen_id, hospital_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_vcph_prescreen ON vc_prescreen_hospitals(prescreen_id);
+      CREATE INDEX IF NOT EXISTS idx_vcph_hospital  ON vc_prescreen_hospitals(hospital_id);
+      -- Backfill: every existing prescreen gets a single-hospital row
+      INSERT INTO vc_prescreen_hospitals (prescreen_id, hospital_id)
+        SELECT id, hospital_id FROM vc_prescreens
+        ON CONFLICT DO NOTHING;
+
+      -- 6. vc_observation_cases.hospital_id (each case tagged with hospital it happened at)
+      ALTER TABLE vc_observation_cases ADD COLUMN IF NOT EXISTS hospital_id uuid REFERENCES hospitals(id);
+      UPDATE vc_observation_cases o
+         SET hospital_id = (SELECT hospital_id FROM vc_prescreens WHERE id = o.prescreen_id)
+       WHERE o.hospital_id IS NULL;
+      ALTER TABLE vc_observation_cases ALTER COLUMN hospital_id SET NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_obs_cases_hospital ON vc_observation_cases(hospital_id);
+
+      -- 7. positions UNIQUE on position_name (post-refactor cleanup)
+      ALTER TABLE positions ADD CONSTRAINT positions_position_name_key UNIQUE (position_name);
+
+      -- 8. profiles.requested_roles jsonb (populated at /auth/signup in v3.0c)
+      ALTER TABLE profiles ADD COLUMN IF NOT EXISTS requested_roles jsonb NOT NULL DEFAULT '[]'::jsonb;
+    `,
+  },
 ];
 

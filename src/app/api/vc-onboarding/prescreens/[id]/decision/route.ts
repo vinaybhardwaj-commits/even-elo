@@ -50,7 +50,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   const sql = neon(url);
 
   // Role gate
-  const me = (await sql`SELECT is_super_admin, is_site_medical_head FROM profiles WHERE id = ${actor.profileId}::uuid`) as Array<{ is_super_admin: boolean; is_site_medical_head: boolean }>;
+  const me = (await sql`SELECT is_super_admin, is_site_medical_head FROM profiles_with_roles WHERE id = ${actor.profileId}::uuid`) as Array<{ is_super_admin: boolean; is_site_medical_head: boolean }>;
   if (me.length === 0 || !(me[0].is_super_admin || me[0].is_site_medical_head)) {
     return NextResponse.json({ ok: false, error: "Decision requires super_admin or Site Medical Head" }, { status: 403, headers: NO_STORE });
   }

@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
   const sql = neon(url);
 
   // Visibility: super_admin / is_site_medical_head / is_hr see all; others see nothing.
-  const me = (await sql`SELECT is_super_admin, is_site_medical_head, is_hr FROM profiles WHERE id = ${actor.profileId}::uuid`) as Array<{ is_super_admin: boolean; is_site_medical_head: boolean; is_hr: boolean }>;
+  const me = (await sql`SELECT is_super_admin, is_site_medical_head, is_hr FROM profiles_with_roles WHERE id = ${actor.profileId}::uuid`) as Array<{ is_super_admin: boolean; is_site_medical_head: boolean; is_hr: boolean }>;
   if (me.length === 0) return NextResponse.json({ ok: false, error: "no profile" }, { status: 401, headers: NO_STORE });
   const allowed = me[0].is_super_admin || me[0].is_site_medical_head || me[0].is_hr;
   if (!allowed) return NextResponse.json({ ok: true, rows: [], counts: {}, total: 0 }, { headers: NO_STORE });
@@ -106,7 +106,7 @@ export async function POST(req: NextRequest) {
   const sql = neon(url);
 
   // Role gate: super_admin OR is_site_medical_head OR is_hr
-  const me = (await sql`SELECT is_super_admin, is_site_medical_head, is_hr FROM profiles WHERE id = ${actor.profileId}::uuid`) as Array<{ is_super_admin: boolean; is_site_medical_head: boolean; is_hr: boolean }>;
+  const me = (await sql`SELECT is_super_admin, is_site_medical_head, is_hr FROM profiles_with_roles WHERE id = ${actor.profileId}::uuid`) as Array<{ is_super_admin: boolean; is_site_medical_head: boolean; is_hr: boolean }>;
   if (me.length === 0) return NextResponse.json({ ok: false, error: "no profile" }, { status: 401, headers: NO_STORE });
   if (!(me[0].is_super_admin || me[0].is_site_medical_head || me[0].is_hr)) {
     return NextResponse.json({ ok: false, error: "Forbidden — pre-screen requires super_admin, Site Medical Head, or HR" }, { status: 403, headers: NO_STORE });

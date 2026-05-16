@@ -48,9 +48,7 @@ export async function POST(req: NextRequest) {
     hospital_code = "EHRC",
     status = "active",
     is_super_admin = false,
-    is_sgc_member = false,
-    is_hr = false,
-    is_site_medical_head = false,
+    roles = [],
   } = body ?? {};
 
   if (!email || typeof email !== "string" || !email.toLowerCase().endsWith("@even.in")) {
@@ -85,7 +83,7 @@ export async function POST(req: NextRequest) {
   if (hosp.length === 0) {
     return NextResponse.json({ ok: false, error: `Hospital ${hospital_code} not active` }, { status: 400, headers: NO_STORE });
   }
-  const pos = (await sql`SELECT id::text AS id FROM positions WHERE position_name = ${position_name} AND hospital_id = ${hosp[0].id}::uuid LIMIT 1`) as Array<{ id: string }>;
+  const pos = (await sql`SELECT id::text AS id FROM positions WHERE position_name = ${position_name} LIMIT 1`) as Array<{ id: string }>;
   if (pos.length === 0) {
     return NextResponse.json({ ok: false, error: `Position '${position_name}' not found at ${hospital_code}` }, { status: 400, headers: NO_STORE });
   }
@@ -95,15 +93,32 @@ export async function POST(req: NextRequest) {
   const inserted = (await sql`
     INSERT INTO profiles (
       email, full_name, password_hash, position_id, hospital_id, status,
-      is_super_admin, is_sgc_member, is_hr, is_site_medical_head
+      is_super_admin
     ) VALUES (
       ${lowerEmail}, ${full_name.trim()}, ${passwordHash},
       ${pos[0].id}::uuid, ${hosp[0].id}::uuid, ${status},
-      ${Boolean(is_super_admin)}, ${Boolean(is_sgc_member)},
-      ${Boolean(is_hr)}, ${Boolean(is_site_medical_head)}
+      ${Boolean(is_super_admin)}
     )
     RETURNING id::text AS id, email, full_name, status, is_super_admin
   `) as Array<Record<string, unknown>>;
+  const newProfileId = inserted[0].id as string;
+
+  // Optional per-hospital roles: [{ hospital_code, role }, ...]
+  const grantedRoles: Array<{ hospital_code: string; role: string }> = [];
+  if (Array.isArray(roles) && roles.length > 0) {
+    for (const r of roles) {
+      if (!r || typeof r.hospital_code !== "string" || typeof r.role !== "string") continue;
+      if (!["site_medical_head","hr","sgc_member"].includes(r.role)) continue;
+      const rh = (await sql`SELECT id::text AS id FROM hospitals WHERE code = ${r.hospital_code} AND is_active = true LIMIT 1`) as Array<{ id: string }>;
+      if (rh.length === 0) continue;
+      await sql`
+        INSERT INTO profile_hospital_roles (profile_id, hospital_id, role, granted_by)
+        VALUES (${newProfileId}::uuid, ${rh[0].id}::uuid, ${r.role}, NULL)
+        ON CONFLICT DO NOTHING
+      `;
+      grantedRoles.push({ hospital_code: r.hospital_code, role: r.role });
+    }
+  }
 
   await sql`
     INSERT INTO audit_log_v2 (action, entity_type, entity_id, after_json)
@@ -118,9 +133,7 @@ export async function POST(req: NextRequest) {
         hospital_code,
         status,
         is_super_admin: Boolean(is_super_admin),
-        is_sgc_member: Boolean(is_sgc_member),
-        is_hr: Boolean(is_hr),
-        is_site_medical_head: Boolean(is_site_medical_head),
+        granted_roles: grantedRoles,
         seeded_via: "/api/admin/seed-profile",
       })}::jsonb
     )
