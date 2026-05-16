@@ -590,20 +590,30 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_phr_hospital ON profile_hospital_roles(hospital_id);
       CREATE INDEX IF NOT EXISTS idx_phr_role     ON profile_hospital_roles(role);
 
-      -- 3a. Backfill from existing boolean flags. Each user-with-flag gets a row
-      --     at their profile.hospital_id (their home hospital).
-      INSERT INTO profile_hospital_roles (profile_id, hospital_id, role, granted_by, granted_at)
-        SELECT id, hospital_id, 'site_medical_head', NULL, now() FROM profiles
-          WHERE is_site_medical_head = true AND hospital_id IS NOT NULL
-        ON CONFLICT DO NOTHING;
-      INSERT INTO profile_hospital_roles (profile_id, hospital_id, role, granted_by, granted_at)
-        SELECT id, hospital_id, 'hr', NULL, now() FROM profiles
-          WHERE is_hr = true AND hospital_id IS NOT NULL
-        ON CONFLICT DO NOTHING;
-      INSERT INTO profile_hospital_roles (profile_id, hospital_id, role, granted_by, granted_at)
-        SELECT id, hospital_id, 'sgc_member', NULL, now() FROM profiles
-          WHERE is_sgc_member = true AND hospital_id IS NOT NULL
-        ON CONFLICT DO NOTHING;
+      -- 3a. Backfill from existing boolean flags ONLY if the columns still exist
+      --     (on re-runs after a failed first attempt, the columns are already dropped
+      --     and the backfill is already done — skip cleanly).
+      DO $$
+      BEGIN
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='profiles' AND column_name='is_site_medical_head') THEN
+          INSERT INTO profile_hospital_roles (profile_id, hospital_id, role, granted_by, granted_at)
+            SELECT id, hospital_id, 'site_medical_head', NULL, now() FROM profiles
+              WHERE is_site_medical_head = true AND hospital_id IS NOT NULL
+            ON CONFLICT DO NOTHING;
+        END IF;
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='profiles' AND column_name='is_hr') THEN
+          INSERT INTO profile_hospital_roles (profile_id, hospital_id, role, granted_by, granted_at)
+            SELECT id, hospital_id, 'hr', NULL, now() FROM profiles
+              WHERE is_hr = true AND hospital_id IS NOT NULL
+            ON CONFLICT DO NOTHING;
+        END IF;
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='profiles' AND column_name='is_sgc_member') THEN
+          INSERT INTO profile_hospital_roles (profile_id, hospital_id, role, granted_by, granted_at)
+            SELECT id, hospital_id, 'sgc_member', NULL, now() FROM profiles
+              WHERE is_sgc_member = true AND hospital_id IS NOT NULL
+            ON CONFLICT DO NOTHING;
+        END IF;
+      END $$;
 
       -- 3b. Drop the boolean columns
       ALTER TABLE profiles DROP COLUMN IF EXISTS is_site_medical_head;
