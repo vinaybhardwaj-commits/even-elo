@@ -512,5 +512,30 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_obs_cases_flag      ON vc_observation_cases(flag_severity) WHERE flag_severity <> 'none';
     `,
   },
+
+  // ────────────────────────────────────────────────────────────
+  // EPI.4 — patient_feedback (PRD §6.4 + locked decision #8)
+  // ────────────────────────────────────────────────────────────
+  {
+    id: "012_patient_feedback",
+    description: "Quarterly patient-feedback rows per (physician × hospital × period). Manual CSV upload from /admin/patient-feedback. Resend / Pulse integration is v1.x scope.",
+    sql: `
+      CREATE TABLE IF NOT EXISTS patient_feedback (
+        id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        physician_id    uuid NOT NULL REFERENCES physicians(id) ON DELETE CASCADE,
+        hospital_id     uuid NOT NULL REFERENCES hospitals(id),
+        feedback_period text NOT NULL,
+        csat_score      numeric(4,2),
+        complaint_count integer,
+        source          text,
+        uploaded_by     uuid REFERENCES profiles(id),
+        uploaded_at     timestamptz NOT NULL DEFAULT now(),
+        source_file     text,
+        UNIQUE (physician_id, hospital_id, feedback_period)
+      );
+      CREATE INDEX IF NOT EXISTS idx_pf_physician ON patient_feedback(physician_id);
+      CREATE INDEX IF NOT EXISTS idx_pf_hospital  ON patient_feedback(hospital_id);
+    `,
+  },
 ];
 

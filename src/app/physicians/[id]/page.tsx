@@ -65,6 +65,17 @@ interface Privilege {
   withdrawn_reason: string | null;
 }
 
+interface FeedbackRow {
+  id: string;
+  hospital_code: string;
+  feedback_period: string;
+  csat_score: number | null;
+  complaint_count: number | null;
+  source: string | null;
+  uploaded_at: string;
+  uploaded_by_email: string | null;
+}
+
 interface IncidentRow {
   id: string;
   submitted_at: string;
@@ -142,7 +153,7 @@ const SECTIONS = [
   { key: "metrics", label: "Clinical metrics", available: true },
   { key: "elo", label: "Surgical score · Even ELO", available: false, sprint: "Phase 3" },
   { key: "incidents", label: "Incidents", available: true },
-  { key: "feedback", label: "Patient feedback", available: false, sprint: "EPI.4" },
+  { key: "feedback", label: "Patient feedback", available: true },
 ] as const;
 
 function timeAgo(iso: string): string {
@@ -172,6 +183,7 @@ export default function PhysicianProfilePage() {
   const [me, setMe] = useState<UserSummary | null>(null);
   const [metrics, setMetrics] = useState<MetricsRow[]>([]);
   const [incidentsList, setIncidentsList] = useState<IncidentRow[]>([]);
+  const [feedback, setFeedback] = useState<FeedbackRow[]>([]);
   const [addQual, setAddQual] = useState(false);
   const [addPriv, setAddPriv] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -190,8 +202,9 @@ export default function PhysicianProfilePage() {
       fetch(`/api/auth/me`).then((r) => r.json()),
       fetch(`/api/physicians/${id}/clinical-metrics?months=24`).then((r) => r.json()),
       fetch(`/api/incidents?physician_id=${id}&limit=100`).then((r) => r.json()),
+      fetch(`/api/physicians/${id}/patient-feedback`).then((r) => r.json()),
     ])
-      .then(([pj, aj, qj, prj, mj, mxj, inj]) => {
+      .then(([pj, aj, qj, prj, mj, mxj, inj, fj]) => {
         if (!pj.ok) { setErr(pj.error || "Not found"); return; }
         setPhysician(pj.physician as Physician);
         setEngagements((pj.engagements ?? []) as Engagement[]);
@@ -201,6 +214,7 @@ export default function PhysicianProfilePage() {
         if (mj.ok) setMe(mj.user as UserSummary);
         if (mxj.ok) setMetrics(mxj.rows ?? []);
         if (inj.ok) setIncidentsList(inj.rows ?? []);
+        if (fj.ok) setFeedback(fj.rows ?? []);
       })
       .catch((e) => setErr(e instanceof Error ? e.message : String(e)))
       .finally(() => setLoading(false));
@@ -723,7 +737,85 @@ export default function PhysicianProfilePage() {
             </section>
           )}
 
-          {!["overview", "engagements", "qualifications", "metrics", "incidents"].includes(section) && (
+
+          {section === "feedback" && (
+            <div className="space-y-4">
+              {feedback.length === 0 ? (
+                <section className="bg-white border border-stone-200 rounded-xl py-12 text-center">
+                  <div className="text-sm text-stone-700 font-medium">No patient feedback yet</div>
+                  <div className="text-xs text-stone-500 mt-1">
+                    Super-admin uploads quarterly CSVs from{" "}
+                    <Link href="/admin/patient-feedback" className="text-brand font-medium">/admin/patient-feedback</Link>.
+                  </div>
+                </section>
+              ) : (
+                (() => {
+                  // Group by hospital
+                  const byHospital = new Map<string, FeedbackRow[]>();
+                  for (const f of feedback) {
+                    const list = byHospital.get(f.hospital_code) ?? [];
+                    list.push(f);
+                    byHospital.set(f.hospital_code, list);
+                  }
+                  const fmt = (n: number | null) => n === null || n === undefined ? "—" : Number(n).toLocaleString("en-IN");
+                  return Array.from(byHospital.entries()).map(([code, list]) => {
+                    const sorted = [...list].sort((a, b) => a.feedback_period.localeCompare(b.feedback_period));
+                    const labels = sorted.map((m) => m.feedback_period);
+                    const csatPoints = sorted.map((m, i) => ({ x: i, y: (m.csat_score ?? null) as number | null, label: labels[i] }));
+                    const complaintPoints = sorted.map((m, i) => ({ x: i, y: (m.complaint_count ?? null) as number | null, label: labels[i] }));
+                    const last = sorted[sorted.length - 1];
+                    return (
+                      <section key={code} className="bg-white border border-stone-200 rounded-xl">
+                        <div className="px-5 py-3.5 border-b border-stone-100 flex items-center justify-between">
+                          <h2 className="text-sm font-semibold">{code} <span className="text-[11px] text-stone-500 font-normal">· last {sorted.length} periods</span></h2>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3 px-5 py-4">
+                          <div className="bg-stone-50 rounded-lg p-3">
+                            <div className="flex items-baseline justify-between mb-1.5">
+                              <div className="text-[11px] font-medium text-stone-500 tracking-wider uppercase">CSAT</div>
+                              <div className="text-sm font-semibold num">{fmt(last?.csat_score)}</div>
+                            </div>
+                            <MiniLineChart points={csatPoints} color="#0f766e" />
+                          </div>
+                          <div className="bg-stone-50 rounded-lg p-3">
+                            <div className="flex items-baseline justify-between mb-1.5">
+                              <div className="text-[11px] font-medium text-stone-500 tracking-wider uppercase">Complaints</div>
+                              <div className="text-sm font-semibold num">{fmt(last?.complaint_count)}</div>
+                            </div>
+                            <MiniLineChart points={complaintPoints} color="#dc2626" />
+                          </div>
+                        </div>
+                        <div className="border-t border-stone-100 px-5 py-3 max-h-[260px] overflow-y-auto">
+                          <table className="w-full text-xs">
+                            <thead>
+                              <tr className="text-stone-500 text-left">
+                                <th className="py-1.5 font-medium">Period</th>
+                                <th className="py-1.5 font-medium text-right">CSAT</th>
+                                <th className="py-1.5 font-medium text-right">Complaints</th>
+                                <th className="py-1.5 font-medium">Source</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-stone-100">
+                              {[...sorted].reverse().map((m, i) => (
+                                <tr key={i}>
+                                  <td className="py-1.5 num">{m.feedback_period}</td>
+                                  <td className="py-1.5 text-right num">{fmt(m.csat_score)}</td>
+                                  <td className="py-1.5 text-right num">{fmt(m.complaint_count)}</td>
+                                  <td className="py-1.5 text-stone-600">{m.source ?? "—"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </section>
+                    );
+                  });
+                })()
+              )}
+            </div>
+          )}
+
+          {!["overview", "engagements", "qualifications", "metrics", "incidents", "feedback"].includes(section) && (
             <div className="bg-white border border-stone-200 rounded-xl py-16 text-center">
               <div className="text-sm text-stone-500">This section ships in the next sprint.</div>
             </div>
