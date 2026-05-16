@@ -34,10 +34,10 @@ async function fetchData(): Promise<{
   const sql = neon(url);
   const cRows = (await sql`
     SELECT
-      (SELECT count(*)::int FROM physicians WHERE current_status = 'active') AS active_physicians,
-      0::int AS open_incidents,
-      0::int AS vcs_in_pipeline,
-      0::int AS tier_moves_30d
+      (SELECT count(*)::int FROM physicians WHERE current_status = 'active')                                          AS active_physicians,
+      (SELECT count(*)::int FROM incidents WHERE status = 'open')                                                     AS open_incidents,
+      (SELECT count(*)::int FROM vc_prescreens WHERE stage IN ('prescreen','observation','decision'))                 AS vcs_in_pipeline,
+      0::int                                                                                                          AS tier_moves_30d
   `) as Array<Counts>;
   const aRows = (await sql`
     SELECT
@@ -140,7 +140,11 @@ export default async function HomePage() {
             <div className="text-3xl font-semibold num mt-1.5">
               {counts.open_incidents}
             </div>
-            <div className="text-[11px] text-stone-500 mt-0.5">— incidents ship in EPI.2</div>
+            <div className="text-[11px] text-stone-500 mt-0.5">
+              <Link href="/incidents" className="text-brand hover:underline">
+                Open inbox →
+              </Link>
+            </div>
           </div>
           <div className="bg-white border border-stone-200 rounded-xl p-4">
             <div className="text-[11px] font-medium text-stone-500 tracking-wider uppercase">
@@ -149,7 +153,11 @@ export default async function HomePage() {
             <div className="text-3xl font-semibold num mt-1.5">
               {counts.vcs_in_pipeline}
             </div>
-            <div className="text-[11px] text-stone-500 mt-0.5">— onboarding ships in EPI.3</div>
+            <div className="text-[11px] text-stone-500 mt-0.5">
+              <Link href="/onboarding" className="text-brand hover:underline">
+                Open pipeline →
+              </Link>
+            </div>
           </div>
           <div className="bg-white border border-stone-200 rounded-xl p-4">
             <div className="text-[11px] font-medium text-stone-500 tracking-wider uppercase">
@@ -168,7 +176,7 @@ export default async function HomePage() {
 
         {/* 2-col layout */}
         <div className="grid grid-cols-3 gap-4">
-          {/* LEFT — Inbox + Watchlist (placeholders for EPI.1+) */}
+          {/* LEFT — Inbox + Watchlist */}
           <div className="col-span-2 space-y-4">
             <section className="bg-white border border-stone-200 rounded-xl">
               <div className="flex items-center justify-between px-5 py-3.5 border-b border-stone-100">
@@ -176,10 +184,10 @@ export default async function HomePage() {
                   <h2 className="text-sm font-semibold">Inbox</h2>
                   <span className="text-[11px] bg-stone-100 text-stone-600 rounded-full px-2 py-0.5 font-medium">0</span>
                 </div>
-                <span className="text-[12px] text-stone-400">incidents ship in EPI.2</span>
+                <Link href="/incidents" className="text-[12px] text-brand font-medium">Open inbox →</Link>
               </div>
               <div className="px-5 py-10 text-center text-sm text-stone-500">
-                No incidents yet — the inbox is wired and ready.
+                No open incidents.
               </div>
             </section>
 
@@ -199,15 +207,15 @@ export default async function HomePage() {
             </section>
           </div>
 
-          {/* RIGHT — Pipeline (placeholder) + Audit feed (live) */}
+          {/* RIGHT — VC pipeline + Audit feed */}
           <div className="space-y-4">
             <section className="bg-white border border-stone-200 rounded-xl">
               <div className="flex items-center justify-between px-5 py-3.5 border-b border-stone-100">
                 <h2 className="text-sm font-semibold">VC pipeline</h2>
-                <span className="text-[12px] text-stone-400">EPI.3</span>
+                <Link href="/onboarding" className="text-[12px] text-brand font-medium">Open pipeline →</Link>
               </div>
               <div className="px-5 py-8 text-center text-sm text-stone-500">
-                Onboarding workflow ships next.
+                No active VCs in pipeline.
               </div>
             </section>
 

@@ -262,7 +262,7 @@ export default function OnboardingDetailPage() {
             )}
             {data.stage === "decision" && cases.length >= 3 && (
               <div className="px-5 py-3 border-t border-stone-100 bg-amber-50/30 text-xs text-amber-800">
-                ⏳ Decision stage — super-admin can confirm / extend / terminate (ships in EPI.3c).
+                ⏳ Ready for decision — see the Decision card below.
               </div>
             )}
           </section>

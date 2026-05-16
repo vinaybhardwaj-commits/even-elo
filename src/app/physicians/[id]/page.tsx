@@ -397,8 +397,8 @@ export default function PhysicianProfilePage() {
                   </div>
                   <div className="bg-stone-50 rounded-lg p-3">
                     <div className="text-[11px] font-medium text-stone-500 tracking-wider uppercase">Open incidents</div>
-                    <div className="num text-xl font-semibold mt-1 text-stone-400">—</div>
-                    <div className="text-[11px] text-stone-400 mt-0.5">EPI.2</div>
+                    <div className={`num text-xl font-semibold mt-1 ${incidentsList.filter((r) => r.status === "open").length > 0 ? "text-amber-700" : "text-stone-400"}`}>{incidentsList.filter((r) => r.status === "open").length}</div>
+                    <button onClick={() => setSection("incidents")} className="text-[11px] text-brand hover:underline mt-0.5">View →</button>
                   </div>
                   <div className="bg-stone-50 rounded-lg p-3">
                     <div className="text-[11px] font-medium text-stone-500 tracking-wider uppercase">ELO composite</div>
