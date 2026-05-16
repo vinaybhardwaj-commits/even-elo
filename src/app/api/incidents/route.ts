@@ -193,6 +193,7 @@ export async function POST(req: NextRequest) {
     narrative,
     evidence_urls,
     attestation,
+    hospital_id: bodyHospitalId,   // v3.0d — required from step-3 picker
   } = body ?? {};
 
   if (!attestation) {
@@ -218,16 +219,43 @@ export async function POST(req: NextRequest) {
   if (!url) return NextResponse.json({ ok: false, error: "DATABASE_URL not configured" }, { status: 500, headers: NO_STORE });
   const sql = neon(url);
 
-  // Look up the target physician + assign hospital_id from their first active engagement (if any)
-  const ph = (await sql`
+  // v3.0d: hospital_id is required on submit (PRD §D.2). Resolve + validate
+  // against the target physician's active engagements.
+  // - If client passes hospital_id, verify physician is engaged there.
+  // - If not, fall back to most-recent-active engagement (auto-derive).
+  const physRows = (await sql`
     SELECT
-      p.id::text AS id,
-      p.full_name,
-      p.email,
-      (SELECT e.hospital_id::text FROM physician_engagements e WHERE e.physician_id = p.id AND e.status='active' ORDER BY e.start_date DESC LIMIT 1) AS hospital_id
+      p.id::text AS id, p.full_name, p.email,
+      COALESCE(
+        (SELECT json_agg(e.hospital_id::text ORDER BY e.start_date DESC)
+           FROM physician_engagements e
+          WHERE e.physician_id = p.id AND e.status='active'),
+        '[]'::json
+      ) AS active_hospital_ids
     FROM physicians p WHERE p.id = ${target_physician_id}::uuid
-  `) as Array<{ id: string; full_name: string; email: string | null; hospital_id: string | null }>;
-  if (ph.length === 0) return NextResponse.json({ ok: false, error: "target_physician not found" }, { status: 404, headers: NO_STORE });
+  `) as Array<{ id: string; full_name: string; email: string | null; active_hospital_ids: string[] }>;
+  if (physRows.length === 0) return NextResponse.json({ ok: false, error: "target_physician not found" }, { status: 404, headers: NO_STORE });
+  const activeHospitalIds = Array.isArray(physRows[0].active_hospital_ids) ? physRows[0].active_hospital_ids : [];
+
+  let resolvedHospitalId: string;
+  if (bodyHospitalId && typeof bodyHospitalId === "string") {
+    if (!UUID_RE.test(bodyHospitalId)) {
+      return NextResponse.json({ ok: false, error: "hospital_id must be a valid uuid" }, { status: 400, headers: NO_STORE });
+    }
+    // Super admin can override; otherwise must match an engagement
+    const meRows = (await sql`SELECT is_super_admin FROM profiles_with_roles WHERE id = ${actor.profileId}::uuid LIMIT 1`) as Array<{ is_super_admin: boolean }>;
+    const isSuper = meRows.length > 0 && meRows[0].is_super_admin;
+    if (!isSuper && !activeHospitalIds.includes(bodyHospitalId)) {
+      return NextResponse.json({ ok: false, error: "Target physician is not engaged at that hospital. Pick one of their engaged hospitals or ask a super_admin to override." }, { status: 400, headers: NO_STORE });
+    }
+    resolvedHospitalId = bodyHospitalId;
+  } else {
+    if (activeHospitalIds.length === 0) {
+      return NextResponse.json({ ok: false, error: "Target physician has no active engagements; cannot infer a hospital. Pick one explicitly." }, { status: 400, headers: NO_STORE });
+    }
+    resolvedHospitalId = activeHospitalIds[0]; // most recent active
+  }
+  const ph = [{ id: physRows[0].id, full_name: physRows[0].full_name, email: physRows[0].email, hospital_id: resolvedHospitalId }];
 
   // Best-effort IP from x-forwarded-for; if behind a proxy chain take the first
   const xff = req.headers.get("x-forwarded-for") ?? "";

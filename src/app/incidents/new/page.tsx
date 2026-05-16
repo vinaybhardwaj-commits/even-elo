@@ -63,6 +63,8 @@ function NewIncidentInner() {
   // Form state
   const [me, setMe] = useState<MeSummary | null>(null);
   const [target, setTarget] = useState<Physician | null>(null);
+  const [targetEngagements, setTargetEngagements] = useState<Array<{ hospital_id: string; hospital_code: string; status: string; start_date: string | null }>>([]);
+  const [hospitalId, setHospitalId] = useState<string>(""); // selected hospital_id for the incident
   const [physicians, setPhysicians] = useState<Physician[]>([]);
   const [q, setQ] = useState("");
   const [isAnonymous, setIsAnonymous] = useState(false);
@@ -93,27 +95,35 @@ function NewIncidentInner() {
     return () => clearTimeout(t);
   }, [q]);
 
+  // Whenever target changes (preselect OR manual pick), fetch their engagements + default hospital_id to most-recent-active
   useEffect(() => {
-    if (preselectedTarget && !target) {
-      fetch(`/api/physicians/${preselectedTarget}`)
-        .then((r) => r.json())
-        .then((j) => {
-          if (j.ok) {
+    const id = target?.id || preselectedTarget;
+    if (!id) return;
+    fetch(`/api/physicians/${id}`)
+      .then((r) => r.json())
+      .then((j) => {
+        if (j.ok) {
+          const engs = ((j.engagements ?? []) as Array<{ hospital_id: string; hospital_code: string; status: string; start_date: string | null }>)
+            .filter((e) => e.status === "active")
+            .sort((a, b) => (b.start_date ?? "").localeCompare(a.start_date ?? ""));
+          setTargetEngagements(engs);
+          if (engs[0]) setHospitalId(engs[0].hospital_id);
+          if (preselectedTarget && !target) {
             setTarget({
               id: j.physician.id,
               full_name: j.physician.full_name,
               primary_specialty: j.physician.primary_specialty,
               email: j.physician.email,
               current_status: j.physician.current_status,
-              hospitals_active: (j.engagements ?? []).filter((e: { status: string; hospital_code: string }) => e.status === "active").map((e: { hospital_code: string }) => e.hospital_code).join(", ") || null,
+              hospitals_active: engs.map((e) => e.hospital_code).join(", ") || null,
             });
           }
-        });
-    }
+        }
+      });
   }, [preselectedTarget, target]);
 
   const step = useMemo<1 | 2 | 3>(() => (!target ? 1 : !category ? 2 : 3), [target, category]);
-  const canSubmit = !!target && !!category && severity && narrative.trim().length > 0 && attest && !submitting;
+  const canSubmit = !!target && !!category && severity && narrative.trim().length > 0 && attest && !submitting && !!hospitalId;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -130,6 +140,7 @@ function NewIncidentInner() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           target_physician_id: target.id,
+          hospital_id: hospitalId,
           anonymous_flag: isAnonymous,
           category,
           severity,
@@ -270,6 +281,29 @@ function NewIncidentInner() {
           {target && (
             <section className="bg-white border border-stone-200 rounded-xl p-5 space-y-4">
               <h2 className="text-sm font-semibold">3. What happened?</h2>
+
+              <div>
+                <label className="block text-xs font-medium text-stone-500 mb-1.5">Hospital where this happened *</label>
+                {targetEngagements.length === 0 ? (
+                  <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                    {target?.full_name} has no active engagements — a super admin needs to add one before an incident can be filed.
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5">
+                    {targetEngagements.map((e) => (
+                      <button
+                        key={e.hospital_id}
+                        type="button"
+                        onClick={() => setHospitalId(e.hospital_id)}
+                        className={`px-3 py-1.5 rounded-full text-[12px] font-medium border ${hospitalId === e.hospital_id ? "bg-brand text-white border-brand" : "bg-white text-stone-700 border-stone-200 hover:bg-stone-50"}`}
+                      >
+                        {e.hospital_code}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <div className="text-[11px] text-stone-400 mt-1">Defaults to their most recent active engagement; change if the incident occurred elsewhere.</div>
+              </div>
 
               <div>
                 <label className="block text-xs font-medium text-stone-500 mb-1.5">Category</label>

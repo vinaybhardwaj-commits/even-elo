@@ -66,7 +66,19 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
 
   const isMine = i.submitter_user_id === actor.profileId;
   const isTarget = me.email.toLowerCase() === ((i.target_physician_email as string | null) ?? "").toLowerCase();
-  const canSee = me.is_super_admin || isMine || isTarget;
+  // v3.0d: any SMH (network-wide) can READ all incidents per decision #12;
+  //        only SMH at incident's hospital can WRITE (retract/reclassify).
+  const anySmhRows = (await sql`
+    SELECT 1 FROM profile_hospital_roles WHERE profile_id = ${actor.profileId}::uuid AND role = 'site_medical_head' LIMIT 1
+  `) as Array<unknown>;
+  const isAnySmh = anySmhRows.length > 0;
+  const smhHereRows = i.hospital_code ? (await sql`
+    SELECT 1 FROM profile_hospital_roles r JOIN hospitals h ON h.id = r.hospital_id
+    WHERE r.profile_id = ${actor.profileId}::uuid AND r.role = 'site_medical_head' AND h.code = ${i.hospital_code as string} LIMIT 1
+  `) as Array<unknown> : [];
+  const isSmhHere = smhHereRows.length > 0;
+
+  const canSee = me.is_super_admin || isMine || isTarget || isAnySmh;
   if (!canSee) {
     return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403, headers: NO_STORE });
   }
@@ -113,8 +125,8 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
         created_at: i.created_at,
         updated_at: i.updated_at,
         // Capability flags for the client
-        can_retract: me.is_super_admin && i.status !== "retracted",
-        can_reclassify: me.is_super_admin,
+        can_retract: (me.is_super_admin || isSmhHere) && i.status !== "retracted",
+        can_reclassify: me.is_super_admin || isSmhHere,
         can_reply: isTarget,
       },
       replies,
