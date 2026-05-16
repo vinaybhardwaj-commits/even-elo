@@ -93,7 +93,15 @@ export default async function HomePage() {
     month: "long",
     year: "numeric",
   });
-  const firstName = user.full_name.split(" ")[0];
+  // Honorific-aware first-name extraction. "Dr. Chandrika Kambam" → "Chandrika".
+  const HONORIFICS = new Set(["dr.", "dr", "prof.", "prof", "mr.", "mr", "ms.", "ms", "mrs.", "mrs"]);
+  function firstNameFrom(fn: string): string {
+    const toks = fn.trim().split(/\s+/);
+    let i = 0;
+    while (i < toks.length - 1 && HONORIFICS.has(toks[i].toLowerCase())) i++;
+    return toks[i] ?? fn;
+  }
+  const firstName = firstNameFrom(user.full_name);
 
   return (
     <>
@@ -106,9 +114,10 @@ export default async function HomePage() {
               Good morning, {firstName}
             </h1>
             <div className="text-sm text-stone-500 mt-1">
-              {today} ·{" "}
-              {user.is_super_admin ? "Super Admin" : user.position_label} · viewing{" "}
-              {user.hospital_code}
+              {today}
+              {user.is_super_admin ? " · Super Admin" : ""}
+              {user.position_label && user.position_label !== "Hospital PM" ? ` · ${user.position_label}` : (!user.is_super_admin ? ` · ${user.position_label}` : "")}
+              {" · viewing "}{user.hospital_code}
             </div>
           </div>
         </div>

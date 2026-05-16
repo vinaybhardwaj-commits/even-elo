@@ -59,7 +59,10 @@ export function UserMenu({ user }: { user: UserSummary }) {
         onClick={() => setOpen((o) => !o)}
         className="flex items-center gap-2.5 hover:bg-stone-100 rounded-lg px-2 py-1 transition"
       >
-        <span className="text-[13px] text-stone-700 font-medium">{user.full_name.split(" ").slice(-1)[0]}</span>
+        <span className="flex flex-col items-end leading-tight">
+          <span className="text-[13px] text-stone-700 font-medium">{user.full_name}</span>
+          <span className="text-[11px] text-stone-500">{user.position_label}</span>
+        </span>
         <span className={`w-8 h-8 rounded-full inline-flex items-center justify-center text-[11px] font-medium ${colorFor(user.full_name)}`}>
           {initials(user.full_name)}
         </span>
