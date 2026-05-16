@@ -41,7 +41,7 @@ export function TopNav({ nav }: { nav?: NavItem[] } = {}) {
 
   useEffect(() => {
     if (!user) return;
-    fetch("/api/incidents?status=open&limit=500")
+    fetch("/api/incidents?unviewed=true&limit=500")
       .then((r) => r.json())
       .then((j) => j.ok && setOpenIncidentsCount((j.rows ?? []).length))
       .catch(() => undefined);

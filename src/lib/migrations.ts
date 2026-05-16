@@ -681,5 +681,27 @@ export const MIGRATIONS: Migration[] = [
       FROM profiles p;
     `,
   },
+
+  // ────────────────────────────────────────────────────────────
+  // Post-v3.0 enhancement — per-user incident read state (16 May 2026)
+  // V's request: badge in TopNav should decrement per-user when an
+  // admin/super-admin opens the incident. Plus a manual 'Mark reviewed'
+  // button as a fallback. All admins must individually review.
+  // ────────────────────────────────────────────────────────────
+  {
+    id: "016_incident_views",
+    description: "Per-user read state for incidents. Auto-INSERTed on GET /api/incidents/[id]. PK (incident_id, profile_id).",
+    sql: `
+      CREATE TABLE IF NOT EXISTS incident_views (
+        incident_id uuid NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
+        profile_id  uuid NOT NULL REFERENCES profiles(id)  ON DELETE CASCADE,
+        viewed_at   timestamptz NOT NULL DEFAULT now(),
+        via         text NOT NULL DEFAULT 'open' CHECK (via IN ('open','mark_reviewed')),
+        PRIMARY KEY (incident_id, profile_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_incident_views_profile ON incident_views(profile_id);
+      CREATE INDEX IF NOT EXISTS idx_incident_views_incident ON incident_views(incident_id);
+    `,
+  },
 ];
 

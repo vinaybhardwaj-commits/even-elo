@@ -83,6 +83,7 @@ export async function GET(req: NextRequest) {
     const fid = await getHospitalFilterId();
     if (fid) hospital_id_filter = fid;
   }
+  const only_unviewed = (params.get("unviewed") ?? "") === "true";
 
   // Compose WHERE: visibility predicate + filters
   // Use a single tagged-template call. The visibility predicate is encoded as:
@@ -123,6 +124,9 @@ export async function GET(req: NextRequest) {
         AND (${category} = '' OR i.category = ${category})
         AND (${physician_id} = '' OR i.target_physician_id = ${physician_id || '00000000-0000-0000-0000-000000000000'}::uuid)
         AND (${hospital_id_filter} = '' OR i.hospital_id = ${hospital_id_filter || '00000000-0000-0000-0000-000000000000'}::uuid)
+        AND (${only_unviewed ? 'true' : 'false'}::boolean = false OR NOT EXISTS (
+          SELECT 1 FROM incident_views v WHERE v.incident_id = i.id AND v.profile_id = ${actor.profileId}::uuid
+        ))
       ORDER BY i.submitted_at DESC
       LIMIT ${limit}
     )

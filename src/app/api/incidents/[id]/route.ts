@@ -102,6 +102,20 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
     ORDER BY r.replied_at ASC
   `) as Array<Record<string, unknown>>;
 
+  // v3.x: record per-user read state (V's locked decision — auto-clear-on-open + audit_log_v2 only, no UI surfacing of who-saw-what)
+  await sql`
+    INSERT INTO incident_views (incident_id, profile_id, via)
+    VALUES (${id}::uuid, ${actor.profileId}::uuid, 'open')
+    ON CONFLICT (incident_id, profile_id) DO NOTHING
+  `;
+  // Best-effort audit — don't 500 the read if logging fails
+  try {
+    await sql`
+      INSERT INTO audit_log_v2 (actor_user_id, action, entity_type, entity_id, after_json)
+      VALUES (${actor.profileId}::uuid, 'view', 'incident', ${id}, ${JSON.stringify({ via: "open" })}::jsonb)
+    `;
+  } catch { /* swallow */ }
+
   return NextResponse.json(
     {
       ok: true,

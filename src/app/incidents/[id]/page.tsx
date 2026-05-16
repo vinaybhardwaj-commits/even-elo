@@ -129,6 +129,20 @@ function Inner() {
     } finally { setWorking(false); }
   }
 
+  async function markReviewed() {
+    if (!id) return;
+    setWorking(true);
+    try {
+      const r = await fetch(`/api/incidents/${id}/view`, { method: "POST" });
+      const j = await r.json();
+      if (!r.ok || !j.ok) {
+        alert(j.error || "Could not mark reviewed");
+      }
+    } finally {
+      setWorking(false);
+    }
+  }
+
   async function retract() {
     const reason = prompt("Retraction reason (required — will display struck-through on the incident):");
     if (!reason || !reason.trim()) return;
@@ -259,6 +273,9 @@ function Inner() {
                 </div>
               )}
               <div className="ml-auto flex gap-2">
+                <button onClick={markReviewed} disabled={working} className="btn-ghost text-xs" title="Mark this incident as reviewed for you. Auto-clears from your badge.">
+                  ✓ Mark reviewed
+                </button>
                 {!isRetracted && i.status === "open" && (
                   <button onClick={() => toggleStatus("closed")} disabled={working} className="btn-ghost text-xs">Close</button>
                 )}
