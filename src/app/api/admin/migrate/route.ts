@@ -10,12 +10,12 @@ export const runtime = "nodejs";
 /**
  * Split a migration SQL block into discrete statements.
  *
- * 1. Strip line comments (`-- …`) before splitting — otherwise statements
- *    that start with a comment line get filtered out by the leading-`-`
- *    test downstream.
- * 2. Split on `;`. Naive but sufficient — our migrations don't contain DO
- *    blocks or strings with embedded semicolons. Switch to a proper
- *    splitter (e.g., pg-query-emscripten) if that ever changes.
+ * 1. Strip line comments (`-- …`) before splitting.
+ * 2. Walk the SQL char-by-char and split on `;` EXCEPT when inside a
+ *    dollar-quoted block (`$$ … $$` or `$tag$ … $tag$`). This lets
+ *    migration SQL contain DO blocks like:
+ *      DO $$ BEGIN ... ; ... END $$;
+ *    without the inner semicolons fragmenting the statement.
  */
 function splitStatements(sqlText: string): string[] {
   const stripped = sqlText
@@ -25,10 +25,47 @@ function splitStatements(sqlText: string): string[] {
       return idx === -1 ? line : line.substring(0, idx);
     })
     .join("\n");
-  return stripped
-    .split(";")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
+
+  const out: string[] = [];
+  let buf = "";
+  let dollarTag: string | null = null; // null => not in $$, else holds the closing tag including dollars
+  let i = 0;
+  while (i < stripped.length) {
+    const ch = stripped[i];
+    if (dollarTag) {
+      buf += ch;
+      if (ch === "$" && stripped.startsWith(dollarTag, i)) {
+        buf += stripped.substring(i + 1, i + dollarTag.length);
+        i += dollarTag.length;
+        dollarTag = null;
+        continue;
+      }
+      i++;
+      continue;
+    }
+    // Detect entering a dollar-quoted block: `$$` or `$tag$`
+    if (ch === "$") {
+      const m = stripped.substring(i).match(/^\$[A-Za-z0-9_]*\$/);
+      if (m) {
+        dollarTag = m[0];
+        buf += m[0];
+        i += m[0].length;
+        continue;
+      }
+    }
+    if (ch === ";") {
+      const trimmed = buf.trim();
+      if (trimmed.length > 0) out.push(trimmed);
+      buf = "";
+      i++;
+      continue;
+    }
+    buf += ch;
+    i++;
+  }
+  const tail = buf.trim();
+  if (tail.length > 0) out.push(tail);
+  return out;
 }
 
 /**
