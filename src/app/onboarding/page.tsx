@@ -10,6 +10,7 @@ interface Row {
   prospective_full_name: string;
   prospective_specialty: string | null;
   hospital_code: string;
+  hospital_codes?: string[];
   decision: string;
   decision_rationale: string | null;
   stage: string;
@@ -142,7 +143,7 @@ export default function OnboardingPage() {
                             <div className="flex-1 min-w-0">
                               <div className="text-sm font-medium text-stone-900 truncate">{r.prospective_full_name}</div>
                               <div className="text-[11px] text-stone-500 truncate">
-                                {r.prospective_specialty ?? "—"} · {r.hospital_code}
+                                {r.prospective_specialty ?? "—"} · {((r.hospital_codes && r.hospital_codes.length > 0) ? r.hospital_codes : [r.hospital_code]).join(", ")}
                               </div>
                               <div className="text-[10px] text-stone-400 mt-1.5">
                                 {timeAgo(r.prescreened_at)}
@@ -224,7 +225,7 @@ export default function OnboardingPage() {
                           {stage.label}
                         </span>
                         <span className="text-[11px] text-stone-500 px-2 py-0.5 rounded-full bg-stone-50">
-                          {r.hospital_code}
+                          {((r.hospital_codes && r.hospital_codes.length > 0) ? r.hospital_codes : [r.hospital_code]).join(", ")}
                         </span>
                         <div className="flex-1 min-w-0">
                           <div className="text-sm font-medium text-stone-900">

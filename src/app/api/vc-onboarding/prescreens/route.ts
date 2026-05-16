@@ -47,6 +47,13 @@ export async function GET(req: NextRequest) {
       v.prospective_full_name,
       v.prospective_specialty,
       h.code AS hospital_code,
+      COALESCE(
+        (SELECT json_agg(h2.code ORDER BY h2.code)
+           FROM vc_prescreen_hospitals vph2
+           JOIN hospitals h2 ON h2.id = vph2.hospital_id
+           WHERE vph2.prescreen_id = v.id),
+        json_build_array(h.code)
+      ) AS hospital_codes,
       v.years_post_postgraduate,
       v.prior_corporate_hospitals,
       v.red_flags,
@@ -85,7 +92,8 @@ export async function POST(req: NextRequest) {
     prospective_email,
     prospective_full_name,
     prospective_specialty,
-    hospital_code,
+    hospital_code,       // legacy single-site (back-compat)
+    hospital_codes,      // v3.0e — array of hospital codes for multi-site VCs
     years_post_postgraduate,
     prior_corporate_hospitals,
     commitments_acknowledged,
@@ -98,8 +106,16 @@ export async function POST(req: NextRequest) {
   if (!prospective_email || !prospective_full_name) {
     return NextResponse.json({ ok: false, error: "prospective_email + prospective_full_name required" }, { status: 400, headers: NO_STORE });
   }
-  if (!hospital_code) {
-    return NextResponse.json({ ok: false, error: "hospital_code required" }, { status: 400, headers: NO_STORE });
+  // Normalise: build a final hospital_codes_arr containing 1..N codes (uppercase).
+  const hospital_codes_arr: string[] = (() => {
+    if (Array.isArray(hospital_codes)) {
+      return hospital_codes.filter((c) => typeof c === "string" && c.trim().length > 0).map((c) => String(c).toUpperCase());
+    }
+    if (typeof hospital_code === "string" && hospital_code.trim().length > 0) return [String(hospital_code).toUpperCase()];
+    return [];
+  })();
+  if (hospital_codes_arr.length === 0) {
+    return NextResponse.json({ ok: false, error: "Pick at least one hospital (hospital_codes[] or hospital_code)" }, { status: 400, headers: NO_STORE });
   }
   if (decision !== "invite" && decision !== "reject") {
     return NextResponse.json({ ok: false, error: "decision must be 'invite' or 'reject'" }, { status: 400, headers: NO_STORE });
@@ -143,9 +159,15 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Hospital lookup
-  const hosp = (await sql`SELECT id::text AS id FROM hospitals WHERE code = ${hospital_code} AND is_active = true LIMIT 1`) as Array<{ id: string }>;
-  if (hosp.length === 0) return NextResponse.json({ ok: false, error: `Hospital ${hospital_code} not active` }, { status: 400, headers: NO_STORE });
+  // Hospital lookup — validate every code, capture (id, code) pairs in order.
+  const hospitalIds: Array<{ id: string; code: string }> = [];
+  for (const c of hospital_codes_arr) {
+    const h = (await sql`SELECT id::text AS id FROM hospitals WHERE code = ${c} AND is_active = true LIMIT 1`) as Array<{ id: string }>;
+    if (h.length === 0) return NextResponse.json({ ok: false, error: `Hospital ${c} not active` }, { status: 400, headers: NO_STORE });
+    hospitalIds.push({ id: h[0].id, code: c });
+  }
+  // hosp[0] is the primary — keeps the existing INSERT structure intact.
+  const hosp = [{ id: hospitalIds[0].id }];
 
   // Build commitments jsonb — accept only known keys + booleans
   const commitments: Record<string, boolean> = {};
@@ -188,22 +210,32 @@ export async function POST(req: NextRequest) {
     RETURNING id::text AS id, prospective_email, prospective_full_name, decision, stage, created_at
   `) as Array<Record<string, unknown>>;
 
+  const prescreenId = inserted[0].id as string;
+  // v3.0e: populate vc_prescreen_hospitals join with all selected hospitals
+  for (const h of hospitalIds) {
+    await sql`
+      INSERT INTO vc_prescreen_hospitals (prescreen_id, hospital_id)
+      VALUES (${prescreenId}::uuid, ${h.id}::uuid)
+      ON CONFLICT DO NOTHING
+    `;
+  }
+
   await sql`
     INSERT INTO audit_log_v2 (actor_user_id, action, entity_type, entity_id, after_json)
     VALUES (
       ${actor.profileId}::uuid,
       'prescreen',
       'vc_prescreen',
-      ${inserted[0].id as string},
+      ${prescreenId},
       ${JSON.stringify({
         prospective_email: lowerEmail,
         prospective_full_name,
-        hospital_code,
+        hospital_codes: hospitalIds.map((h) => h.code),
         decision,
         stage,
         cooldown_override: Boolean(cooldown_override),
       })}::jsonb
     )
   `;
-  return NextResponse.json({ ok: true, prescreen: inserted[0] }, { headers: NO_STORE });
+  return NextResponse.json({ ok: true, prescreen: { ...inserted[0], hospital_codes: hospitalIds.map((h) => h.code) } }, { headers: NO_STORE });
 }

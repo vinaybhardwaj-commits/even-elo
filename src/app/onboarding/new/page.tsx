@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { TopNav } from "@/components/TopNav";
@@ -26,13 +26,28 @@ export default function NewPrescreenPage() {
   const [email, setEmail] = useState("");
   const [fullName, setFullName] = useState("");
   const [specialty, setSpecialty] = useState("");
-  const [hospital, setHospital] = useState("EHRC");
+  const [hospitals, setHospitals] = useState<Array<{ code: string }>>([]);
+  const [pickedCodes, setPickedCodes] = useState<Set<string>>(new Set());
   const [yearsPg, setYearsPg] = useState("");
   const [priorsText, setPriorsText] = useState("");
   const [redFlags, setRedFlags] = useState("");
   const [commitments, setCommitments] = useState<Record<string, boolean>>({});
   const [override, setOverride] = useState(false);
   const [decision, setDecision] = useState<"invite" | "reject">("invite");
+
+  useEffect(() => {
+    fetch("/api/hospitals").then((r) => r.json()).then((j) => {
+      if (j.ok) setHospitals(j.hospitals as Array<{ code: string }>);
+    }).catch(() => undefined);
+  }, []);
+
+  function togglePick(code: string) {
+    setPickedCodes((prev) => {
+      const next = new Set(prev);
+      if (next.has(code)) next.delete(code); else next.add(code);
+      return next;
+    });
+  }
   const [rationale, setRationale] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -64,7 +79,7 @@ export default function NewPrescreenPage() {
           prospective_email: email.trim(),
           prospective_full_name: fullName.trim(),
           prospective_specialty: specialty || null,
-          hospital_code: hospital,
+          hospital_codes: Array.from(pickedCodes),
           years_post_postgraduate: yearsPg ? parseInt(yearsPg, 10) : null,
           prior_corporate_hospitals: priors,
           commitments_acknowledged: commitments,
@@ -126,11 +141,19 @@ export default function NewPrescreenPage() {
                   {SPECIALTIES.map((s) => <option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
-              <div>
-                <label className="block text-xs font-medium text-stone-500 mb-1">Hospital</label>
-                <select value={hospital} onChange={(e) => setHospital(e.target.value)} className="w-full px-3 py-2 border border-stone-200 rounded-lg text-sm bg-white">
-                  <option value="EHRC">EHRC</option>
-                </select>
+              <div className="col-span-2">
+                <label className="block text-xs font-medium text-stone-500 mb-1">Hospitals * <span className="text-stone-400 font-normal">(multi-select for network VCs)</span></label>
+                <div className="flex flex-wrap gap-1.5">
+                  {hospitals.map((h) => {
+                    const on = pickedCodes.has(h.code);
+                    return (
+                      <button type="button" key={h.code} onClick={() => togglePick(h.code)} className={`px-2.5 py-1 rounded-full text-[12px] font-medium border ${on ? "bg-brand text-white border-brand" : "bg-white text-stone-700 border-stone-200 hover:bg-stone-50"}`}>
+                        {h.code}
+                      </button>
+                    );
+                  })}
+                </div>
+                {pickedCodes.size === 0 && <div className="text-[11px] text-stone-400 mt-1">Pick at least one</div>}
               </div>
               <div>
                 <label className="block text-xs font-medium text-stone-500 mb-1">Years post-PG</label>

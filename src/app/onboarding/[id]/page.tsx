@@ -27,6 +27,8 @@ interface Prescreen {
   prospective_specialty: string | null;
   hospital_code: string;
   hospital_name: string;
+  hospital_codes?: string[];                 // v3.0e — multi-site VCs
+  cases_per_hospital?: Record<string, number>;
   years_post_postgraduate: number | null;
   prior_corporate_hospitals: string[] | null;
   commitments_acknowledged: Record<string, boolean> | null;
@@ -67,6 +69,7 @@ export default function OnboardingDetailPage() {
   const [cases, setCases] = useState<ObservationCase[]>([]);
   const [allowedRoles, setAllowedRoles] = useState<string[]>([]);
   const [me, setMe] = useState<{ is_super_admin: boolean; is_site_medical_head: boolean } | null>(null);
+  const [allHospitals, setAllHospitals] = useState<Array<{ id: string; code: string }>>([]);
   const [addOpen, setAddOpen] = useState(false);
   const [decisionMode, setDecisionMode] = useState<"confirm_privileges" | "extend_observation" | "terminate" | null>(null);
   const [decisionRationale, setDecisionRationale] = useState("");
@@ -80,8 +83,9 @@ export default function OnboardingDetailPage() {
       fetch(`/api/vc-onboarding/prescreens/${id}`).then((r) => r.json()),
       fetch(`/api/vc-onboarding/prescreens/${id}/observations`).then((r) => r.json()),
       fetch(`/api/auth/me`).then((r) => r.json()),
+      fetch(`/api/hospitals`).then((r) => r.json()),
     ])
-      .then(([pj, oj, mj]) => {
+      .then(([pj, oj, mj, hj]) => {
         if (!pj.ok) { setError(pj.error || "Not found"); return; }
         setData(pj.prescreen as Prescreen);
         if (oj.ok) {
@@ -89,6 +93,7 @@ export default function OnboardingDetailPage() {
           setAllowedRoles(oj.allowed_roles ?? []);
         }
         if (mj.ok) setMe(mj.user as { is_super_admin: boolean; is_site_medical_head: boolean });
+        if (hj.ok) setAllHospitals(hj.hospitals as Array<{ id: string; code: string }>);
       })
       .finally(() => setLoading(false));
   }
@@ -146,7 +151,11 @@ export default function OnboardingDetailPage() {
         <section className="bg-white border border-stone-200 rounded-xl p-5">
           <div className="flex items-start gap-3 mb-2">
             <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${stage.pill}`}>{stage.label}</span>
-            <span className="text-[11px] text-stone-500 px-2 py-0.5 rounded-full bg-stone-50">{data.hospital_code}</span>
+            <div className="flex flex-wrap gap-1.5">
+              {((data.hospital_codes && data.hospital_codes.length > 0) ? data.hospital_codes : [data.hospital_code]).map((c) => (
+                <span key={c} className="text-[11px] text-stone-500 px-2 py-0.5 rounded-full bg-stone-50 font-medium">{c}</span>
+              ))}
+            </div>
             {data.decision === "reject" && (
               <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-red-50 text-red-700">
                 Rejected{data.cooldown_override ? " · override" : " · 12mo cooldown"}
@@ -283,6 +292,25 @@ export default function OnboardingDetailPage() {
                   })()
                 )}
               </div>
+              {(() => {
+                const codes = (data.hospital_codes && data.hospital_codes.length > 0) ? data.hospital_codes : [data.hospital_code];
+                const counts = data.cases_per_hospital ?? {};
+                return (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {codes.map((c) => {
+                      const n = counts[c] ?? 0;
+                      const cls = n === 0
+                        ? "bg-amber-50 text-amber-800 border border-amber-200"
+                        : "bg-emerald-50 text-emerald-700 border border-emerald-200";
+                      return (
+                        <span key={c} className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${cls}`}>
+                          {n === 0 ? "⚠ " : ""}{c} · {n} {n === 1 ? "case" : "cases"}
+                        </span>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
             </div>
 
             {(me?.is_super_admin || me?.is_site_medical_head) ? (
@@ -375,6 +403,9 @@ export default function OnboardingDetailPage() {
         <AddObservationModal
           prescreenId={id!}
           allowedRoles={allowedRoles}
+          hospitalOptions={(data?.hospital_codes && data.hospital_codes.length > 0 ? data.hospital_codes : [data?.hospital_code].filter(Boolean) as string[])
+            .map((code) => allHospitals.find((h) => h.code === code))
+            .filter((h): h is { id: string; code: string } => !!h)}
           onClose={() => setAddOpen(false)}
           onSaved={() => { setAddOpen(false); load(); }}
         />

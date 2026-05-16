@@ -56,10 +56,13 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   catch { return NextResponse.json({ ok: false, error: "Unauthenticated" }, { status: 401, headers: NO_STORE }); }
 
   const body = await req.json();
-  const { case_date, procedure, observer_role, scores, narrative_notes, flag_severity } = body ?? {};
+  const { case_date, procedure, observer_role, scores, narrative_notes, flag_severity, hospital_id } = body ?? {};
 
   if (!case_date || !procedure || !observer_role) {
     return NextResponse.json({ ok: false, error: "case_date, procedure, observer_role required" }, { status: 400, headers: NO_STORE });
+  }
+  if (!hospital_id || typeof hospital_id !== "string") {
+    return NextResponse.json({ ok: false, error: "hospital_id required (pick the hospital this case happened at)" }, { status: 400, headers: NO_STORE });
   }
   if (!scores || typeof scores !== "object") {
     return NextResponse.json({ ok: false, error: "scores object required" }, { status: 400, headers: NO_STORE });
@@ -87,6 +90,12 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   if (!["observation", "decision"].includes(ps.stage)) {
     return NextResponse.json({ ok: false, error: `Cannot add observation in stage '${ps.stage}'` }, { status: 409, headers: NO_STORE });
   }
+  const hospOk = (await sql`
+    SELECT 1 FROM vc_prescreen_hospitals WHERE prescreen_id = ${id}::uuid AND hospital_id = ${hospital_id}::uuid LIMIT 1
+  `) as Array<unknown>;
+  if (hospOk.length === 0) {
+    return NextResponse.json({ ok: false, error: "hospital_id is not one of the prescreen's hospitals" }, { status: 400, headers: NO_STORE });
+  }
 
   // Auto-assign case_number = max + 1 (cap 5)
   const cnt = (await sql`SELECT COALESCE(MAX(case_number), 0) + 1 AS next FROM vc_observation_cases WHERE prescreen_id = ${id}::uuid`) as Array<{ next: number }>;
@@ -103,13 +112,13 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     INSERT INTO vc_observation_cases (
       prescreen_id, case_number, case_date, procedure,
       observer_role, observer_user_id, observer_name,
-      scores, narrative_notes, flag_severity
+      scores, narrative_notes, flag_severity, hospital_id
     ) VALUES (
       ${id}::uuid, ${caseNumber}, ${case_date}, ${String(procedure).trim()},
       ${String(observer_role).trim()}, ${actor.profileId}::uuid, ${observerName},
-      ${JSON.stringify(cleanScores)}::jsonb, ${narrative_notes ?? null}, ${finalFlag}
+      ${JSON.stringify(cleanScores)}::jsonb, ${narrative_notes ?? null}, ${finalFlag}, ${hospital_id}::uuid
     )
-    RETURNING id::text AS id, case_number, case_date, procedure, observer_role, observer_name, scores, flag_severity, created_at
+    RETURNING id::text AS id, case_number, case_date, procedure, observer_role, observer_name, scores, flag_severity, hospital_id::text AS hospital_id, created_at
   `) as Array<Record<string, unknown>>;
 
   // Auto-advance to 'decision' stage:

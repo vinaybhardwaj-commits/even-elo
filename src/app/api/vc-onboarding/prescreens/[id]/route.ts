@@ -42,5 +42,30 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
     WHERE v.id = ${id}::uuid
   `) as Array<Record<string, unknown>>;
   if (rows.length === 0) return NextResponse.json({ ok: false, error: "not found" }, { status: 404, headers: NO_STORE });
-  return NextResponse.json({ ok: true, prescreen: rows[0] }, { headers: NO_STORE });
+
+  // v3.0e: include the multi-site hospital_codes[] + per-hospital observation case counts
+  const hospitalRows = (await sql`
+    SELECT h.code FROM vc_prescreen_hospitals vph
+    JOIN hospitals h ON h.id = vph.hospital_id
+    WHERE vph.prescreen_id = ${id}::uuid
+    ORDER BY h.code
+  `) as Array<{ code: string }>;
+  const caseRows = (await sql`
+    SELECT h.code, COUNT(*)::int AS n
+    FROM vc_observation_cases o
+    JOIN hospitals h ON h.id = o.hospital_id
+    WHERE o.prescreen_id = ${id}::uuid
+    GROUP BY h.code
+  `) as Array<{ code: string; n: number }>;
+  const cases_per_hospital: Record<string, number> = {};
+  for (const c of caseRows) cases_per_hospital[c.code] = c.n;
+
+  return NextResponse.json({
+    ok: true,
+    prescreen: {
+      ...rows[0],
+      hospital_codes: hospitalRows.map((r) => r.code),
+      cases_per_hospital,
+    },
+  }, { headers: NO_STORE });
 }
