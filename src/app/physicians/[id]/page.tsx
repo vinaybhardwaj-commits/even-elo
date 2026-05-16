@@ -304,7 +304,7 @@ export default function PhysicianProfilePage() {
       <div className="bg-white border-b border-stone-200">
         <div className="max-w-[1400px] mx-auto px-8 py-6">
           <div className="text-sm text-stone-500 mb-2">
-            <Link href="/physicians" className="hover:text-stone-900">Physicians</Link>
+            <Link href="/physicians" className="hover:text-stone-900">Physician DB</Link>
             <span className="mx-1.5">/</span>
             <span className="text-stone-900 font-medium">{physician.full_name}</span>
           </div>

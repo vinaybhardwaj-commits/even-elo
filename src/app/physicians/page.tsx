@@ -93,8 +93,8 @@ export default function PhysiciansPage() {
       <main className="max-w-[1400px] mx-auto px-8 py-8">
         <div className="flex items-end justify-between mb-6">
           <div>
-            <h1 className="text-[22px] font-semibold tracking-tight">Physicians</h1>
-            <div className="text-sm text-stone-500 mt-1">{totalLabel} · network-wide roster</div>
+            <h1 className="text-[22px] font-semibold tracking-tight">Physician DB</h1>
+            <div className="text-sm text-stone-500 mt-1">{totalLabel} in the network database</div>
           </div>
           <button
             onClick={() => setModalOpen(true)}

@@ -110,7 +110,7 @@ export function TopNav({ nav }: { nav?: NavItem[] } = {}) {
 function defaultNav(showElo: boolean, showAdmin: boolean, pending: number, openIncidents: number, openVc: number): NavItem[] {
   const items: NavItem[] = [
     { label: "Home", href: "/home" },
-    { label: "Physicians", href: "/physicians" },
+    { label: "Physician DB", href: "/physicians" },
     { label: "Onboarding", href: "/onboarding", badge: openVc || undefined },
     { label: "Incidents", href: "/incidents", badge: openIncidents || undefined },
   ];

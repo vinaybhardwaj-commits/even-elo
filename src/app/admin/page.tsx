@@ -42,9 +42,9 @@ export default async function AdminIndex() {
             <div className="text-[12px] text-brand font-medium mt-2">User directory →</div>
           </Link>
           <Link href="/physicians" className="card bg-white border border-stone-200 rounded-xl p-5 hover:border-stone-300">
-            <div className="text-[11px] font-medium text-stone-500 tracking-wider uppercase">Physicians</div>
+            <div className="text-[11px] font-medium text-stone-500 tracking-wider uppercase">Physician DB</div>
             <div className="num text-3xl font-semibold mt-2">{c.physicians}</div>
-            <div className="text-[12px] text-brand font-medium mt-2">Roster →</div>
+            <div className="text-[12px] text-brand font-medium mt-2">Open Physician DB →</div>
           </Link>
           <Link href="/admin/metrics" className="card bg-white border border-stone-200 rounded-xl p-5 hover:border-stone-300">
             <div className="text-[11px] font-medium text-stone-500 tracking-wider uppercase">Clinical metrics</div>
