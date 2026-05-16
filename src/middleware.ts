@@ -19,6 +19,7 @@ const ADMIN_BOOTSTRAP_ROUTES = [
   "/api/admin/db-snapshot",
   "/api/admin/db-fresh",
   "/api/admin/wipe-smoke-residue",
+  "/api/admin/seed-profile",
 ];
 
 function getJwtSecret() {
