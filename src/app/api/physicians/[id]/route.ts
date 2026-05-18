@@ -31,6 +31,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
   const engagements = (await sql`
     SELECT
       e.id::text AS id,
+      e.hospital_id::text AS hospital_id,
       h.code AS hospital_code,
       h.name AS hospital_name,
       e.engagement_type,
