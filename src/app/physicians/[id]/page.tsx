@@ -8,6 +8,7 @@ import { AddEngagementModal } from "@/components/AddEngagementModal";
 import { AddQualificationModal } from "@/components/AddQualificationModal";
 import { AddPrivilegeModal } from "@/components/AddPrivilegeModal";
 import { TriggerFppeModal } from "@/components/TriggerFppeModal";
+import { OppeReviewModal } from "@/components/OppeReviewModal";
 import { MiniLineChart } from "@/components/MiniLineChart";
 
 interface Physician {
@@ -35,6 +36,21 @@ interface Engagement {
   specialty: string | null;
   status: string;
   status_reason: string | null;
+}
+
+interface OppeRow {
+  id: string;
+  hospital_id: string;
+  hospital_code: string;
+  period_start: string;
+  period_end: string;
+  due_at: string;
+  status: string;
+  completed_at: string | null;
+  decision_notes: string | null;
+  reviewer_email: string | null;
+  reviewer_name: string | null;
+  created_at: string;
 }
 
 interface Qualification {
@@ -171,6 +187,7 @@ const SECTIONS = [
   { key: "engagements", label: "Engagements", available: true },
   { key: "qualifications", label: "Qualifications & privileges", available: true },
   { key: "metrics", label: "Clinical metrics", available: true },
+  { key: "oppe", label: "OPPE", available: true },
   { key: "elo", label: "Surgical score · Even ELO", available: false, sprint: "Phase 3" },
   { key: "incidents", label: "Incidents", available: true },
   { key: "feedback", label: "Patient feedback", available: true },
@@ -208,6 +225,8 @@ export default function PhysicianProfilePage() {
   const [addQual, setAddQual] = useState(false);
   const [addPriv, setAddPriv] = useState(false);
   const [triggerFppe, setTriggerFppe] = useState(false);
+  const [oppeRows, setOppeRows] = useState<OppeRow[]>([]);
+  const [openOppeId, setOpenOppeId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [section, setSection] = useState<string>("overview");
@@ -225,8 +244,9 @@ export default function PhysicianProfilePage() {
       fetch(`/api/physicians/${id}/clinical-metrics?months=24`).then((r) => r.json()),
       fetch(`/api/incidents?physician_id=${id}&limit=100`).then((r) => r.json()),
       fetch(`/api/physicians/${id}/patient-feedback`).then((r) => r.json()),
+      fetch(`/api/physicians/${id}/oppe`).then((r) => r.json()),
     ])
-      .then(([pj, aj, qj, prj, mj, mxj, inj, fj]) => {
+      .then(([pj, aj, qj, prj, mj, mxj, inj, fj, oj]) => {
         if (!pj.ok) { setErr(pj.error || "Not found"); return; }
         setPhysician(pj.physician as Physician);
         setEngagements((pj.engagements ?? []) as Engagement[]);
@@ -238,6 +258,7 @@ export default function PhysicianProfilePage() {
         if (mxj.ok) setMetrics(mxj.rows ?? []);
         if (inj.ok) setIncidentsList(inj.rows ?? []);
         if (fj.ok) setFeedback(fj.rows ?? []);
+        if (oj.ok) setOppeRows((oj.rows ?? []) as OppeRow[]);
       })
       .catch((e) => setErr(e instanceof Error ? e.message : String(e)))
       .finally(() => setLoading(false));
@@ -747,6 +768,61 @@ export default function PhysicianProfilePage() {
           )}
 
 
+          {section === "oppe" && (
+            <div className="space-y-4">
+              <section className="bg-white border border-stone-200 rounded-xl">
+                <div className="px-5 py-3.5 border-b border-stone-100 flex items-center justify-between">
+                  <h2 className="text-sm font-semibold">
+                    OPPE reviews <span className="text-[11px] bg-stone-100 text-stone-600 rounded-full px-2 py-0.5 font-medium ml-1">{oppeRows.length}</span>
+                  </h2>
+                  <div className="text-[11px] text-stone-500">Auto-aggregated 6-month review packets per engagement.</div>
+                </div>
+                {oppeRows.length === 0 ? (
+                  <div className="px-5 py-12 text-center text-sm text-stone-500">
+                    No OPPE reviews yet. The OPPE scheduler / Kickstart button on <a href="/admin" className="text-brand font-medium">/admin</a> populates these per engagement.
+                  </div>
+                ) : (
+                  <div className="divide-y divide-stone-100">
+                    {oppeRows.map((o) => {
+                      const isOpen = o.status === "pending" || o.status === "in_review";
+                      const pillCls = isOpen
+                        ? "bg-amber-50 text-amber-800"
+                        : o.status === "satisfactory"
+                        ? "bg-emerald-50 text-emerald-700"
+                        : o.status === "flagged"
+                        ? "bg-amber-100 text-amber-900"
+                        : o.status === "escalated_to_fppe"
+                        ? "bg-red-50 text-red-700"
+                        : "bg-stone-100 text-stone-700";
+                      return (
+                        <div key={o.id} className="px-5 py-4 flex items-start gap-4">
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${pillCls}`}>
+                            {o.status.replace(/_/g, " ")}
+                          </span>
+                          <div className="flex-1">
+                            <div className="text-sm font-medium text-stone-900">{o.hospital_code} · {o.period_start} → {o.period_end}</div>
+                            <div className="text-xs text-stone-500 mt-0.5">
+                              {isOpen ? `Due ${o.due_at.slice(0, 10)}` : (o.completed_at ? `Closed ${o.completed_at.slice(0, 10)}${o.reviewer_name ? ` by ${o.reviewer_name}` : ""}` : "closed")}
+                              {o.decision_notes && (
+                                <span className="block text-stone-600 mt-1">{o.decision_notes}</span>
+                              )}
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => setOpenOppeId(o.id)}
+                            className="px-3 py-1.5 rounded-md text-[12px] font-medium text-brand bg-brand/10 hover:bg-brand/20"
+                          >
+                            {isOpen ? "Sign off →" : "View packet"}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
+            </div>
+          )}
+
           {section === "incidents" && (
             <section className="bg-white border border-stone-200 rounded-xl">
               <div className="px-5 py-3.5 border-b border-stone-100 flex items-center justify-between">
@@ -893,7 +969,7 @@ export default function PhysicianProfilePage() {
             </div>
           )}
 
-          {!["overview", "engagements", "qualifications", "metrics", "incidents", "feedback"].includes(section) && (
+          {!["overview", "engagements", "qualifications", "metrics", "oppe", "incidents", "feedback"].includes(section) && (
             <div className="bg-white border border-stone-200 rounded-xl py-16 text-center">
               <div className="text-sm text-stone-500">This section ships in the next sprint.</div>
             </div>
@@ -917,6 +993,14 @@ export default function PhysicianProfilePage() {
           physicianName={physician.full_name}
           hospitalOptions={Array.from(new Set(engagements.filter((e) => e.status === "active").map((e) => e.hospital_code))).map((code) => ({ code }))}
           onClose={() => setTriggerFppe(false)}
+        />
+      )}
+
+      {openOppeId && (
+        <OppeReviewModal
+          oppeId={openOppeId}
+          onClose={() => setOpenOppeId(null)}
+          onSaved={() => { setOpenOppeId(null); load(); }}
         />
       )}
       {addQual && (
