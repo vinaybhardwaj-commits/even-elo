@@ -78,57 +78,67 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   let engagementId: string | null = null;
 
   if (decision === "confirm_privileges") {
-    // Create physician (or reuse if email already maps to one — defensive)
-    const existing = (await sql`SELECT id::text AS id FROM physicians WHERE lower(email) = ${ps.prospective_email.toLowerCase()} LIMIT 1`) as Array<{ id: string }>;
-    if (existing.length > 0) {
-      physicianId = existing[0].id;
+    // CR.2: if the prescreen is a profile-triggered FPPE (physician_id already
+    // set), 'Confirm privileges' means 'FPPE Satisfactory'. Don't create a new
+    // engagement — physician + engagement already exist. Just advance and audit.
+    if (ps.physician_id) {
+      physicianId = ps.physician_id;
+      await sql`
+        UPDATE vc_prescreens SET stage='onboarded', decided_at=NOW(), updated_at=NOW()
+        WHERE id = ${id}::uuid
+      `;
+      newStage = "onboarded";
     } else {
-      const newPhys = (await sql`
-        INSERT INTO physicians (full_name, primary_specialty, email, date_joined_network, current_status)
-        VALUES (${ps.prospective_full_name}, ${ps.prospective_specialty}, ${ps.prospective_email}, CURRENT_DATE, 'active')
-        RETURNING id::text AS id
-      `) as Array<{ id: string }>;
-      physicianId = newPhys[0].id;
-    }
+      // Original VC-onboarding path: create physician (or reuse if email maps
+      // to one — defensive), then engagements at all hospitals on prescreen.
+      const existing = (await sql`SELECT id::text AS id FROM physicians WHERE lower(email) = ${ps.prospective_email.toLowerCase()} LIMIT 1`) as Array<{ id: string }>;
+      if (existing.length > 0) {
+        physicianId = existing[0].id;
+      } else {
+        const newPhys = (await sql`
+          INSERT INTO physicians (full_name, primary_specialty, email, date_joined_network, current_status)
+          VALUES (${ps.prospective_full_name}, ${ps.prospective_specialty}, ${ps.prospective_email}, CURRENT_DATE, 'active')
+          RETURNING id::text AS id
+        `) as Array<{ id: string }>;
+        physicianId = newPhys[0].id;
+      }
 
-    // v3.0e: create engagements at ALL hospitals on the prescreen (multi-site).
-    // Falls back to ps.hospital_id (single-site) when vc_prescreen_hospitals is empty.
-    const sites = (await sql`
-      SELECT vph.hospital_id::text AS hospital_id, h.code AS hospital_code
-      FROM vc_prescreen_hospitals vph
-      JOIN hospitals h ON h.id = vph.hospital_id
-      WHERE vph.prescreen_id = ${id}::uuid
-      ORDER BY h.code
-    `) as Array<{ hospital_id: string; hospital_code: string }>;
-    const targetSites = sites.length > 0 ? sites : [{ hospital_id: ps.hospital_id as string, hospital_code: "" }];
-    const createdEngagements: string[] = [];
-    for (const site of targetSites) {
-      // Skip if already engaged active at this hospital (idempotent re-confirms)
-      const exists = (await sql`
-        SELECT 1 FROM physician_engagements
-        WHERE physician_id = ${physicianId}::uuid AND hospital_id = ${site.hospital_id}::uuid AND status = 'active'
-        LIMIT 1
-      `) as Array<unknown>;
-      if (exists.length > 0) continue;
-      const eng = (await sql`
-        INSERT INTO physician_engagements (
-          physician_id, hospital_id, category, start_date, specialty, status
-        ) VALUES (
-          ${physicianId}::uuid, ${site.hospital_id}::uuid, 'visiting_consultant',
-          CURRENT_DATE, ${ps.prospective_specialty}, 'active'
-        )
-        RETURNING id::text AS id
-      `) as Array<{ id: string }>;
-      createdEngagements.push(eng[0].id);
-      if (!engagementId) engagementId = eng[0].id;
-    }
+      // v3.0e: create engagements at ALL hospitals on the prescreen (multi-site).
+      const sites = (await sql`
+        SELECT vph.hospital_id::text AS hospital_id, h.code AS hospital_code
+        FROM vc_prescreen_hospitals vph
+        JOIN hospitals h ON h.id = vph.hospital_id
+        WHERE vph.prescreen_id = ${id}::uuid
+        ORDER BY h.code
+      `) as Array<{ hospital_id: string; hospital_code: string }>;
+      const targetSites = sites.length > 0 ? sites : [{ hospital_id: ps.hospital_id as string, hospital_code: "" }];
+      const createdEngagements: string[] = [];
+      for (const site of targetSites) {
+        const exists = (await sql`
+          SELECT 1 FROM physician_engagements
+          WHERE physician_id = ${physicianId}::uuid AND hospital_id = ${site.hospital_id}::uuid AND status = 'active'
+          LIMIT 1
+        `) as Array<unknown>;
+        if (exists.length > 0) continue;
+        const eng = (await sql`
+          INSERT INTO physician_engagements (
+            physician_id, hospital_id, category, start_date, specialty, status
+          ) VALUES (
+            ${physicianId}::uuid, ${site.hospital_id}::uuid, 'visiting_consultant',
+            CURRENT_DATE, ${ps.prospective_specialty}, 'active'
+          )
+          RETURNING id::text AS id
+        `) as Array<{ id: string }>;
+        createdEngagements.push(eng[0].id);
+        if (!engagementId) engagementId = eng[0].id;
+      }
 
-    // Link + advance
-    await sql`
-      UPDATE vc_prescreens SET stage='onboarded', physician_id=${physicianId}::uuid, decided_at=NOW(), updated_at=NOW()
-      WHERE id = ${id}::uuid
-    `;
-    newStage = "onboarded";
+      await sql`
+        UPDATE vc_prescreens SET stage='onboarded', physician_id=${physicianId}::uuid, decided_at=NOW(), updated_at=NOW()
+        WHERE id = ${id}::uuid
+      `;
+      newStage = "onboarded";
+    }
   } else if (decision === "extend_observation") {
     await sql`UPDATE vc_prescreens SET stage='observation', updated_at=NOW() WHERE id = ${id}::uuid`;
     newStage = "observation";

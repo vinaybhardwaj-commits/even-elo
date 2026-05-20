@@ -41,6 +41,8 @@ interface Prescreen {
   prescreened_at: string;
   decided_at: string | null;
   physician_id: string | null;
+  trigger?: string;
+  fppe_from_profile?: boolean;
 }
 
 const COMMITMENT_LABEL: Record<string, string> = {
@@ -58,6 +60,51 @@ const STAGE_LABEL: Record<string, { label: string; pill: string }> = {
   onboarded:    { label: "Onboarded",     pill: "bg-emerald-50 text-emerald-700" },
   rejected:     { label: "Rejected",      pill: "bg-stone-100 text-stone-600" },
   terminated:   { label: "Terminated",    pill: "bg-red-50 text-red-700" },
+};
+
+// CR.2: trigger-aware decision card labels (PRD §C.5 / decision #6). For
+// non-VC triggers, 'Confirm privileges' reads as 'FPPE satisfactory' and
+// 'Terminate' reads as 'FPPE unsatisfactory'. Extend stays the same.
+const TRIGGER_LABEL: Record<string, string> = {
+  new_visiting_consultant: "Visiting Consultant onboarding",
+  new_employed_provisional: "FPPE · new employed (Provisional)",
+  special_privilege_request: "FPPE · Special-privilege request",
+  concern_raised: "FPPE · Concern raised",
+};
+
+const DECISION_LABELS_FOR_TRIGGER: Record<string, { confirm: string; extend: string; terminate: string; confirmPh: string; extendPh: string; terminatePh: string }> = {
+  new_visiting_consultant: {
+    confirm: "✓ Confirm privileges",
+    extend: "+ Extend observation (max 5)",
+    terminate: "✕ Terminate",
+    confirmPh: "Why this VC is being confirmed for privileges?",
+    extendPh: "Why extend to additional observation cases?",
+    terminatePh: "Why is this VC being terminated?",
+  },
+  new_employed_provisional: {
+    confirm: "✓ FPPE satisfactory",
+    extend: "+ Extend (more cases)",
+    terminate: "✕ FPPE unsatisfactory",
+    confirmPh: "Why is this Provisional period being closed satisfactorily?",
+    extendPh: "Why extend FPPE — what specifically needs more observation?",
+    terminatePh: "Why is FPPE being closed as unsatisfactory? Suspension/revocation handled on the profile.",
+  },
+  special_privilege_request: {
+    confirm: "✓ Approve Special privilege",
+    extend: "+ Extend FPPE on this scope",
+    terminate: "✕ Deny Special privilege",
+    confirmPh: "Why is this Special-privilege grant being approved after FPPE?",
+    extendPh: "What additional case observation is needed before deciding?",
+    terminatePh: "Why is the Special-privilege request being denied?",
+  },
+  concern_raised: {
+    confirm: "✓ Concern resolved",
+    extend: "+ Continue under review",
+    terminate: "✕ Concern upheld",
+    confirmPh: "What evidence resolves the concern raised here?",
+    extendPh: "What further observation is required?",
+    terminatePh: "Why is the concern upheld? Suspension/revocation handled on the profile.",
+  },
 };
 
 export default function OnboardingDetailPage() {
@@ -136,6 +183,9 @@ export default function OnboardingDetailPage() {
   );
 
   const stage = STAGE_LABEL[data.stage] ?? { label: data.stage, pill: "bg-stone-100 text-stone-700" };
+  const trig = data.trigger ?? "new_visiting_consultant";
+  const trigLabels = DECISION_LABELS_FOR_TRIGGER[trig] ?? DECISION_LABELS_FOR_TRIGGER.new_visiting_consultant;
+  const trigBadge = TRIGGER_LABEL[trig] ?? null;
   const commitments = data.commitments_acknowledged ?? {};
 
   return (
@@ -280,7 +330,12 @@ export default function OnboardingDetailPage() {
         {data.stage === "decision" && (
           <section className="bg-white border border-stone-200 rounded-xl">
             <div className="px-5 py-3.5 border-b border-stone-100">
-              <h2 className="text-sm font-semibold">Final decision</h2>
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm font-semibold">Final decision</h2>
+                {trigBadge && trig !== "new_visiting_consultant" && (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-50 text-amber-800 border border-amber-200">{trigBadge}</span>
+                )}
+              </div>
               <div className="text-xs text-stone-500 mt-0.5">
                 {cases.length} {cases.length === 1 ? "case" : "cases"} observed.
                 {cases.length > 0 && (
@@ -320,19 +375,19 @@ export default function OnboardingDetailPage() {
                     onClick={() => setDecisionMode("confirm_privileges")}
                     className={`px-3 py-3 rounded-lg text-sm font-medium border-2 ${decisionMode === "confirm_privileges" ? "bg-emerald-600 text-white border-emerald-600" : "bg-white text-emerald-700 border-emerald-200 hover:bg-emerald-50"}`}
                   >
-                    ✓ Confirm privileges
+                    {trigLabels.confirm}
                   </button>
                   <button
                     onClick={() => setDecisionMode("extend_observation")}
                     className={`px-3 py-3 rounded-lg text-sm font-medium border-2 ${decisionMode === "extend_observation" ? "bg-amber-600 text-white border-amber-600" : "bg-white text-amber-700 border-amber-200 hover:bg-amber-50"}`}
                   >
-                    + Extend observation (max 5)
+                    {trigLabels.extend}
                   </button>
                   <button
                     onClick={() => setDecisionMode("terminate")}
                     className={`px-3 py-3 rounded-lg text-sm font-medium border-2 ${decisionMode === "terminate" ? "bg-red-600 text-white border-red-600" : "bg-white text-red-700 border-red-200 hover:bg-red-50"}`}
                   >
-                    ✕ Terminate
+                    {trigLabels.terminate}
                   </button>
                 </div>
 
@@ -347,10 +402,10 @@ export default function OnboardingDetailPage() {
                       rows={3}
                       placeholder={
                         decisionMode === "confirm_privileges"
-                          ? "Why this VC is being confirmed for privileges?"
+                          ? trigLabels.confirmPh
                           : decisionMode === "extend_observation"
-                          ? "Why extend to additional observation cases?"
-                          : "Why is this VC being terminated?"
+                          ? trigLabels.extendPh
+                          : trigLabels.terminatePh
                       }
                       className="w-full px-3 py-2 border border-stone-200 rounded-lg text-sm outline-none focus:border-brand font-sans leading-relaxed"
                     />

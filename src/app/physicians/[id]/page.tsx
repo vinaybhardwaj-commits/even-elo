@@ -7,6 +7,7 @@ import { TopNav } from "@/components/TopNav";
 import { AddEngagementModal } from "@/components/AddEngagementModal";
 import { AddQualificationModal } from "@/components/AddQualificationModal";
 import { AddPrivilegeModal } from "@/components/AddPrivilegeModal";
+import { TriggerFppeModal } from "@/components/TriggerFppeModal";
 import { MiniLineChart } from "@/components/MiniLineChart";
 
 interface Physician {
@@ -196,6 +197,7 @@ export default function PhysicianProfilePage() {
 
   const [physician, setPhysician] = useState<Physician | null>(null);
   const [engagements, setEngagements] = useState<Engagement[]>([]);
+  const [gradReady, setGradReady] = useState<Set<string>>(new Set());
   const [audit, setAudit] = useState<AuditRow[]>([]);
   const [quals, setQuals] = useState<Qualification[]>([]);
   const [privs, setPrivs] = useState<Privilege[]>([]);
@@ -205,6 +207,7 @@ export default function PhysicianProfilePage() {
   const [feedback, setFeedback] = useState<FeedbackRow[]>([]);
   const [addQual, setAddQual] = useState(false);
   const [addPriv, setAddPriv] = useState(false);
+  const [triggerFppe, setTriggerFppe] = useState(false);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [section, setSection] = useState<string>("overview");
@@ -227,6 +230,7 @@ export default function PhysicianProfilePage() {
         if (!pj.ok) { setErr(pj.error || "Not found"); return; }
         setPhysician(pj.physician as Physician);
         setEngagements((pj.engagements ?? []) as Engagement[]);
+        setGradReady(new Set<string>(((pj as { graduation_ready_engagement_ids?: string[] }).graduation_ready_engagement_ids ?? [])));
         if (aj.ok) setAudit(aj.rows ?? []);
         if (qj.ok) setQuals(qj.rows ?? []);
         if (prj.ok) setPrivs(prj.rows ?? []);
@@ -241,7 +245,25 @@ export default function PhysicianProfilePage() {
 
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [id]);
 
-  async function endEngagement(eid: string, status: "resigned" | "revoked" | "suspended" | "lapsed" = "resigned") {
+  async function graduateEngagement(eid: string) {
+    if (!confirm("Graduate this engagement from Provisional → Active? This requires SMH/super_admin sign-off and is audited.")) return;
+    const r = await fetch(`/api/physicians/${id}/engagements/${eid}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        category: "active",
+        status_reason: "Graduated from Provisional after satisfactory FPPE + 6mo tenure (CR.2).",
+      }),
+    });
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      alert(j.error || "Could not graduate engagement.");
+      return;
+    }
+    load();
+  }
+
+    async function endEngagement(eid: string, status: "resigned" | "revoked" | "suspended" | "lapsed" = "resigned") {
     const labelMap: Record<string, string> = {
       resigned: "Reason for resignation? (free text)",
       revoked: "Reason for revocation? (required — what was the cause for permanent removal?)",
@@ -383,6 +405,11 @@ export default function PhysicianProfilePage() {
               </div>
             </div>
             <div className="flex gap-2">
+              {(me?.is_super_admin || me?.is_site_medical_head || me?.is_hr) && (
+                <button onClick={() => setTriggerFppe(true)} className="px-3 py-2 rounded-lg text-sm font-medium text-amber-800 bg-amber-50 hover:bg-amber-100">
+                  Trigger FPPE
+                </button>
+              )}
               <button onClick={deletePhysician} className="px-3 py-2 rounded-lg text-sm font-medium text-red-700 bg-red-50 hover:bg-red-100">
                 Mark terminated
               </button>
@@ -502,13 +529,24 @@ export default function PhysicianProfilePage() {
                         </div>
                       </div>
                       {e.status === "active" && (
-                        <div className="flex flex-col items-end gap-1">
-                          <span className="text-[10px] uppercase tracking-wider text-stone-400">End engagement</span>
-                          <div className="flex flex-wrap items-center gap-1.5 justify-end">
-                            <button onClick={() => endEngagement(e.id, "suspended")} className="px-2 py-1 rounded-md text-[11px] font-medium bg-white border border-amber-200 text-amber-800 hover:bg-amber-50">Suspend</button>
-                            <button onClick={() => endEngagement(e.id, "revoked")} className="px-2 py-1 rounded-md text-[11px] font-medium bg-white border border-red-200 text-red-700 hover:bg-red-50">Revoke</button>
-                            <button onClick={() => endEngagement(e.id, "resigned")} className="px-2 py-1 rounded-md text-[11px] font-medium bg-white border border-stone-200 text-stone-700 hover:bg-stone-50">Resign</button>
-                            <button onClick={() => endEngagement(e.id, "lapsed")} className="px-2 py-1 rounded-md text-[11px] font-medium bg-white border border-stone-200 text-stone-500 hover:bg-stone-50">Lapsed</button>
+                        <div className="flex flex-col items-end gap-2">
+                          {e.category === "provisional" && gradReady.has(e.id) && (me?.is_super_admin || me?.is_site_medical_head) && (
+                            <button
+                              onClick={() => graduateEngagement(e.id)}
+                              className="px-2.5 py-1 rounded-md text-[11px] font-semibold bg-emerald-600 text-white hover:bg-emerald-700 border border-emerald-700"
+                              title="6 months tenure + satisfactory FPPE complete — eligible for graduation"
+                            >
+                              ↑ Graduate to Active
+                            </button>
+                          )}
+                          <div className="flex flex-col items-end gap-1">
+                            <span className="text-[10px] uppercase tracking-wider text-stone-400">End engagement</span>
+                            <div className="flex flex-wrap items-center gap-1.5 justify-end">
+                              <button onClick={() => endEngagement(e.id, "suspended")} className="px-2 py-1 rounded-md text-[11px] font-medium bg-white border border-amber-200 text-amber-800 hover:bg-amber-50">Suspend</button>
+                              <button onClick={() => endEngagement(e.id, "revoked")} className="px-2 py-1 rounded-md text-[11px] font-medium bg-white border border-red-200 text-red-700 hover:bg-red-50">Revoke</button>
+                              <button onClick={() => endEngagement(e.id, "resigned")} className="px-2 py-1 rounded-md text-[11px] font-medium bg-white border border-stone-200 text-stone-700 hover:bg-stone-50">Resign</button>
+                              <button onClick={() => endEngagement(e.id, "lapsed")} className="px-2 py-1 rounded-md text-[11px] font-medium bg-white border border-stone-200 text-stone-500 hover:bg-stone-50">Lapsed</button>
+                            </div>
                           </div>
                         </div>
                       )}
@@ -870,6 +908,15 @@ export default function PhysicianProfilePage() {
           engagedHospitalCodes={engagements.filter((e) => e.status === "active").map((e) => e.hospital_code)}
           onClose={() => setAddEng(false)}
           onSaved={() => { setAddEng(false); load(); }}
+        />
+      )}
+
+      {triggerFppe && physician && (
+        <TriggerFppeModal
+          physicianId={physician.id}
+          physicianName={physician.full_name}
+          hospitalOptions={Array.from(new Set(engagements.filter((e) => e.status === "active").map((e) => e.hospital_code))).map((code) => ({ code }))}
+          onClose={() => setTriggerFppe(false)}
         />
       )}
       {addQual && (

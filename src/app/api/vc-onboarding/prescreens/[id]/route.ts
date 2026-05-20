@@ -60,12 +60,28 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
   const cases_per_hospital: Record<string, number> = {};
   for (const c of caseRows) cases_per_hospital[c.code] = c.n;
 
+  // CR.2: surface trigger (derived from first observation case on the
+  // prescreen — uniform per prescreen). Defaults to new_visiting_consultant
+  // when there are no cases yet so the UI back-compat stays.
+  const trigRow = (await sql`
+    SELECT trigger FROM vc_observation_cases WHERE prescreen_id = ${id}::uuid ORDER BY case_number ASC LIMIT 1
+  `) as Array<{ trigger: string }>;
+  // Also surface fppe_from_profile flag (set by /api/physicians/[id]/fppe in
+  // commitments_acknowledged) so UI knows this is a profile-triggered FPPE.
+  const meta = (rows[0] as Record<string, unknown>).commitments_acknowledged as Record<string, unknown> | null;
+  const fppeFromProfile = !!(meta && (meta as { fppe_from_profile?: boolean }).fppe_from_profile);
+  const derivedTrigger = trigRow.length > 0
+    ? trigRow[0].trigger
+    : (fppeFromProfile && (meta as { trigger?: string }).trigger ? (meta as { trigger: string }).trigger : "new_visiting_consultant");
+
   return NextResponse.json({
     ok: true,
     prescreen: {
       ...rows[0],
       hospital_codes: hospitalRows.map((r) => r.code),
       cases_per_hospital,
+      trigger: derivedTrigger,
+      fppe_from_profile: fppeFromProfile,
     },
   }, { headers: NO_STORE });
 }

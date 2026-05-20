@@ -46,7 +46,30 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
     ORDER BY e.start_date DESC
   `) as Array<Record<string, unknown>>;
 
-  return NextResponse.json({ ok: true, physician: rows[0], engagements }, { headers: NO_STORE });
+  // CR.2: graduation_ready_engagement_ids — list of engagement ids where
+  // category='provisional' AND start_date <= NOW()-6mo AND there's a
+  // satisfactory FPPE (onboarded vc_prescreens row) at the same hospital.
+  // SMH/super_admin sees the "Graduate to Active" CTA against these.
+  const gradReady = (await sql`
+    SELECT e.id::text AS id
+    FROM physician_engagements e
+    WHERE e.physician_id = ${id}::uuid
+      AND e.category = 'provisional'
+      AND e.status = 'active'
+      AND e.start_date <= (CURRENT_DATE - INTERVAL '6 months')
+      AND EXISTS (
+        SELECT 1 FROM vc_prescreens v
+        WHERE v.physician_id = ${id}::uuid
+          AND v.hospital_id = e.hospital_id
+          AND v.stage = 'onboarded'
+      )
+  `) as Array<{ id: string }>;
+  const graduation_ready_engagement_ids = gradReady.map((r) => r.id);
+
+  return NextResponse.json(
+    { ok: true, physician: rows[0], engagements, graduation_ready_engagement_ids },
+    { headers: NO_STORE },
+  );
 }
 
 export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {

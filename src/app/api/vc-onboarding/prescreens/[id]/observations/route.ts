@@ -15,6 +15,23 @@ const SCORE_DIMENSIONS = [
   "protocol_adherence", "outcome", "demeanor",
 ] as const;
 const FLAG_SEVERITIES = new Set(["none", "concern", "immediate_termination_recommended"]);
+
+// CR.2: FPPE trigger enum (PRD §C.5, decision #6). The default keeps VC behaviour identical.
+const TRIGGERS = new Set([
+  "new_visiting_consultant",
+  "new_employed_provisional",
+  "special_privilege_request",
+  "concern_raised",
+]);
+// Cases-required threshold per trigger (PRD §C.5). After N cases the prescreen
+// auto-advances to 'decision'. Trigger comes from this body OR from the first
+// case already on the prescreen if this is case 2+.
+const CASES_REQUIRED: Record<string, number> = {
+  new_visiting_consultant: 3,
+  new_employed_provisional: 5,
+  special_privilege_request: 3,
+  concern_raised: 5,
+};
 const OBSERVER_ROLES = [
   "OT Coordinator", "Anesthesia Coordinator", "ICN Lead",
   "Nurse-in-Charge", "Medical Superintendent", "Site Medical Head",
@@ -37,6 +54,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
       c.scores,
       c.narrative_notes,
       c.flag_severity,
+      c.trigger,
       p.email AS observer_email,
       c.created_at
     FROM vc_observation_cases c
@@ -56,7 +74,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   catch { return NextResponse.json({ ok: false, error: "Unauthenticated" }, { status: 401, headers: NO_STORE }); }
 
   const body = await req.json();
-  const { case_date, procedure, observer_role, scores, narrative_notes, flag_severity, hospital_id } = body ?? {};
+  const { case_date, procedure, observer_role, scores, narrative_notes, flag_severity, hospital_id, trigger } = body ?? {};
 
   if (!case_date || !procedure || !observer_role) {
     return NextResponse.json({ ok: false, error: "case_date, procedure, observer_role required" }, { status: 400, headers: NO_STORE });
@@ -100,6 +118,20 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   // Auto-assign case_number = max + 1 (cap 5)
   const cnt = (await sql`SELECT COALESCE(MAX(case_number), 0) + 1 AS next FROM vc_observation_cases WHERE prescreen_id = ${id}::uuid`) as Array<{ next: number }>;
   const caseNumber = cnt[0].next;
+
+  // CR.2: settle the trigger. If this prescreen already has cases, inherit the
+  // existing trigger (uniform per prescreen). Otherwise take from body, default
+  // to new_visiting_consultant for back-compat.
+  const existingTrig = (await sql`
+    SELECT trigger FROM vc_observation_cases WHERE prescreen_id = ${id}::uuid LIMIT 1
+  `) as Array<{ trigger: string }>;
+  const incomingTrigger =
+    typeof trigger === "string" && TRIGGERS.has(trigger) ? trigger : null;
+  const effectiveTrigger =
+    existingTrig.length > 0
+      ? existingTrig[0].trigger
+      : incomingTrigger ?? "new_visiting_consultant";
+  const minRequired = CASES_REQUIRED[effectiveTrigger] ?? 3;
   if (caseNumber > 5) {
     return NextResponse.json({ ok: false, error: "Maximum 5 observation cases reached" }, { status: 409, headers: NO_STORE });
   }
@@ -112,20 +144,21 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     INSERT INTO vc_observation_cases (
       prescreen_id, case_number, case_date, procedure,
       observer_role, observer_user_id, observer_name,
-      scores, narrative_notes, flag_severity, hospital_id
+      scores, narrative_notes, flag_severity, hospital_id, trigger
     ) VALUES (
       ${id}::uuid, ${caseNumber}, ${case_date}, ${String(procedure).trim()},
       ${String(observer_role).trim()}, ${actor.profileId}::uuid, ${observerName},
-      ${JSON.stringify(cleanScores)}::jsonb, ${narrative_notes ?? null}, ${finalFlag}, ${hospital_id}::uuid
+      ${JSON.stringify(cleanScores)}::jsonb, ${narrative_notes ?? null}, ${finalFlag}, ${hospital_id}::uuid, ${effectiveTrigger}
     )
-    RETURNING id::text AS id, case_number, case_date, procedure, observer_role, observer_name, scores, flag_severity, hospital_id::text AS hospital_id, created_at
+    RETURNING id::text AS id, case_number, case_date, procedure, observer_role, observer_name, scores, flag_severity, hospital_id::text AS hospital_id, trigger, created_at
   `) as Array<Record<string, unknown>>;
 
   // Auto-advance to 'decision' stage:
-  //   - after 3rd case (PRD: minimum 3 cases trigger decision)
+  //   - after the per-trigger minimum (VC=3, new_employed_provisional=5,
+  //     special_privilege_request=3, concern_raised=5 — PRD §C.5)
   //   - OR immediately if flag_severity='immediate_termination_recommended'
   let advancedTo: string | null = null;
-  if (caseNumber >= 3 || finalFlag === "immediate_termination_recommended") {
+  if (caseNumber >= minRequired || finalFlag === "immediate_termination_recommended") {
     if (ps.stage !== "decision") {
       await sql`UPDATE vc_prescreens SET stage = 'decision', updated_at = NOW() WHERE id = ${id}::uuid`;
       advancedTo = "decision";
@@ -144,6 +177,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         case_number: caseNumber,
         observer_role,
         flag_severity: finalFlag,
+        trigger: effectiveTrigger,
+        cases_required: minRequired,
         avg_score: Object.values(cleanScores).reduce((a, b) => a + b, 0) / SCORE_DIMENSIONS.length,
         advanced_to: advancedTo,
       })}::jsonb
@@ -165,7 +200,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   }
 
   return NextResponse.json(
-    { ok: true, observation: inserted[0], advanced_to: advancedTo },
+    { ok: true, observation: inserted[0], advanced_to: advancedTo, trigger: effectiveTrigger, cases_required: minRequired },
     { headers: NO_STORE },
   );
 }
