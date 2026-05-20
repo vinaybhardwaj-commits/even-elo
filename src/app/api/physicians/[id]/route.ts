@@ -22,6 +22,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
     SELECT
       id::text AS id, full_name, preferred_name, primary_specialty,
       registration_number, registration_council, registration_expiry,
+      indemnity_expiry, docs_external_url,
       email, phone, date_joined_network, current_status, notes,
       created_at, updated_at
     FROM physicians WHERE id = ${id}::uuid
@@ -95,6 +96,7 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
   const allowed = [
     "full_name", "preferred_name", "primary_specialty",
     "registration_number", "registration_council", "registration_expiry",
+    "indemnity_expiry", "docs_external_url",
     "email", "phone", "date_joined_network", "current_status", "notes",
   ];
   // Build a single UPDATE — only set keys present in body
@@ -116,6 +118,8 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
       registration_number  = ${(merged.registration_number as string | null) ?? null},
       registration_council = ${(merged.registration_council as string | null) ?? null},
       registration_expiry  = ${(merged.registration_expiry as string | null) ?? null},
+      indemnity_expiry     = ${(merged.indemnity_expiry as string | null) ?? null},
+      docs_external_url    = ${(merged.docs_external_url as string | null) ?? null},
       email                = ${(merged.email as string | null) ?? null},
       phone                = ${(merged.phone as string | null) ?? null},
       date_joined_network  = ${(merged.date_joined_network as string | null) ?? null},
