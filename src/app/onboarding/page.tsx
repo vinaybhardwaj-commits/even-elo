@@ -93,7 +93,7 @@ export default function OnboardingPage() {
       <main className="max-w-[1400px] mx-auto px-8 py-8">
         <div className="flex items-end justify-between mb-6">
           <div>
-            <h1 className="text-[22px] font-semibold tracking-tight">VC onboarding</h1>
+            <h1 className="text-[22px] font-semibold tracking-tight">Credentialing</h1>
             <div className="text-sm text-stone-500 mt-1">
               {activeCount} active · {Object.entries(counts).map(([k, n]) => `${STAGE_LABEL[k]?.label ?? k}: ${n}`).join(" · ") || "—"}
             </div>

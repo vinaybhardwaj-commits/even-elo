@@ -111,7 +111,7 @@ function defaultNav(showElo: boolean, showAdmin: boolean, pending: number, openI
   const items: NavItem[] = [
     { label: "Home", href: "/home" },
     { label: "Physician DB", href: "/physicians" },
-    { label: "Onboarding", href: "/onboarding", badge: openVc || undefined },
+    { label: "Credentialing", href: "/onboarding", badge: openVc || undefined },
     { label: "Incidents", href: "/incidents", badge: openIncidents || undefined },
   ];
   if (showElo) items.push({ label: "Even ELO", href: "/surgical-elo" });

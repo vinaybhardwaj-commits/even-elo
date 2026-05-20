@@ -110,7 +110,7 @@ export default function NewPrescreenPage() {
       <TopNav />
       <main className="max-w-[800px] mx-auto px-8 py-8">
         <div className="text-sm text-stone-500 mb-2">
-          <Link href="/onboarding" className="hover:text-stone-900">Onboarding</Link>
+          <Link href="/onboarding" className="hover:text-stone-900">Credentialing</Link>
           <span className="mx-1.5">/</span>
           <span className="text-stone-900 font-medium">New invitation</span>
         </div>

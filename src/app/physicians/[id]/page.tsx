@@ -28,12 +28,12 @@ interface Engagement {
   id: string;
   hospital_code: string;
   hospital_name: string;
-  engagement_type: string;
+  category: string;
   start_date: string;
   end_date: string | null;
   specialty: string | null;
   status: string;
-  terminated_reason: string | null;
+  status_reason: string | null;
 }
 
 interface Qualification {
@@ -140,10 +140,29 @@ const STATUS_PILL: Record<string, string> = {
   terminated: "bg-red-50 text-red-700",
 };
 
-const ENGAGEMENT_TYPE_LABEL: Record<string, string> = {
-  employed: "Employed",
-  part_time: "Part-time",
+// CR.1 — 5-state engagement status (decision #9)
+const ENGAGEMENT_STATUS_PILL: Record<string, string> = {
+  active: "bg-emerald-50 text-emerald-700",
+  suspended: "bg-amber-50 text-amber-800",
+  revoked: "bg-red-50 text-red-700",
+  resigned: "bg-stone-100 text-stone-600",
+  lapsed: "bg-stone-100 text-stone-500",
+};
+
+// CR.1 — 5-value engagement category (decisions #2, #3, #18)
+const CATEGORY_LABEL: Record<string, string> = {
+  provisional: "Provisional",
+  active: "Active",
   visiting_consultant: "VC",
+  locum_tenens: "Locum",
+  affiliate: "Affiliate",
+};
+const CATEGORY_PILL: Record<string, string> = {
+  provisional: "bg-amber-50 text-amber-800",
+  active: "bg-brand/10 text-brand",
+  visiting_consultant: "bg-violet-50 text-violet-700",
+  locum_tenens: "bg-sky-50 text-sky-700",
+  affiliate: "bg-stone-100 text-stone-700",
 };
 
 const SECTIONS = [
@@ -222,16 +241,28 @@ export default function PhysicianProfilePage() {
 
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [id]);
 
-  async function endEngagement(eid: string) {
-    const reason = prompt("Reason for ending this engagement?");
+  async function endEngagement(eid: string, status: "resigned" | "revoked" | "suspended" | "lapsed" = "resigned") {
+    const labelMap: Record<string, string> = {
+      resigned: "Reason for resignation? (free text)",
+      revoked: "Reason for revocation? (required — what was the cause for permanent removal?)",
+      suspended: "Reason for suspension? (required — what investigation triggered this?)",
+      lapsed: "Note for lapse? (optional — e.g. didn't recredential by deadline)",
+    };
+    const reason = prompt(labelMap[status] ?? "Reason?");
     if (reason === null) return;
+    if ((status === "revoked" || status === "suspended") && !reason.trim()) {
+      alert(`A reason is required when ${status === "revoked" ? "revoking" : "suspending"} an engagement.`);
+      return;
+    }
     await fetch(`/api/physicians/${id}/engagements/${eid}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        status: "terminated",
-        end_date: new Date().toISOString().slice(0, 10),
-        terminated_reason: reason || null,
+        status,
+        end_date: status === "resigned" || status === "revoked"
+          ? new Date().toISOString().slice(0, 10)
+          : null,
+        status_reason: reason.trim() || null,
       }),
     });
     load();
@@ -456,21 +487,30 @@ export default function PhysicianProfilePage() {
                   {sortedEng.map((e) => (
                     <div key={e.id} className="px-5 py-4 flex items-start gap-4">
                       <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${
-                        e.status === "active" ? "bg-emerald-50 text-emerald-700" : "bg-stone-100 text-stone-500"
+                        ENGAGEMENT_STATUS_PILL[e.status] ?? "bg-stone-100 text-stone-500"
                       }`}>
-                        {ENGAGEMENT_TYPE_LABEL[e.engagement_type] ?? e.engagement_type} · {e.status}
+                        <span className={`mr-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold ${CATEGORY_PILL[e.category] ?? "bg-stone-100 text-stone-700"}`}>
+                          {CATEGORY_LABEL[e.category] ?? e.category}
+                        </span>
+                        <span>{e.status}</span>
                       </span>
                       <div className="flex-1">
                         <div className="text-sm font-medium text-stone-900">{e.hospital_code} · {e.specialty ?? physician.primary_specialty ?? "—"}</div>
                         <div className="text-xs text-stone-500 mt-0.5">
                           {fmtDate(e.start_date)} → {e.end_date ? fmtDate(e.end_date) : "present"}
-                          {e.terminated_reason && <span className="text-red-700"> · {e.terminated_reason}</span>}
+                          {e.status_reason && <span className="text-red-700"> · {e.status_reason}</span>}
                         </div>
                       </div>
                       {e.status === "active" && (
-                        <button onClick={() => endEngagement(e.id)} className="text-[12px] text-stone-500 hover:text-red-700">
-                          End engagement
-                        </button>
+                        <div className="flex flex-col items-end gap-1">
+                          <span className="text-[10px] uppercase tracking-wider text-stone-400">End engagement</span>
+                          <div className="flex flex-wrap items-center gap-1.5 justify-end">
+                            <button onClick={() => endEngagement(e.id, "suspended")} className="px-2 py-1 rounded-md text-[11px] font-medium bg-white border border-amber-200 text-amber-800 hover:bg-amber-50">Suspend</button>
+                            <button onClick={() => endEngagement(e.id, "revoked")} className="px-2 py-1 rounded-md text-[11px] font-medium bg-white border border-red-200 text-red-700 hover:bg-red-50">Revoke</button>
+                            <button onClick={() => endEngagement(e.id, "resigned")} className="px-2 py-1 rounded-md text-[11px] font-medium bg-white border border-stone-200 text-stone-700 hover:bg-stone-50">Resign</button>
+                            <button onClick={() => endEngagement(e.id, "lapsed")} className="px-2 py-1 rounded-md text-[11px] font-medium bg-white border border-stone-200 text-stone-500 hover:bg-stone-50">Lapsed</button>
+                          </div>
+                        </div>
                       )}
                     </div>
                   ))}

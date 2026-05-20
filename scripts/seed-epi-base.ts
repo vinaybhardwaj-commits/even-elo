@@ -117,12 +117,12 @@ async function main() {
   // V's engagement at EHRC
   await sql`
     INSERT INTO physician_engagements (
-      physician_id, hospital_id, engagement_type, start_date, specialty, status
+      physician_id, hospital_id, category, start_date, specialty, status
     ) VALUES (
-      ${vPhysicianId}::uuid, ${hospitalId}::uuid, 'employed', '2024-01-01', 'Neurology', 'active'
+      ${vPhysicianId}::uuid, ${hospitalId}::uuid, 'active', '2024-01-01', 'Neurology', 'active'
     )
   `;
-  console.log('   ✔ V engagement (EHRC, employed, Neurology) inserted');
+  console.log('   ✔ V engagement (EHRC, category=active, Neurology) inserted');
 
   // V's profile — Medical Superintendent position, super_admin, active
   const msPositionRows = await sql`

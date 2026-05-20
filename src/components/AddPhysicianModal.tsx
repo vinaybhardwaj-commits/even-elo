@@ -10,14 +10,14 @@ const SPECIALTIES = [
   "Radiology", "Pathology", "Emergency Medicine", "Other",
 ];
 const COUNCILS = ["KMC", "MMC", "DMC", "MCI/NMC", "Other"];
-const ENG_TYPES = ["employed", "visiting_consultant", "panel_consultant", "locum"];
+const CATEGORIES = ["provisional", "active", "visiting_consultant", "locum_tenens", "affiliate"];
 
 interface HospitalOption { id: string; code: string; }
 interface ExistingEngagement {
   hospital_code: string;
   hospital_id: string;
   status: string;
-  engagement_type: string;
+  category: string;
   start_date: string | null;
 }
 interface ExistingPhysician {
@@ -46,7 +46,7 @@ export function AddPhysicianModal({
   const [joined, setJoined] = useState(new Date().toISOString().slice(0, 10));
   const [hospitals, setHospitals] = useState<HospitalOption[]>([]);
   const [pickedCodes, setPickedCodes] = useState<Set<string>>(new Set());
-  const [engType, setEngType] = useState<string>("employed");
+  const [category, setCategory] = useState<string>("active");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [duplicate, setDuplicate] = useState<ExistingPhysician | null>(null);
@@ -83,7 +83,7 @@ export function AddPhysicianModal({
           phone: phone.trim() || null,
           date_joined_network: joined || null,
           hospital_codes: Array.from(pickedCodes),
-          engagement_type: engType,
+          category,
           extend_physician_id: extendId ?? null,
         }),
       });
@@ -129,7 +129,7 @@ export function AddPhysicianModal({
               <div className="mt-2 flex flex-wrap gap-1">
                 {(duplicate.engagements ?? []).map((e) => (
                   <span key={e.hospital_code} className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${e.status === "active" ? "bg-emerald-100 text-emerald-800" : "bg-stone-100 text-stone-600"}`}>
-                    {e.hospital_code} · {e.engagement_type}
+                    {e.hospital_code} · {e.category}
                   </span>
                 ))}
                 {(duplicate.engagements ?? []).length === 0 && <span className="text-[11px] text-stone-500">no active engagements</span>}
@@ -194,9 +194,9 @@ export function AddPhysicianModal({
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-medium text-stone-500 mb-1">Engagement type</label>
-                <select value={engType} onChange={(e) => setEngType(e.target.value)} className="w-full px-3 py-2 border border-stone-200 rounded-lg text-sm bg-white">
-                  {ENG_TYPES.map((t) => <option key={t} value={t}>{t.replace("_", " ")}</option>)}
+                <label className="block text-xs font-medium text-stone-500 mb-1">Category</label>
+                <select value={category} onChange={(e) => setCategory(e.target.value)} className="w-full px-3 py-2 border border-stone-200 rounded-lg text-sm bg-white">
+                  {CATEGORIES.map((c) => <option key={c} value={c}>{c.replace(/_/g, " ")}</option>)}
                 </select>
               </div>
             </div>

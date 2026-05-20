@@ -9,7 +9,20 @@ export const runtime = "nodejs";
 
 const NO_STORE = { "Cache-Control": "no-store, max-age=0" };
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const ENGAGEMENT_STATUSES = new Set(["active", "probation", "terminated"]);
+const ENGAGEMENT_STATUSES = new Set([
+  "active",
+  "suspended",
+  "revoked",
+  "resigned",
+  "lapsed",
+]);
+const ENGAGEMENT_CATEGORIES = new Set([
+  "provisional",
+  "active",
+  "visiting_consultant",
+  "locum_tenens",
+  "affiliate",
+]);
 
 export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: string; eid: string }> }) {
   const { id, eid } = await ctx.params;
@@ -29,22 +42,32 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
   const b = before[0];
 
   if (body.status !== undefined && !ENGAGEMENT_STATUSES.has(body.status)) {
-    return NextResponse.json({ ok: false, error: "invalid status" }, { status: 400, headers: NO_STORE });
+    return NextResponse.json({ ok: false, error: "status must be one of: active|suspended|revoked|resigned|lapsed" }, { status: 400, headers: NO_STORE });
   }
+  if (body.category !== undefined && !ENGAGEMENT_CATEGORIES.has(body.category)) {
+    return NextResponse.json({ ok: false, error: "category must be one of: provisional|active|visiting_consultant|locum_tenens|affiliate" }, { status: 400, headers: NO_STORE });
+  }
+
+  // Legacy compatibility: callers may still send terminated_reason — map to status_reason.
+  const incomingStatusReason =
+    body.status_reason !== undefined ? body.status_reason :
+    body.terminated_reason !== undefined ? body.terminated_reason : undefined;
 
   const merged = {
     end_date: body.end_date !== undefined ? body.end_date : b.end_date,
     specialty: body.specialty !== undefined ? body.specialty : b.specialty,
     status: body.status ?? b.status,
-    terminated_reason: body.terminated_reason !== undefined ? body.terminated_reason : b.terminated_reason,
+    status_reason: incomingStatusReason !== undefined ? incomingStatusReason : b.status_reason,
+    category: body.category ?? b.category,
   };
 
   await sql`
     UPDATE physician_engagements SET
-      end_date          = ${(merged.end_date as string | null) ?? null},
-      specialty         = ${(merged.specialty as string | null) ?? null},
-      status            = ${merged.status as string},
-      terminated_reason = ${(merged.terminated_reason as string | null) ?? null}
+      end_date      = ${(merged.end_date as string | null) ?? null},
+      specialty     = ${(merged.specialty as string | null) ?? null},
+      status        = ${merged.status as string},
+      status_reason = ${(merged.status_reason as string | null) ?? null},
+      category      = ${merged.category as string}
     WHERE id = ${eid}::uuid
   `;
 

@@ -112,7 +112,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       if (exists.length > 0) continue;
       const eng = (await sql`
         INSERT INTO physician_engagements (
-          physician_id, hospital_id, engagement_type, start_date, specialty, status
+          physician_id, hospital_id, category, start_date, specialty, status
         ) VALUES (
           ${physicianId}::uuid, ${site.hospital_id}::uuid, 'visiting_consultant',
           CURRENT_DATE, ${ps.prospective_specialty}, 'active'

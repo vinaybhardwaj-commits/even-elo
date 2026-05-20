@@ -9,8 +9,22 @@ export const runtime = "nodejs";
 
 const NO_STORE = { "Cache-Control": "no-store, max-age=0" };
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const ENGAGEMENT_TYPES = new Set(["employed", "part_time", "visiting_consultant"]);
-const ENGAGEMENT_STATUSES = new Set(["active", "probation", "terminated"]);
+
+// 5-value category enum + 5-state status enum, per CR.1 / PRD §C.1, §C.8, §J.1.
+const ENGAGEMENT_CATEGORIES = new Set([
+  "provisional",
+  "active",
+  "visiting_consultant",
+  "locum_tenens",
+  "affiliate",
+]);
+const ENGAGEMENT_STATUSES = new Set([
+  "active",
+  "suspended",
+  "revoked",
+  "resigned",
+  "lapsed",
+]);
 
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
@@ -21,11 +35,26 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   catch { return NextResponse.json({ ok: false, error: "Unauthenticated" }, { status: 401, headers: NO_STORE }); }
 
   const body = await req.json();
-  const { hospital_code, engagement_type, start_date, end_date, specialty, status, terminated_reason } = body ?? {};
+  // Accept either `category` (preferred) or legacy `engagement_type` for one
+  // release of compatibility. Legacy values get mapped to the new enum.
+  let category: string | undefined =
+    typeof body?.category === "string" ? body.category.trim() : undefined;
+  if (!category && typeof body?.engagement_type === "string") {
+    const legacy = body.engagement_type.trim();
+    category =
+      legacy === "visiting_consultant" ? "visiting_consultant" :
+      legacy === "locum" || legacy === "locum_tenens" ? "locum_tenens" :
+      legacy === "employed" || legacy === "part_time" || legacy === "panel_consultant" ? "active" :
+      legacy;
+  }
+  const { hospital_code, start_date, end_date, specialty, status, status_reason } = body ?? {};
 
   if (!hospital_code) return NextResponse.json({ ok: false, error: "hospital_code required" }, { status: 400, headers: NO_STORE });
-  if (!engagement_type || !ENGAGEMENT_TYPES.has(engagement_type)) {
-    return NextResponse.json({ ok: false, error: "engagement_type must be employed|part_time|visiting_consultant" }, { status: 400, headers: NO_STORE });
+  if (!category || !ENGAGEMENT_CATEGORIES.has(category)) {
+    return NextResponse.json(
+      { ok: false, error: "category must be one of: provisional|active|visiting_consultant|locum_tenens|affiliate" },
+      { status: 400, headers: NO_STORE },
+    );
   }
   if (!start_date) return NextResponse.json({ ok: false, error: "start_date required" }, { status: 400, headers: NO_STORE });
   const finalStatus = status && ENGAGEMENT_STATUSES.has(status) ? status : "active";
@@ -41,12 +70,12 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
 
   const inserted = (await sql`
     INSERT INTO physician_engagements (
-      physician_id, hospital_id, engagement_type, start_date, end_date, specialty, status, terminated_reason
+      physician_id, hospital_id, category, start_date, end_date, specialty, status, status_reason
     ) VALUES (
-      ${id}::uuid, ${hosp[0].id}::uuid, ${engagement_type}, ${start_date},
-      ${end_date ?? null}, ${specialty ?? null}, ${finalStatus}, ${terminated_reason ?? null}
+      ${id}::uuid, ${hosp[0].id}::uuid, ${category}, ${start_date},
+      ${end_date ?? null}, ${specialty ?? null}, ${finalStatus}, ${status_reason ?? null}
     )
-    RETURNING id::text AS id, physician_id::text AS physician_id, engagement_type, start_date, end_date, specialty, status, created_at
+    RETURNING id::text AS id, physician_id::text AS physician_id, category, start_date, end_date, specialty, status, status_reason, created_at
   `) as Array<Record<string, unknown>>;
 
   await sql`

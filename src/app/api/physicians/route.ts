@@ -132,7 +132,7 @@ export async function POST(req: NextRequest) {
     date_joined_network,
     notes,
     hospital_codes,           // new v3.0c — array of hospital codes to engage at
-    engagement_type,          // optional; defaults to 'employed'
+    category,                 // optional; defaults to 'active'. Legacy 'engagement_type' accepted via mapping below.
     extend_physician_id,      // optional; if provided, skip dupe check + INSERT, just add engagements
   } = body ?? {};
   if (!full_name || typeof full_name !== "string" || !full_name.trim()) {
@@ -146,7 +146,21 @@ export async function POST(req: NextRequest) {
   const sql = neon(url);
 
   const hospitalCodesArr: string[] = Array.isArray(hospital_codes) ? hospital_codes.filter((c) => typeof c === "string" && c.trim().length > 0) : [];
-  const engType = (typeof engagement_type === "string" && engagement_type.trim()) ? engagement_type.trim() : "employed";
+  // Body may send `category` (preferred) or legacy `engagement_type` (mapped).
+  const legacyEngType =
+    typeof (body?.engagement_type) === "string" && body.engagement_type.trim()
+      ? body.engagement_type.trim()
+      : null;
+  const rawCategory =
+    typeof category === "string" && category.trim()
+      ? category.trim()
+      : legacyEngType
+        ? (legacyEngType === "visiting_consultant" ? "visiting_consultant"
+          : legacyEngType === "locum" || legacyEngType === "locum_tenens" ? "locum_tenens"
+          : "active")
+        : "active";
+  const CATS = new Set(["provisional","active","visiting_consultant","locum_tenens","affiliate"]);
+  const engCategory = CATS.has(rawCategory) ? rawCategory : "active";
   const joinDate = date_joined_network || new Date().toISOString().slice(0,10);
 
   // Cross-site duplicate check (v3.0c decision #14). Only if email provided AND no extend_physician_id override.
@@ -164,7 +178,8 @@ export async function POST(req: NextRequest) {
             'hospital_code', h.code,
             'hospital_id', h.id::text,
             'status', e.status,
-            'engagement_type', e.engagement_type,
+            'category', e.category,
+            'engagement_type', e.category,
             'start_date', e.start_date
           ) ORDER BY h.code) FROM physician_engagements e JOIN hospitals h ON h.id = e.hospital_id WHERE e.physician_id = p.id),
           '[]'::json
@@ -242,15 +257,15 @@ export async function POST(req: NextRequest) {
     if (exists.length > 0) continue;
     await sql`
       INSERT INTO physician_engagements (
-        physician_id, hospital_id, engagement_type, start_date, specialty, status
+        physician_id, hospital_id, category, start_date, specialty, status
       ) VALUES (
-        ${physicianId}::uuid, ${h.id}::uuid, ${engType}, ${joinDate}, ${primary_specialty ?? null}, 'active'
+        ${physicianId}::uuid, ${h.id}::uuid, ${engCategory}, ${joinDate}, ${primary_specialty ?? null}, 'active'
       )
     `;
     await sql`
       INSERT INTO audit_log_v2 (actor_user_id, action, entity_type, entity_id, after_json)
       VALUES (${actor.profileId}::uuid, 'create', 'physician_engagement', ${physicianId},
-        ${JSON.stringify({ hospital_code: h.code, engagement_type: engType, start_date: joinDate, via: extend_physician_id ? "extend" : "create" })}::jsonb)
+        ${JSON.stringify({ hospital_code: h.code, category: engCategory, start_date: joinDate, via: extend_physician_id ? "extend" : "create" })}::jsonb)
     `;
     createdEngagements.push({ hospital_code: h.code });
   }

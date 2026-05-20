@@ -117,12 +117,12 @@ export async function POST() {
 
     await sql`
       INSERT INTO physician_engagements (
-        physician_id, hospital_id, engagement_type, start_date, specialty, status
+        physician_id, hospital_id, category, start_date, specialty, status
       ) VALUES (
-        ${vPhysicianId}::uuid, ${hospitalId}::uuid, 'employed', '2024-01-01', 'Neurology', 'active'
+        ${vPhysicianId}::uuid, ${hospitalId}::uuid, 'active', '2024-01-01', 'Neurology', 'active'
       )
     `;
-    log.push("5b. V engagement (EHRC, employed, Neurology) inserted");
+    log.push("5b. V engagement (EHRC, category=active, Neurology) inserted");
 
     const msPos = (await sql`
       SELECT id::text AS id FROM positions

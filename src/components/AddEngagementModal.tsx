@@ -16,7 +16,7 @@ export function AddEngagementModal({ physicianId, defaultSpecialty, engagedHospi
   const engaged = new Set(engagedHospitalCodes);
   const [hospitals, setHospitals] = useState<HospitalOption[]>([]);
   const [hospitalCode, setHospitalCode] = useState("");
-  const [engagementType, setEngagementType] = useState<"employed" | "part_time" | "visiting_consultant">("visiting_consultant");
+  const [category, setCategory] = useState<"provisional" | "active" | "visiting_consultant" | "locum_tenens" | "affiliate">("visiting_consultant");
   const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10));
   const [endDate, setEndDate] = useState("");
   const [specialty, setSpecialty] = useState(defaultSpecialty ?? "");
@@ -45,7 +45,7 @@ export function AddEngagementModal({ physicianId, defaultSpecialty, engagedHospi
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           hospital_code: hospitalCode,
-          engagement_type: engagementType,
+          category,
           start_date: startDate,
           end_date: endDate || null,
           specialty: specialty.trim() || null,
@@ -88,19 +88,21 @@ export function AddEngagementModal({ physicianId, defaultSpecialty, engagedHospi
             </select>
           </div>
           <div>
-            <label className="block text-xs font-medium text-stone-500 mb-1">Engagement type</label>
-            <div className="grid grid-cols-3 gap-2">
+            <label className="block text-xs font-medium text-stone-500 mb-1">Category</label>
+            <div className="grid grid-cols-5 gap-2">
               {([
-                ["employed", "Employed"],
-                ["part_time", "Part-time"],
-                ["visiting_consultant", "Visiting Consultant"],
+                ["provisional", "Provisional"],
+                ["active", "Active"],
+                ["visiting_consultant", "VC"],
+                ["locum_tenens", "Locum"],
+                ["affiliate", "Affiliate"],
               ] as const).map(([k, label]) => (
                 <button
                   key={k}
                   type="button"
-                  onClick={() => setEngagementType(k)}
-                  className={`px-3 py-2 rounded-lg text-xs font-medium border ${
-                    engagementType === k
+                  onClick={() => setCategory(k)}
+                  className={`px-2 py-2 rounded-lg text-[11px] font-medium border ${
+                    category === k
                       ? "bg-brand text-white border-brand"
                       : "bg-white text-stone-700 border-stone-200 hover:border-stone-300"
                   }`}
@@ -108,6 +110,9 @@ export function AddEngagementModal({ physicianId, defaultSpecialty, engagedHospi
                   {label}
                 </button>
               ))}
+            </div>
+            <div className="text-[11px] text-stone-400 mt-1">
+              Provisional → Active is gated by 6mo + FPPE. New employed hires default to Provisional in a future polish.
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">

@@ -143,7 +143,7 @@ export default function OnboardingDetailPage() {
       <TopNav />
       <main className="max-w-[900px] mx-auto px-8 py-8 space-y-4">
         <div className="text-sm text-stone-500">
-          <Link href="/onboarding" className="hover:text-stone-900">Onboarding</Link>
+          <Link href="/onboarding" className="hover:text-stone-900">Credentialing</Link>
           <span className="mx-1.5">/</span>
           <span className="text-stone-900 font-medium">{data.prospective_full_name}</span>
         </div>

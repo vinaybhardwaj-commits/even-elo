@@ -168,7 +168,7 @@ export default async function HomePage() {
           </div>
           <div className="bg-white border border-stone-200 rounded-xl p-4">
             <div className="text-[11px] font-medium text-stone-500 tracking-wider uppercase">
-              VCs in pipeline
+              Credentialing in pipeline
             </div>
             <div className="text-3xl font-semibold num mt-1.5">
               {counts.vcs_in_pipeline}
@@ -235,7 +235,7 @@ export default async function HomePage() {
                 <Link href="/onboarding" className="text-[12px] text-brand font-medium">Open pipeline →</Link>
               </div>
               <div className="px-5 py-8 text-center text-sm text-stone-500">
-                No active VCs in pipeline.
+                No active Credentialing in pipeline.
               </div>
             </section>
 

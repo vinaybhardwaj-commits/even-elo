@@ -34,12 +34,12 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
       e.hospital_id::text AS hospital_id,
       h.code AS hospital_code,
       h.name AS hospital_name,
-      e.engagement_type,
+      e.category,
       e.start_date,
       e.end_date,
       e.specialty,
       e.status,
-      e.terminated_reason
+      e.status_reason
     FROM physician_engagements e
     JOIN hospitals h ON h.id = e.hospital_id
     WHERE e.physician_id = ${id}::uuid
