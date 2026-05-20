@@ -348,6 +348,21 @@ export default function PhysicianProfilePage() {
     router.push("/physicians");
   }
 
+  async function reactivatePhysician() {
+    if (!confirm(`Reactivate ${physician?.full_name}? Their current_status will flip back to 'active'. Engagement statuses are unchanged — if you want them taking cases again, ensure at least one engagement is also status='active'.`)) return;
+    const r = await fetch(`/api/physicians/${id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ current_status: "active" }),
+    });
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      alert(j.error || "Could not reactivate.");
+      return;
+    }
+    load();
+  }
+
   if (loading) {
     return (
       <>
@@ -427,14 +442,20 @@ export default function PhysicianProfilePage() {
               </div>
             </div>
             <div className="flex gap-2">
-              {(me?.is_super_admin || me?.is_site_medical_head || me?.is_hr) && (
+              {physician.current_status === "active" && (me?.is_super_admin || me?.is_site_medical_head || me?.is_hr) && (
                 <button onClick={() => setTriggerFppe(true)} className="px-3 py-2 rounded-lg text-sm font-medium text-amber-800 bg-amber-50 hover:bg-amber-100">
                   Trigger FPPE
                 </button>
               )}
-              <button onClick={deletePhysician} className="px-3 py-2 rounded-lg text-sm font-medium text-red-700 bg-red-50 hover:bg-red-100">
-                Mark terminated
-              </button>
+              {physician.current_status === "terminated" ? (
+                <button onClick={reactivatePhysician} className="px-3 py-2 rounded-lg text-sm font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100">
+                  Reactivate
+                </button>
+              ) : (
+                <button onClick={deletePhysician} className="px-3 py-2 rounded-lg text-sm font-medium text-red-700 bg-red-50 hover:bg-red-100">
+                  Mark terminated
+                </button>
+              )}
             </div>
           </div>
         </div>
