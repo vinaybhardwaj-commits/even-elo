@@ -120,6 +120,7 @@ interface MetricsRow {
 }
 
 interface UserSummary {
+  profileId: string;
   is_super_admin: boolean;
   is_hr: boolean;
   is_site_medical_head: boolean;
