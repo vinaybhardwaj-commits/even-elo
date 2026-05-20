@@ -22,6 +22,8 @@ const ADMIN_BOOTSTRAP_ROUTES = [
   "/api/admin/db-fresh",
   "/api/admin/wipe-smoke-residue",
   "/api/admin/seed-profile",
+  "/api/admin/oppe-scheduler",
+  "/api/admin/oppe-kickstart",
 ];
 
 function getJwtSecret() {
