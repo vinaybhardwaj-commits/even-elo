@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { TopNav } from "@/components/TopNav";
 import { AddPhysicianModal } from "@/components/AddPhysicianModal";
 
@@ -45,6 +46,7 @@ function colorFor(name: string): string {
 }
 
 export default function PhysiciansPage() {
+  const router = useRouter();
   const [rows, setRows] = useState<PhysicianRow[]>([]);
   const [specialties, setSpecialties] = useState<string[]>([]);
   const [q, setQ] = useState("");
@@ -158,7 +160,17 @@ export default function PhysiciansPage() {
                   )}
                 </td></tr>
               ) : rows.map((r) => (
-                <tr key={r.id} className="hover:bg-stone-50 cursor-pointer">
+                <tr
+                  key={r.id}
+                  className="hover:bg-stone-50 cursor-pointer"
+                  onClick={(e) => {
+                    // Skip if the user clicked an <a> inside (let it handle navigation
+                    // natively so cmd/ctrl-click still opens in a new tab).
+                    const target = e.target as HTMLElement;
+                    if (target.closest('a')) return;
+                    router.push(`/physicians/${r.id}`);
+                  }}
+                >
                   <td className="px-4 py-3">
                     <Link href={`/physicians/${r.id}`} className="flex items-center gap-3">
                       <span className={`w-8 h-8 rounded-full inline-flex items-center justify-center text-[11px] font-medium ${colorFor(r.full_name)}`}>
