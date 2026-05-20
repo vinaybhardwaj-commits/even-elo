@@ -9,6 +9,8 @@ import { AddQualificationModal } from "@/components/AddQualificationModal";
 import { AddPrivilegeModal } from "@/components/AddPrivilegeModal";
 import { TriggerFppeModal } from "@/components/TriggerFppeModal";
 import { OppeReviewModal } from "@/components/OppeReviewModal";
+import { EditPrivilegeModal } from "@/components/EditPrivilegeModal";
+import { ChangeCategoryModal } from "@/components/ChangeCategoryModal";
 import { MiniLineChart } from "@/components/MiniLineChart";
 
 interface Physician {
@@ -72,11 +74,14 @@ interface Qualification {
 
 interface Privilege {
   id: string;
+  hospital_id: string;
   hospital_code: string;
   hospital_name: string;
   procedure_or_specialty: string;
   granted_date: string;
   basis: string;
+  is_core: boolean;
+  expires_at: string | null;
   granted_by_email: string | null;
   withdrawn_date: string | null;
   withdrawn_reason: string | null;
@@ -228,6 +233,8 @@ export default function PhysicianProfilePage() {
   const [triggerFppe, setTriggerFppe] = useState(false);
   const [oppeRows, setOppeRows] = useState<OppeRow[]>([]);
   const [openOppeId, setOpenOppeId] = useState<string | null>(null);
+  const [editPrivId, setEditPrivId] = useState<string | null>(null);
+  const [changeCatEngId, setChangeCatEngId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [section, setSection] = useState<string>("overview");
@@ -559,9 +566,17 @@ export default function PhysicianProfilePage() {
                       <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${
                         ENGAGEMENT_STATUS_PILL[e.status] ?? "bg-stone-100 text-stone-500"
                       }`}>
-                        <span className={`mr-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold ${CATEGORY_PILL[e.category] ?? "bg-stone-100 text-stone-700"}`}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (me?.is_super_admin || me?.is_site_medical_head) setChangeCatEngId(e.id);
+                          }}
+                          disabled={!(me?.is_super_admin || me?.is_site_medical_head)}
+                          title={(me?.is_super_admin || me?.is_site_medical_head) ? "Change category" : undefined}
+                          className={`mr-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold ${CATEGORY_PILL[e.category] ?? "bg-stone-100 text-stone-700"} ${(me?.is_super_admin || me?.is_site_medical_head) ? "hover:ring-2 hover:ring-stone-300 cursor-pointer" : "cursor-default"}`}
+                        >
                           {CATEGORY_LABEL[e.category] ?? e.category}
-                        </span>
+                        </button>
                         <span>{e.status}</span>
                       </span>
                       <div className="flex-1">
@@ -696,10 +711,23 @@ export default function PhysicianProfilePage() {
                               <div className="text-xs text-red-700 mt-0.5">Withdrawn {fmtDate(pr.withdrawn_date)}{pr.withdrawn_reason ? ` · ${pr.withdrawn_reason}` : ""}</div>
                             )}
                           </div>
-                          {!withdrawn && me?.is_super_admin && (
-                            <button onClick={() => withdrawPrivilege(pr.id)} className="text-[12px] text-stone-500 hover:text-red-700">
-                              Withdraw
-                            </button>
+                          {(me?.is_super_admin || me?.is_site_medical_head) && (
+                            <div className="flex gap-2 items-center">
+                              <button
+                                onClick={() => setEditPrivId(pr.id)}
+                                className="text-[12px] text-brand font-medium hover:underline"
+                              >
+                                Edit
+                              </button>
+                              {!withdrawn && (
+                                <button
+                                  onClick={() => withdrawPrivilege(pr.id)}
+                                  className="text-[12px] text-stone-500 hover:text-red-700"
+                                >
+                                  Withdraw
+                                </button>
+                              )}
+                            </div>
                           )}
                         </div>
                       );
@@ -1025,6 +1053,45 @@ export default function PhysicianProfilePage() {
           onSaved={() => { setOpenOppeId(null); load(); }}
         />
       )}
+
+      {editPrivId && (() => {
+        const pr = privs.find((p) => p.id === editPrivId);
+        if (!pr || !physician) return null;
+        return (
+          <EditPrivilegeModal
+            privilege={{
+              id: pr.id,
+              physician_id: physician.id,
+              hospital_code: pr.hospital_code,
+              procedure_or_specialty: pr.procedure_or_specialty,
+              is_core: pr.is_core,
+              expires_at: pr.expires_at,
+              withdrawn_date: pr.withdrawn_date,
+              withdrawn_reason: pr.withdrawn_reason,
+            }}
+            onClose={() => setEditPrivId(null)}
+            onSaved={() => { setEditPrivId(null); load(); }}
+          />
+        );
+      })()}
+
+      {changeCatEngId && (() => {
+        const eng = engagements.find((e) => e.id === changeCatEngId);
+        if (!eng || !physician) return null;
+        return (
+          <ChangeCategoryModal
+            engagement={{
+              id: eng.id,
+              physician_id: physician.id,
+              hospital_code: eng.hospital_code,
+              category: eng.category,
+              start_date: eng.start_date,
+            }}
+            onClose={() => setChangeCatEngId(null)}
+            onSaved={() => { setChangeCatEngId(null); load(); }}
+          />
+        );
+      })()}
       {addQual && (
         <AddQualificationModal
           physicianId={id!}
