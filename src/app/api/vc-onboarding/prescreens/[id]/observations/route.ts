@@ -119,18 +119,27 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   const cnt = (await sql`SELECT COALESCE(MAX(case_number), 0) + 1 AS next FROM vc_observation_cases WHERE prescreen_id = ${id}::uuid`) as Array<{ next: number }>;
   const caseNumber = cnt[0].next;
 
-  // CR.2: settle the trigger. If this prescreen already has cases, inherit the
-  // existing trigger (uniform per prescreen). Otherwise take from body, default
-  // to new_visiting_consultant for back-compat.
+  // CR.2: settle the trigger. Priority order:
+  //   1. existing observation case on this prescreen (uniform per prescreen)
+  //   2. trigger from POST body (when the AddObservationModal passes it)
+  //   3. prescreen.commitments_acknowledged.trigger (set by
+  //      /api/physicians/[id]/fppe when triggered from the profile)
+  //   4. default 'new_visiting_consultant' for back-compat
   const existingTrig = (await sql`
     SELECT trigger FROM vc_observation_cases WHERE prescreen_id = ${id}::uuid LIMIT 1
   `) as Array<{ trigger: string }>;
+  const psMetaRows = (await sql`
+    SELECT commitments_acknowledged FROM vc_prescreens WHERE id = ${id}::uuid LIMIT 1
+  `) as Array<{ commitments_acknowledged: Record<string, unknown> | null }>;
+  const psMetaTrig = (psMetaRows[0]?.commitments_acknowledged as { trigger?: unknown } | null)?.trigger;
+  const fromPrescreenMeta =
+    typeof psMetaTrig === "string" && TRIGGERS.has(psMetaTrig) ? psMetaTrig : null;
   const incomingTrigger =
     typeof trigger === "string" && TRIGGERS.has(trigger) ? trigger : null;
   const effectiveTrigger =
     existingTrig.length > 0
       ? existingTrig[0].trigger
-      : incomingTrigger ?? "new_visiting_consultant";
+      : incomingTrigger ?? fromPrescreenMeta ?? "new_visiting_consultant";
   const minRequired = CASES_REQUIRED[effectiveTrigger] ?? 3;
   if (caseNumber > 5) {
     return NextResponse.json({ ok: false, error: "Maximum 5 observation cases reached" }, { status: 409, headers: NO_STORE });
