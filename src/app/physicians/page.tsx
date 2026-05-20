@@ -185,7 +185,7 @@ export default function PhysiciansPage() {
                   <td className="px-4 py-3 text-sm text-stone-700">{r.primary_specialty ?? "—"}</td>
                   <td className="px-4 py-3 text-sm text-stone-700 num">{r.registration_number ?? "—"}</td>
                   <td className="px-4 py-3 text-sm text-stone-700">{r.hospitals_active ?? <span className="text-stone-400">none</span>}</td>
-                  <td className="px-4 py-3 text-sm text-stone-700 num">{r.date_joined_network ?? "—"}</td>
+                  <td className="px-4 py-3 text-sm text-stone-700 num">{r.date_joined_network ? r.date_joined_network.slice(0, 10) : "—"}</td>
                   <td className="px-4 py-3">
                     <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${STATUS_PILL[r.current_status] ?? "bg-stone-100 text-stone-600"}`}>
                       {r.current_status}
