@@ -13,6 +13,14 @@ const COUNCILS = ["KMC", "MMC", "DMC", "MCI/NMC", "Other"];
 const CATEGORIES = ["provisional", "active", "visiting_consultant", "locum_tenens", "affiliate"];
 
 interface HospitalOption { id: string; code: string; }
+interface CarryPrivilege {
+  id: string;
+  hospital_code: string;
+  procedure_or_specialty: string;
+  is_core: boolean;
+  expires_at: string | null;
+}
+
 interface ExistingEngagement {
   hospital_code: string;
   hospital_id: string;
@@ -50,6 +58,8 @@ export function AddPhysicianModal({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [duplicate, setDuplicate] = useState<ExistingPhysician | null>(null);
+  const [carryPrivs, setCarryPrivs] = useState<CarryPrivilege[]>([]);
+  const [copyIds, setCopyIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     fetch("/api/hospitals").then((r) => r.json()).then((j) => {
@@ -85,11 +95,27 @@ export function AddPhysicianModal({
           hospital_codes: Array.from(pickedCodes),
           category,
           extend_physician_id: extendId ?? null,
+          also_copy_privileges: extendId
+            ? Array.from(copyIds).filter((id) => carryPrivs.some((p) => p.id === id))
+            : [],
         }),
       });
       const j = await r.json();
       if (r.status === 409 && j.duplicate) {
         setDuplicate(j.existing_physician as ExistingPhysician);
+        // CR.5: fetch carry candidates so we can render the preview.
+        try {
+          const cr = await fetch(`/api/physicians/${(j.existing_physician as ExistingPhysician).id}/carry-candidates`);
+          const cj = await cr.json();
+          if (cj.ok) {
+            const privs = (cj.privileges ?? []) as CarryPrivilege[];
+            setCarryPrivs(privs);
+            // Pre-select ALL by default per decision #12 — admin unticks
+            setCopyIds(new Set(privs.map((p) => p.id)));
+          }
+        } catch {
+          // Ignore — extend still works without carry preview
+        }
         setSubmitting(false);
         return;
       }
@@ -153,6 +179,45 @@ export function AddPhysicianModal({
             ) : (
               <div className="text-sm text-stone-700">
                 Extend the existing record with <strong>{dupeNewCodes.length}</strong> new engagement{dupeNewCodes.length > 1 ? "s" : ""}: {dupeNewCodes.join(", ")}?
+              </div>
+            )}
+
+            {dupeNewCodes.length > 0 && carryPrivs.length > 0 && (
+              <div className="border border-stone-200 rounded-lg p-3 bg-stone-50">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-[11px] font-medium text-stone-600 uppercase tracking-wider">
+                    Auto-carry privileges
+                  </div>
+                  <div className="text-[10px] text-stone-500">PRD §C.11 · admin can untick</div>
+                </div>
+                <div className="space-y-1.5 max-h-[200px] overflow-y-auto">
+                  {carryPrivs.map((p) => {
+                    const checked = copyIds.has(p.id);
+                    return (
+                      <label key={p.id} className="flex items-start gap-2 text-xs cursor-pointer">
+                        <input type="checkbox" checked={checked} onChange={() => {
+                          setCopyIds((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(p.id)) next.delete(p.id); else next.add(p.id);
+                            return next;
+                          });
+                        }} className="mt-0.5" />
+                        <div className="flex-1">
+                          <div className="text-stone-800 font-medium">
+                            {p.procedure_or_specialty}
+                            <span className={`ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${p.is_core ? "bg-emerald-50 text-emerald-700" : "bg-violet-50 text-violet-700"}`}>
+                              {p.is_core ? "Core" : "Special"}
+                            </span>
+                          </div>
+                          <div className="text-[10px] text-stone-500 mt-0.5">
+                            from {p.hospital_code}{p.expires_at ? ` · expires ${p.expires_at.slice(0, 10)}` : ""}
+                            <span className="ml-1 text-stone-400">→ will copy to {dupeNewCodes.join(", ")}</span>
+                          </div>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
               </div>
             )}
             {error && <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</div>}

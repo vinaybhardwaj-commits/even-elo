@@ -49,10 +49,26 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   if (!url) return NextResponse.json({ ok: false, error: "DATABASE_URL not configured" }, { status: 500, headers: NO_STORE });
   const sql = neon(url);
 
-  // Role gate
-  const me = (await sql`SELECT is_super_admin, is_site_medical_head FROM profiles_with_roles WHERE id = ${actor.profileId}::uuid`) as Array<{ is_super_admin: boolean; is_site_medical_head: boolean }>;
-  if (me.length === 0 || !(me[0].is_super_admin || me[0].is_site_medical_head)) {
-    return NextResponse.json({ ok: false, error: "Decision requires super_admin or Site Medical Head" }, { status: 403, headers: NO_STORE });
+  // Role gate per PRD §C.12: super_admin OR site_medical_head at the
+  // prescreen's hospital (or any of its multi-site hospitals for v3.0e
+  // multi-site VC prescreens). NOT a network-wide SMH check.
+  const me = (await sql`
+    SELECT
+      p.is_super_admin,
+      EXISTS (
+        SELECT 1 FROM profile_hospital_roles ph
+        JOIN vc_prescreens v ON v.id = ${id}::uuid
+        WHERE ph.profile_id = p.id
+          AND ph.role = 'site_medical_head'
+          AND (
+            ph.hospital_id = v.hospital_id
+            OR ph.hospital_id IN (SELECT hospital_id FROM vc_prescreen_hospitals WHERE prescreen_id = ${id}::uuid)
+          )
+      ) AS smh_at_prescreen_hospital
+    FROM profiles p WHERE p.id = ${actor.profileId}::uuid
+  `) as Array<{ is_super_admin: boolean; smh_at_prescreen_hospital: boolean }>;
+  if (me.length === 0 || !(me[0].is_super_admin || me[0].smh_at_prescreen_hospital)) {
+    return NextResponse.json({ ok: false, error: "Decision requires super_admin or Site Medical Head at the prescreen's hospital(s)" }, { status: 403, headers: NO_STORE });
   }
 
   // Load the prescreen

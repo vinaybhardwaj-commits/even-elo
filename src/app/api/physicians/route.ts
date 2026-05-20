@@ -134,6 +134,7 @@ export async function POST(req: NextRequest) {
     hospital_codes,           // new v3.0c — array of hospital codes to engage at
     category,                 // optional; defaults to 'active'. Legacy 'engagement_type' accepted via mapping below.
     extend_physician_id,      // optional; if provided, skip dupe check + INSERT, just add engagements
+    also_copy_privileges,     // optional string[] of source privilege ids — CR.5
   } = body ?? {};
   if (!full_name || typeof full_name !== "string" || !full_name.trim()) {
     return NextResponse.json({ ok: false, error: "full_name required" }, { status: 400, headers: NO_STORE });
@@ -268,6 +269,49 @@ export async function POST(req: NextRequest) {
         ${JSON.stringify({ hospital_code: h.code, category: engCategory, start_date: joinDate, via: extend_physician_id ? "extend" : "create" })}::jsonb)
     `;
     createdEngagements.push({ hospital_code: h.code });
+
+    // CR.5 cross-site auto-carry on the extend path (PRD decision #12). The
+    // body may include also_copy_privileges: string[] of SOURCE privilege ids
+    // (from the physician's existing hospitals). For each new hospital we just
+    // created an engagement at, copy the marked privileges in.
+    if (Array.isArray(also_copy_privileges) && also_copy_privileges.length > 0) {
+      for (const srcId of also_copy_privileges) {
+        if (typeof srcId !== "string") continue;
+        const src = (await sql`
+          SELECT id::text AS id, procedure_or_specialty, is_core, expires_at, hospital_id::text AS hospital_id
+          FROM privileges
+          WHERE id = ${srcId}::uuid AND physician_id = ${physicianId}::uuid AND withdrawn_date IS NULL
+          LIMIT 1
+        `) as Array<{ id: string; procedure_or_specialty: string; is_core: boolean; expires_at: string | null; hospital_id: string }>;
+        if (src.length === 0) continue;
+        if (src[0].hospital_id === h.id) continue; // don't copy onto the same hospital
+        const ins = (await sql`
+          INSERT INTO privileges (
+            physician_id, hospital_id, procedure_or_specialty, granted_date, granted_by,
+            basis, is_core, expires_at
+          ) VALUES (
+            ${physicianId}::uuid, ${h.id}::uuid, ${src[0].procedure_or_specialty}, CURRENT_DATE,
+            ${actor.profileId}::uuid, 'annual_review', ${src[0].is_core},
+            ${src[0].expires_at ?? null}::date
+          )
+          RETURNING id::text AS id
+        `) as Array<{ id: string }>;
+        await sql`
+          INSERT INTO audit_log_v2 (actor_user_id, action, entity_type, entity_id, after_json)
+          VALUES (
+            ${actor.profileId}::uuid, 'cross_site_carry', 'privilege', ${ins[0].id},
+            ${JSON.stringify({
+              source_privilege_id: src[0].id,
+              target_hospital_code: h.code,
+              via: "physicians_extend_flow",
+              procedure_or_specialty: src[0].procedure_or_specialty,
+              is_core: src[0].is_core,
+              expires_at: src[0].expires_at,
+            })}::jsonb
+          )
+        `;
+      }
+    }
   }
 
   return NextResponse.json({
