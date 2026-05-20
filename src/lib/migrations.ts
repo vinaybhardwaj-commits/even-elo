@@ -703,5 +703,199 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_incident_views_incident ON incident_views(incident_id);
     `,
   },
+
+  // ────────────────────────────────────────────────────────────
+  // CR.1 — Credentialing & Privileging foundation (PRD v1.0)
+  // Single multi-step migration; lands ALL breaking schema changes:
+  //   (a) physician_engagements.category enum + backfill from engagement_type
+  //       (decisions #2, #3, #18). Drops engagement_type entirely.
+  //   (b) physician_engagements.status widens to 5-state enum
+  //       (decision #9). Backfills probation→active, terminated→resigned.
+  //   (c) physician_engagements.status_reason text + copies any existing
+  //       terminated_reason values into it (decisions #9, #20).
+  //   (d) privileges.is_core boolean DEFAULT false (decision #5).
+  //   (e) privileges.expires_at date (decision #11 — Special only).
+  //   (f) physicians.indemnity_expiry + physicians.docs_external_url
+  //       (decisions #10, #11).
+  //   (g) vc_observation_cases.trigger enum DEFAULT
+  //       'new_visiting_consultant' (decision #6).
+  //   (h) oppe_reviews table (decision #7).
+  //   (i) privilege_requests table (decision #8).
+  //
+  // Idempotent. Uses DO $$ guards so re-runs after a partial-fail are safe.
+  // ────────────────────────────────────────────────────────────
+  {
+    id: "017_credentialing_v1",
+    description: "CR.1: physician_engagements gains category (5-value enum) + status widens to 5-state + status_reason text. Drops engagement_type. privileges gains is_core + expires_at. physicians gains indemnity_expiry + docs_external_url. vc_observation_cases gains trigger enum. New tables oppe_reviews + privilege_requests.",
+    sql: `
+      -- ─── (a) physician_engagements.category enum + backfill ───
+      ALTER TABLE physician_engagements
+        ADD COLUMN IF NOT EXISTS category text;
+
+      -- Backfill category. Guarded by IF EXISTS so re-runs (after the column
+      -- drop below) skip the engagement_type-dependent UPDATEs cleanly.
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name='physician_engagements' AND column_name='engagement_type'
+        ) THEN
+          -- visiting_consultant → visiting_consultant
+          UPDATE physician_engagements
+             SET category = 'visiting_consultant'
+           WHERE engagement_type = 'visiting_consultant'
+             AND category IS NULL;
+          -- employed + status='probation' → provisional (preserves the
+          -- original probationary intent in the new category model)
+          UPDATE physician_engagements
+             SET category = 'provisional'
+           WHERE engagement_type = 'employed'
+             AND status = 'probation'
+             AND category IS NULL;
+          -- employed (non-probation) → active
+          UPDATE physician_engagements
+             SET category = 'active'
+           WHERE engagement_type = 'employed'
+             AND category IS NULL;
+          -- part_time → active
+          UPDATE physician_engagements
+             SET category = 'active'
+           WHERE engagement_type = 'part_time'
+             AND category IS NULL;
+          -- locum / locum_tenens (none expected today, but defensive)
+          UPDATE physician_engagements
+             SET category = 'locum_tenens'
+           WHERE engagement_type IN ('locum','locum_tenens')
+             AND category IS NULL;
+        END IF;
+        -- Catch-all for any remaining nulls (incl. legacy rows that survived
+        -- a partial first-run with engagement_type already dropped).
+        UPDATE physician_engagements
+           SET category = 'active'
+         WHERE category IS NULL;
+      END $$;
+
+      ALTER TABLE physician_engagements
+        ALTER COLUMN category SET NOT NULL;
+      ALTER TABLE physician_engagements
+        DROP CONSTRAINT IF EXISTS physician_engagements_category_check;
+      ALTER TABLE physician_engagements
+        ADD CONSTRAINT physician_engagements_category_check
+        CHECK (category IN ('provisional','active','visiting_consultant','locum_tenens','affiliate'));
+      CREATE INDEX IF NOT EXISTS idx_engagements_category
+        ON physician_engagements(category);
+
+      -- Drop engagement_type now that category is fully populated (decision #18).
+      ALTER TABLE physician_engagements DROP COLUMN IF EXISTS engagement_type;
+
+      -- ─── (b) physician_engagements.status widens to 5-state enum ───
+      ALTER TABLE physician_engagements
+        DROP CONSTRAINT IF EXISTS physician_engagements_status_check;
+      -- Backfill: probation → active (probation/provisional now lives in category),
+      -- terminated → resigned (default per PRD §J.1).
+      UPDATE physician_engagements SET status = 'active'   WHERE status = 'probation';
+      UPDATE physician_engagements SET status = 'resigned' WHERE status = 'terminated';
+      ALTER TABLE physician_engagements
+        ADD CONSTRAINT physician_engagements_status_check
+        CHECK (status IN ('active','suspended','revoked','resigned','lapsed'));
+
+      -- ─── (c) status_reason text + carry-over from terminated_reason ───
+      ALTER TABLE physician_engagements
+        ADD COLUMN IF NOT EXISTS status_reason text;
+      -- Carry-over only where terminated_reason is populated; safe on re-run
+      -- because status_reason gets a value the first time and is skipped after.
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name='physician_engagements' AND column_name='terminated_reason'
+        ) THEN
+          UPDATE physician_engagements
+             SET status_reason = terminated_reason
+           WHERE terminated_reason IS NOT NULL
+             AND status_reason IS NULL;
+        END IF;
+      END $$;
+
+      -- ─── (d) privileges.is_core ───
+      ALTER TABLE privileges
+        ADD COLUMN IF NOT EXISTS is_core boolean NOT NULL DEFAULT false;
+
+      -- ─── (e) privileges.expires_at (Special only — Core privileges don't expire) ───
+      ALTER TABLE privileges
+        ADD COLUMN IF NOT EXISTS expires_at date;
+      CREATE INDEX IF NOT EXISTS idx_privs_expires_at
+        ON privileges(expires_at)
+        WHERE expires_at IS NOT NULL;
+
+      -- ─── (f) physicians.indemnity_expiry + docs_external_url ───
+      ALTER TABLE physicians
+        ADD COLUMN IF NOT EXISTS indemnity_expiry date;
+      ALTER TABLE physicians
+        ADD COLUMN IF NOT EXISTS docs_external_url text;
+      CREATE INDEX IF NOT EXISTS idx_physicians_indemnity_expiry
+        ON physicians(indemnity_expiry)
+        WHERE indemnity_expiry IS NOT NULL;
+
+      -- ─── (g) vc_observation_cases.trigger ───
+      ALTER TABLE vc_observation_cases
+        ADD COLUMN IF NOT EXISTS trigger text
+        NOT NULL DEFAULT 'new_visiting_consultant';
+      ALTER TABLE vc_observation_cases
+        DROP CONSTRAINT IF EXISTS vc_observation_cases_trigger_check;
+      ALTER TABLE vc_observation_cases
+        ADD CONSTRAINT vc_observation_cases_trigger_check
+        CHECK (trigger IN (
+          'new_visiting_consultant',
+          'new_employed_provisional',
+          'special_privilege_request',
+          'concern_raised'
+        ));
+      CREATE INDEX IF NOT EXISTS idx_obs_cases_trigger
+        ON vc_observation_cases(trigger);
+
+      -- ─── (h) oppe_reviews table (empty; populated by CR.3 scheduler) ───
+      CREATE TABLE IF NOT EXISTS oppe_reviews (
+        id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        physician_id    uuid NOT NULL REFERENCES physicians(id) ON DELETE CASCADE,
+        hospital_id     uuid NOT NULL REFERENCES hospitals(id),
+        period_start    date NOT NULL,
+        period_end      date NOT NULL,
+        due_at          timestamptz NOT NULL,
+        status          text NOT NULL DEFAULT 'pending'
+          CHECK (status IN ('pending','in_review','satisfactory','flagged','escalated_to_fppe')),
+        packet_jsonb    jsonb,
+        reviewer_id     uuid REFERENCES profiles(id),
+        decision_notes  text,
+        completed_at    timestamptz,
+        created_at      timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_oppe_physician ON oppe_reviews(physician_id);
+      CREATE INDEX IF NOT EXISTS idx_oppe_hospital  ON oppe_reviews(hospital_id);
+      CREATE INDEX IF NOT EXISTS idx_oppe_status    ON oppe_reviews(status);
+      CREATE INDEX IF NOT EXISTS idx_oppe_due       ON oppe_reviews(due_at);
+
+      -- ─── (i) privilege_requests table (empty; populated by CR.4) ───
+      CREATE TABLE IF NOT EXISTS privilege_requests (
+        id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        physician_id        uuid NOT NULL REFERENCES physicians(id) ON DELETE CASCADE,
+        hospital_id         uuid NOT NULL REFERENCES hospitals(id),
+        specialty           text,
+        scope_text          text NOT NULL,
+        is_core             boolean NOT NULL DEFAULT false,
+        evidence_jsonb      jsonb,
+        status              text NOT NULL DEFAULT 'requested'
+          CHECK (status IN ('requested','under_fppe','approved','denied','withdrawn')),
+        requested_by        uuid REFERENCES profiles(id),
+        reviewed_by         uuid REFERENCES profiles(id),
+        decision_rationale  text,
+        requested_at        timestamptz NOT NULL DEFAULT now(),
+        decided_at          timestamptz
+      );
+      CREATE INDEX IF NOT EXISTS idx_prreq_physician ON privilege_requests(physician_id);
+      CREATE INDEX IF NOT EXISTS idx_prreq_hospital  ON privilege_requests(hospital_id);
+      CREATE INDEX IF NOT EXISTS idx_prreq_status    ON privilege_requests(status);
+    `,
+  },
 ];
 
