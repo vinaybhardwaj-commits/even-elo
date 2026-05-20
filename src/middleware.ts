@@ -24,6 +24,7 @@ const ADMIN_BOOTSTRAP_ROUTES = [
   "/api/admin/seed-profile",
   "/api/admin/oppe-scheduler",
   "/api/admin/oppe-kickstart",
+  "/api/admin/bulk-import-physicians",
 ];
 
 function getJwtSecret() {
