@@ -12,6 +12,7 @@ export const runtime = "nodejs";
 type Counts = {
   active_physicians: number;
   open_incidents: number;
+  positive_feedback: number;
   vcs_in_pipeline: number;
   tier_moves_30d: number;
 };
@@ -44,7 +45,8 @@ async function fetchData(hospitalId: string | null): Promise<{
              WHERE pe.hospital_id = ${hospitalId}::uuid
                AND pe.status = 'active'
                AND p.current_status = 'active')                                                                       AS active_physicians,
-          (SELECT count(*)::int FROM incidents WHERE status = 'open' AND hospital_id = ${hospitalId}::uuid)            AS open_incidents,
+          (SELECT count(*)::int FROM incidents WHERE status = 'open' AND polarity = 'negative' AND hospital_id = ${hospitalId}::uuid) AS open_incidents,
+          (SELECT count(*)::int FROM incidents WHERE polarity = 'positive' AND hospital_id = ${hospitalId}::uuid)         AS positive_feedback,
           (SELECT count(*)::int FROM vc_prescreens vp
              WHERE vp.stage IN ('prescreen','observation','decision')
                AND EXISTS (SELECT 1 FROM vc_prescreen_hospitals vph WHERE vph.prescreen_id = vp.id AND vph.hospital_id = ${hospitalId}::uuid)) AS vcs_in_pipeline,
@@ -53,7 +55,8 @@ async function fetchData(hospitalId: string | null): Promise<{
     : (await sql`
         SELECT
           (SELECT count(*)::int FROM physicians WHERE current_status = 'active')                                       AS active_physicians,
-          (SELECT count(*)::int FROM incidents WHERE status = 'open')                                                  AS open_incidents,
+          (SELECT count(*)::int FROM incidents WHERE status = 'open' AND polarity = 'negative')                          AS open_incidents,
+          (SELECT count(*)::int FROM incidents WHERE polarity = 'positive')                                            AS positive_feedback,
           (SELECT count(*)::int FROM vc_prescreens WHERE stage IN ('prescreen','observation','decision'))              AS vcs_in_pipeline,
           0::int                                                                                                       AS tier_moves_30d
       `) as Array<Counts>;
@@ -102,6 +105,7 @@ export default async function HomePage() {
   const counts = data?.counts ?? {
     active_physicians: 0,
     open_incidents: 0,
+    positive_feedback: 0,
     vcs_in_pipeline: 0,
     tier_moves_30d: 0,
   };
@@ -155,15 +159,14 @@ export default async function HomePage() {
           </div>
           <div className="bg-white border border-stone-200 rounded-xl p-4">
             <div className="text-[11px] font-medium text-stone-500 tracking-wider uppercase">
-              Open incidents
+              Open concerns
             </div>
             <div className="text-3xl font-semibold num mt-1.5">
               {counts.open_incidents}
             </div>
             <div className="text-[11px] text-stone-500 mt-0.5">
-              <Link href="/incidents" className="text-brand hover:underline">
-                Open inbox →
-              </Link>
+              <span className="text-emerald-700 font-medium">{counts.positive_feedback} positive</span>{" · "}
+              <Link href="/incidents" className="text-brand hover:underline">Feedback inbox →</Link>
             </div>
           </div>
           <div className="bg-white border border-stone-200 rounded-xl p-4">
