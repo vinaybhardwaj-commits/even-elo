@@ -8,6 +8,12 @@ interface Qual { id: string; degree: string; institution: string | null; institu
 interface Priv { id: string; procedure_or_specialty: string; is_core: boolean; granted_date: string | null; expires_at: string | null; withdrawn_date: string | null; hospital_code: string }
 
 const CAT_LABEL: Record<string, string> = { provisional: "Provisional", active: "Active", visiting_consultant: "Visiting Consultant", locum_tenens: "Locum", affiliate: "Affiliate" };
+const FB_CATEGORIES: { v: string; label: string }[] = [
+  { v: "clinical", label: "Clinical" }, { v: "patient_safety", label: "Patient safety" }, { v: "medical_error", label: "Medical error" },
+  { v: "professionalism", label: "Professionalism" }, { v: "documentation", label: "Documentation" }, { v: "etiquette", label: "Etiquette" },
+  { v: "vendor_compliance", label: "Vendor compliance" }, { v: "other", label: "Other" },
+];
+const FB_COMMENDATIONS = ["Clinical Excellence", "Patient Experience", "Teamwork & Collaboration", "Teaching & Mentorship", "Going Above & Beyond"];
 
 function fmt(d: string | null) { return d ? d.slice(0, 10) : "—"; }
 
@@ -25,7 +31,7 @@ export default function PortalHome() {
   const [engs, setEngs] = useState<Eng[]>([]);
   const [quals, setQuals] = useState<Qual[]>([]);
   const [privs, setPrivs] = useState<Priv[]>([]);
-  const [tab, setTab] = useState<"overview" | "qualifications" | "privileges">("overview");
+  const [tab, setTab] = useState<"overview" | "qualifications" | "privileges" | "report">("overview");
   const [loading, setLoading] = useState(true);
 
   // add-qual form
@@ -35,6 +41,13 @@ export default function PortalHome() {
   const [qErr, setQErr] = useState<string | null>(null); const [qBusy, setQBusy] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [eDegree, setEDegree] = useState(""); const [eInst, setEInst] = useState(""); const [eYear, setEYear] = useState("");
+  // report-on-others
+  const [rQ, setRQ] = useState(""); const [rResults, setRResults] = useState<Array<{ id: string; full_name: string; primary_specialty: string | null }>>([]);
+  const [rTarget, setRTarget] = useState<{ id: string; full_name: string } | null>(null);
+  const [rPolarity, setRPolarity] = useState<"positive" | "negative">("negative");
+  const [rCategory, setRCategory] = useState(""); const [rSeverity, setRSeverity] = useState("medium"); const [rComm, setRComm] = useState("");
+  const [rNarr, setRNarr] = useState(""); const [rAnon, setRAnon] = useState(false);
+  const [rBusy, setRBusy] = useState(false); const [rErr, setRErr] = useState<string | null>(null); const [rDone, setRDone] = useState(false);
 
   function loadAll() {
     setLoading(true);
@@ -49,6 +62,34 @@ export default function PortalHome() {
     }).finally(() => setLoading(false));
   }
   useEffect(() => { loadAll(); }, []);
+  useEffect(() => {
+    if (tab !== "report" || rTarget) return;
+    const t = setTimeout(() => {
+      fetch(`/api/portal/physicians?q=${encodeURIComponent(rQ.trim())}`).then((r) => r.json()).then((j) => { if (j.ok) setRResults(j.rows ?? []); }).catch(() => undefined);
+    }, 200);
+    return () => clearTimeout(t);
+  }, [rQ, tab, rTarget]);
+
+  async function submitReport(e: React.FormEvent) {
+    e.preventDefault(); setRErr(null);
+    if (!rTarget) { setRErr("Pick a doctor."); return; }
+    if (!rNarr.trim()) { setRErr("Describe the feedback."); return; }
+    if (rPolarity === "negative" && !rCategory) { setRErr("Choose a category."); return; }
+    if (rPolarity === "positive" && !rComm) { setRErr("Choose a commendation."); return; }
+    setRBusy(true);
+    try {
+      const r = await fetch("/api/portal/feedback", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({
+        target_physician_id: rTarget.id, polarity: rPolarity,
+        category: rPolarity === "negative" ? rCategory : null, severity: rPolarity === "negative" ? rSeverity : null,
+        commendation_category: rPolarity === "positive" ? rComm : null,
+        anonymous_flag: rPolarity === "negative" ? rAnon : false, narrative: rNarr.trim(),
+      }) });
+      const j = await r.json();
+      if (!r.ok || !j.ok) { setRErr(j.error || "Failed to submit."); setRBusy(false); return; }
+      setRDone(true); setRTarget(null); setRQ(""); setRNarr(""); setRCategory(""); setRComm(""); setRAnon(false);
+      setRBusy(false);
+    } catch { setRErr("Network error."); setRBusy(false); }
+  }
 
   async function logout() { await fetch("/api/portal/auth/logout", { method: "POST" }); window.location.href = "/portal/login"; }
 
@@ -78,8 +119,8 @@ export default function PortalHome() {
     setEditId(null); loadAll();
   }
 
-  const TABS: Array<[typeof tab, string]> = [["overview", "Overview"], ["qualifications", "Qualifications"], ["privileges", "Current Privileges"]];
-  const SOON = ["Report feedback", "About me", "Resign"];
+  const TABS: Array<[typeof tab, string]> = [["overview", "Overview"], ["qualifications", "Qualifications"], ["privileges", "Current Privileges"], ["report", "Report feedback"]];
+  const SOON = ["About me", "Resign"];
 
   return (
     <main className="min-h-screen bg-stone-50">
@@ -204,6 +245,87 @@ export default function PortalHome() {
               )}
             </section>
           )}
+          {tab === "report" && (
+            <section className="bg-white border border-stone-200 rounded-xl p-5">
+              <h2 className="text-sm font-semibold mb-1">Report feedback on another doctor</h2>
+              <p className="text-[11px] text-stone-400 mb-4">Positive feedback is shared with your name. Negative reports can be anonymous to the doctor and peers — administrators always see who filed it.</p>
+              {rDone && (
+                <div className="mb-4 text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 flex items-center justify-between">
+                  <span>Feedback submitted. Thank you.</span>
+                  <button onClick={() => setRDone(false)} className="text-[12px] text-emerald-700 font-medium">File another</button>
+                </div>
+              )}
+              {!rDone && (
+              <form onSubmit={submitReport} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-medium text-stone-500 mb-1.5">Doctor</label>
+                  {rTarget ? (
+                    <div className="flex items-center gap-2 p-2.5 rounded-lg bg-stone-50">
+                      <span className="text-sm font-medium flex-1">{rTarget.full_name}</span>
+                      <button type="button" onClick={() => setRTarget(null)} className="text-[12px] text-teal-700 font-medium">Change</button>
+                    </div>
+                  ) : (
+                    <>
+                      <input value={rQ} onChange={(e) => setRQ(e.target.value)} placeholder="Search doctors by name…" className="w-full px-3 py-2 border border-stone-200 rounded-lg text-sm outline-none focus:border-teal-600" />
+                      {rResults.length > 0 && (
+                        <div className="mt-1 max-h-52 overflow-y-auto border border-stone-100 rounded-lg divide-y divide-stone-100">
+                          {rResults.map((p) => (
+                            <button key={p.id} type="button" onClick={() => { setRTarget({ id: p.id, full_name: p.full_name }); setRResults([]); }} className="w-full text-left px-3 py-2 hover:bg-stone-50 text-sm">
+                              {p.full_name} <span className="text-stone-400">· {p.primary_specialty ?? "—"}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-stone-500 mb-1.5">Type</label>
+                  <div className="flex gap-1.5">
+                    {(["positive", "negative"] as const).map((v) => (
+                      <button key={v} type="button" onClick={() => setRPolarity(v)} className={`px-3 py-1.5 rounded-full text-[12px] font-medium border ${rPolarity === v ? (v === "positive" ? "bg-emerald-600 text-white border-emerald-600" : "bg-stone-800 text-white border-stone-800") : "bg-white text-stone-700 border-stone-200"}`}>{v === "positive" ? "Positive" : "Concern"}</button>
+                    ))}
+                  </div>
+                </div>
+                {rPolarity === "negative" ? (
+                  <>
+                    <div>
+                      <label className="block text-xs font-medium text-stone-500 mb-1.5">Category</label>
+                      <select value={rCategory} onChange={(e) => setRCategory(e.target.value)} className="w-full px-3 py-2 border border-stone-200 rounded-lg text-sm bg-white">
+                        <option value="">— Choose —</option>
+                        {FB_CATEGORIES.map((c) => <option key={c.v} value={c.v}>{c.label}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-stone-500 mb-1.5">Severity</label>
+                      <div className="grid grid-cols-4 gap-2">
+                        {["low", "medium", "high", "critical"].map((sv) => (
+                          <button key={sv} type="button" onClick={() => setRSeverity(sv)} className={`px-3 py-2 rounded-lg text-xs font-medium border ${rSeverity === sv ? "border-stone-700 ring-2 ring-stone-200 bg-stone-50" : "bg-white border-stone-200"}`}>{sv}</button>
+                        ))}
+                      </div>
+                    </div>
+                    <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={rAnon} onChange={(e) => setRAnon(e.target.checked)} className="accent-teal-600" /> File anonymously (hidden from the doctor &amp; peers)</label>
+                  </>
+                ) : (
+                  <div>
+                    <label className="block text-xs font-medium text-stone-500 mb-1.5">Commendation</label>
+                    <select value={rComm} onChange={(e) => setRComm(e.target.value)} className="w-full px-3 py-2 border border-stone-200 rounded-lg text-sm bg-white">
+                      <option value="">— Choose —</option>
+                      {FB_COMMENDATIONS.map((c) => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                  </div>
+                )}
+                <div>
+                  <label className="block text-xs font-medium text-stone-500 mb-1.5">{rPolarity === "positive" ? "What did they do well?" : "What happened?"}</label>
+                  <textarea value={rNarr} onChange={(e) => setRNarr(e.target.value)} rows={5} className="w-full px-3 py-2 border border-stone-200 rounded-lg text-sm outline-none focus:border-teal-600" />
+                </div>
+                {rErr && <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{rErr}</div>}
+                <button type="submit" disabled={rBusy} className="bg-teal-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-teal-700 disabled:opacity-50">{rBusy ? "Submitting…" : "Submit feedback"}</button>
+              </form>
+              )}
+            </section>
+          )}
+
         </>
         )}
       </div>
