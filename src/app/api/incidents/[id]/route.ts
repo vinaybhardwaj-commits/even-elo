@@ -41,6 +41,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
       i.submitter_user_id::text               AS submitter_user_id,
       sp.email                                AS submitter_email,
       i.submitter_position_at_time,
+      sp2.full_name                           AS submitter_physician_name,
       h.code                                  AS hospital_code,
       i.category,
       i.severity,
@@ -62,6 +63,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
     JOIN physicians ph ON ph.id = i.target_physician_id
     LEFT JOIN hospitals h  ON h.id = i.hospital_id
     LEFT JOIN profiles sp ON sp.id = i.submitter_user_id
+    LEFT JOIN physicians sp2 ON sp2.id = i.submitter_physician_id
     LEFT JOIN profiles rp ON rp.id = i.retracted_by
     WHERE i.id = ${id}::uuid
   `) as Array<Record<string, unknown>>;
@@ -88,10 +90,10 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
     return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403, headers: NO_STORE });
   }
 
-  const showSubmitter = me.is_super_admin || isMine || !i.anonymous_flag;
-  const submitter_label = showSubmitter
-    ? `${(i.submitter_position_at_time as string) ?? ""}${i.submitter_email ? ` · ${i.submitter_email}` : ""}`
-    : "Anonymous";
+  const reporterName = i.submitter_physician_name
+    ? `${i.submitter_physician_name as string} (peer)`
+    : `${(i.submitter_position_at_time as string) ?? ""}${i.submitter_email ? ` · ${i.submitter_email}` : ""}`;
+  const submitter_label = (reporterName.trim() || "Unknown") + (i.anonymous_flag ? " · anon to peers" : "");
 
   const replies = (await sql`
     SELECT

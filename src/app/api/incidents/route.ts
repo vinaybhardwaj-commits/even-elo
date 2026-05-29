@@ -110,6 +110,7 @@ export async function GET(req: NextRequest) {
         i.submitter_user_id::text AS submitter_user_id,
         sp.email AS submitter_email,
         i.submitter_position_at_time,
+        sp2.full_name AS submitter_physician_name,
         h.code AS hospital_code,
         i.category,
         i.severity,
@@ -127,6 +128,7 @@ export async function GET(req: NextRequest) {
       JOIN physicians ph ON ph.id = i.target_physician_id
       LEFT JOIN hospitals h ON h.id = i.hospital_id
       LEFT JOIN profiles sp ON sp.id = i.submitter_user_id
+      LEFT JOIN physicians sp2 ON sp2.id = i.submitter_physician_id
       WHERE
         (
           ${me.is_super_admin}
@@ -148,8 +150,10 @@ export async function GET(req: NextRequest) {
   `) as Array<Record<string, unknown>>;
 
   const out: IncidentListRow[] = rows.map((r) => {
-    const isMine = r.submitter_user_id === actor.profileId;
-    const showSubmitter = me.is_super_admin || isMine || !r.anonymous_flag;
+    // Admins always see the reporter (Feedback PRD #6). Physician authors resolve to their name.
+    const reporterName = r.submitter_physician_name
+      ? `${r.submitter_physician_name as string} (peer)`
+      : `${(r.submitter_position_at_time as string) ?? ""}${r.submitter_email ? ` · ${r.submitter_email}` : ""}`;
     return {
       id: r.id as string,
       target_physician_id: r.target_physician_id as string,
@@ -157,9 +161,7 @@ export async function GET(req: NextRequest) {
       target_physician_email: (r.target_physician_email as string | null) ?? null,
       submitted_at: r.submitted_at as string,
       anonymous_flag: Boolean(r.anonymous_flag),
-      submitter_label: showSubmitter
-        ? `${(r.submitter_position_at_time as string) ?? ""}${r.submitter_email ? ` · ${r.submitter_email}` : ""}`
-        : "Anonymous",
+      submitter_label: (reporterName.trim() || "Unknown") + (r.anonymous_flag ? " · anon to peers" : ""),
       hospital_code: (r.hospital_code as string | null) ?? null,
       category: (r.category as string | null) ?? null,
       severity: (r.severity as string | null) ?? null,

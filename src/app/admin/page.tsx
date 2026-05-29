@@ -85,6 +85,11 @@ export default async function AdminIndex() {
             <div className={`num text-3xl font-semibold mt-2 ${c.priv_requests_open > 0 ? "text-amber-700" : "text-stone-400"}`}>{c.priv_requests_open}</div>
             <div className="text-[11px] text-stone-500 mt-1">Special-privilege ladder · PRD §C.7</div>
           </div>
+          <Link href="/admin/resignations" className="card bg-white border border-stone-200 rounded-xl p-5 hover:border-stone-300">
+            <div className="text-[11px] font-medium text-stone-500 tracking-wider uppercase">Resignations</div>
+            <div className="num text-xl font-semibold mt-2 text-stone-700">Review →</div>
+            <div className="text-[11px] text-stone-500 mt-1">Physician portal requests</div>
+          </Link>
         </div>
 
         <section className="mt-8 bg-white border border-stone-200 rounded-xl p-5">
