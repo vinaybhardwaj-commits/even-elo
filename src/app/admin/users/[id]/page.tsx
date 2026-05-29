@@ -103,6 +103,17 @@ export default function UserDetailPage() {
     } catch { load(); }
   }
 
+  async function deleteUser() {
+    if (!confirm(`Permanently delete ${profile?.full_name}? This cannot be undone.`)) return;
+    setBusy(true);
+    try {
+      const r = await fetch(`/api/admin/profiles/${id}`, { method: "DELETE" });
+      const j = await r.json();
+      if (!r.ok || !j.ok) { alert(j.error || "Delete failed"); setBusy(false); return; }
+      window.location.href = "/admin/users";
+    } finally { setBusy(false); }
+  }
+
   async function resetPin() {
     const pin = String(Math.floor(1000 + Math.random() * 9000));
     setBusy(true);
@@ -211,6 +222,10 @@ export default function UserDetailPage() {
                 {profile.must_change_pin && !resetResult && (
                   <div className="mt-1.5 text-[11px] text-amber-700">This user must change their PIN on next login.</div>
                 )}
+              </div>
+              <div className="pt-2 border-t border-stone-100">
+                <button disabled={busy} onClick={deleteUser} className="text-sm text-red-700 font-medium hover:underline disabled:opacity-50">Delete user</button>
+                <div className="text-[11px] text-stone-400 mt-1">Hard delete — only for accounts created in error. Users who authored feedback can't be deleted (deactivate instead).</div>
               </div>
             </div>
           </section>

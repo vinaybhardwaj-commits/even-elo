@@ -191,3 +191,30 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
   `;
   return NextResponse.json({ ok: true, profile: after[0] }, { headers: NO_STORE });
 }
+
+export async function DELETE(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const { id } = await ctx.params;
+  if (!UUID_RE.test(id)) return NextResponse.json({ ok: false, error: "invalid id" }, { status: 400, headers: NO_STORE });
+  let actor;
+  try { actor = await actorFromRequest(); } catch { return NextResponse.json({ ok: false, error: "Unauthenticated" }, { status: 401, headers: NO_STORE }); }
+  const url = process.env.DATABASE_URL;
+  if (!url) return NextResponse.json({ ok: false, error: "DATABASE_URL not configured" }, { status: 500, headers: NO_STORE });
+  const sql = neon(url);
+  const meS = (await sql`SELECT is_super_admin FROM profiles_with_roles WHERE id = ${actor.profileId}::uuid LIMIT 1`) as Array<{ is_super_admin: boolean }>;
+  if (meS.length === 0 || !meS[0].is_super_admin) return NextResponse.json({ ok: false, error: "Super admin only" }, { status: 403, headers: NO_STORE });
+  if (id === actor.profileId) return NextResponse.json({ ok: false, error: "You can't delete your own account." }, { status: 409, headers: NO_STORE });
+  const tgt = (await sql`SELECT is_super_admin FROM profiles WHERE id = ${id}::uuid LIMIT 1`) as Array<{ is_super_admin: boolean }>;
+  if (tgt.length === 0) return NextResponse.json({ ok: false, error: "not found" }, { status: 404, headers: NO_STORE });
+  if (tgt[0].is_super_admin) {
+    const others = (await sql`SELECT COUNT(*)::int AS n FROM profiles WHERE is_super_admin = true AND id <> ${id}::uuid AND status = 'active'`) as Array<{ n: number }>;
+    if (others[0].n === 0) return NextResponse.json({ ok: false, error: "Can't delete the last super_admin." }, { status: 409, headers: NO_STORE });
+  }
+  // Preserve audit integrity: refuse hard-delete if the user authored feedback. Deactivate instead.
+  const authored = (await sql`SELECT COUNT(*)::int AS n FROM incidents WHERE submitter_user_id = ${id}::uuid`) as Array<{ n: number }>;
+  if (authored[0].n > 0) return NextResponse.json({ ok: false, error: "This user has authored feedback/incidents — deactivate instead of deleting to preserve the record." }, { status: 409, headers: NO_STORE });
+  await sql`DELETE FROM incident_views WHERE profile_id = ${id}::uuid`;
+  await sql`DELETE FROM profile_hospital_roles WHERE profile_id = ${id}::uuid`;
+  await sql`DELETE FROM profiles WHERE id = ${id}::uuid`;
+  await sql`INSERT INTO audit_log_v2 (actor_user_id, action, entity_type, entity_id, before_json) VALUES (${actor.profileId}::uuid, 'user_delete', 'profile', ${id}, ${JSON.stringify({ hard_delete: true })}::jsonb)`;
+  return NextResponse.json({ ok: true }, { headers: NO_STORE });
+}

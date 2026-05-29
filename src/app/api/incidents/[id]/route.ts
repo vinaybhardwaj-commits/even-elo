@@ -154,6 +154,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
         can_retract: (me.is_super_admin || isSmhHere) && i.status !== "retracted",
         can_reclassify: me.is_super_admin || isSmhHere,
         can_reply: isTarget,
+        can_delete: me.is_super_admin,
       },
       replies,
     },
@@ -240,4 +241,21 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     )
   `;
   return NextResponse.json({ ok: true, incident: after[0] }, { headers: NO_STORE });
+}
+
+export async function DELETE(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const { id } = await ctx.params;
+  if (!UUID_RE.test(id)) return NextResponse.json({ ok: false, error: "invalid id" }, { status: 400, headers: NO_STORE });
+  let actor;
+  try { actor = await actorFromRequest(); } catch { return NextResponse.json({ ok: false, error: "Unauthenticated" }, { status: 401, headers: NO_STORE }); }
+  const url = process.env.DATABASE_URL;
+  if (!url) return NextResponse.json({ ok: false, error: "DATABASE_URL not configured" }, { status: 500, headers: NO_STORE });
+  const sql = neon(url);
+  const me = (await sql`SELECT is_super_admin FROM profiles_with_roles WHERE id = ${actor.profileId}::uuid LIMIT 1`) as Array<{ is_super_admin: boolean }>;
+  if (me.length === 0 || !me[0].is_super_admin) return NextResponse.json({ ok: false, error: "Super admin only" }, { status: 403, headers: NO_STORE });
+  const ex = (await sql`SELECT target_physician_id::text AS t FROM incidents WHERE id = ${id}::uuid LIMIT 1`) as Array<{ t: string }>;
+  if (ex.length === 0) return NextResponse.json({ ok: false, error: "not found" }, { status: 404, headers: NO_STORE });
+  await sql`DELETE FROM incidents WHERE id = ${id}::uuid`;
+  await sql`INSERT INTO audit_log_v2 (actor_user_id, action, entity_type, entity_id, before_json) VALUES (${actor.profileId}::uuid, 'delete', 'incident', ${id}, ${JSON.stringify({ physician_id: ex[0].t, hard_delete: true })}::jsonb)`;
+  return NextResponse.json({ ok: true }, { headers: NO_STORE });
 }

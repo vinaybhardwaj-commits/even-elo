@@ -31,6 +31,7 @@ interface Incident {
   can_retract: boolean;
   can_reclassify: boolean;
   can_reply: boolean;
+  can_delete: boolean;
 }
 
 interface Reply {
@@ -114,6 +115,17 @@ function Inner() {
     } finally {
       setWorking(false);
     }
+  }
+
+  async function deleteIncident() {
+    if (!confirm("Permanently delete this feedback record? This cannot be undone.")) return;
+    setWorking(true);
+    try {
+      const r = await fetch(`/api/incidents/${id}`, { method: "DELETE" });
+      const j = await r.json();
+      if (!r.ok || !j.ok) { alert(j.error || "Delete failed"); setWorking(false); return; }
+      window.location.href = "/incidents";
+    } catch { setWorking(false); }
   }
 
   async function changeSeverity(newSev: string) {
@@ -299,6 +311,11 @@ function Inner() {
                 {i.can_retract && (
                   <button onClick={retract} disabled={working} className="px-3 py-1.5 rounded-lg text-xs font-medium bg-red-50 text-red-700 hover:bg-red-100">
                     Retract
+                  </button>
+                )}
+                {i.can_delete && (
+                  <button onClick={deleteIncident} disabled={working} className="px-3 py-1.5 rounded-lg text-xs font-medium bg-red-100 text-red-800 hover:bg-red-200">
+                    Delete
                   </button>
                 )}
               </div>

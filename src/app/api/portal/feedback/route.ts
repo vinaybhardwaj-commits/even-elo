@@ -10,6 +10,14 @@ const CATEGORIES = new Set(["clinical","patient_safety","medical_error","profess
 const SEVERITIES = new Set(["low","medium","high","critical"]);
 const COMMENDATIONS = new Set(["Clinical Excellence","Patient Experience","Teamwork & Collaboration","Teaching & Mentorship","Going Above & Beyond"]);
 
+// OP6 — basic abuse guardrail on network-wide reporting: max 10 submissions / 10 min / physician (per serverless instance).
+const rl = new Map<string, { count: number; resetAt: number }>();
+function rateOk(key: string): boolean {
+  const now = Date.now(); const e = rl.get(key);
+  if (!e || now > e.resetAt) { rl.set(key, { count: 1, resetAt: now + 10 * 60 * 1000 }); return true; }
+  e.count++; return e.count <= 10;
+}
+
 /**
  * POST /api/portal/feedback — a physician files PEER feedback on another physician.
  * Network-wide (#5). Positive is always named; negative may be anonymous to the
@@ -19,6 +27,7 @@ const COMMENDATIONS = new Set(["Clinical Excellence","Patient Experience","Teamw
 export async function POST(req: NextRequest) {
   const me = await getCurrentPhysician();
   if (!me) return NextResponse.json({ ok: false, error: "Unauthenticated" }, { status: 401, headers: NO_STORE });
+  if (!rateOk(me.physicianId)) return NextResponse.json({ ok: false, error: "You're submitting feedback too quickly — please slow down." }, { status: 429, headers: NO_STORE });
 
   const body = await req.json().catch(() => ({}));
   const { target_physician_id, polarity, category, severity, commendation_category, narrative, anonymous_flag, evidence_urls } = body ?? {};
