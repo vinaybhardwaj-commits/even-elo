@@ -79,11 +79,19 @@ export async function POST(req: NextRequest) {
     const lowerEmail = (r.email ?? "").trim().toLowerCase();
 
     try {
-      // Dupe check by email
+      // Dupe check by email (preferred), or by lower(full_name) when no email.
+      // The fallback prevents email=null rows from re-inserting during
+      // timeout/retry cycles where the same payload is fired twice.
       if (lowerEmail) {
         const existing = (await sql`SELECT id::text AS id FROM physicians WHERE lower(email) = ${lowerEmail} LIMIT 1`) as Array<{ id: string }>;
         if (existing.length > 0) {
           skipped.push({ row_index: i, full_name: fullName, reason: "email_already_exists", existing_id: existing[0].id });
+          continue;
+        }
+      } else {
+        const existing = (await sql`SELECT id::text AS id FROM physicians WHERE lower(full_name) = ${fullName.toLowerCase()} LIMIT 1`) as Array<{ id: string }>;
+        if (existing.length > 0) {
+          skipped.push({ row_index: i, full_name: fullName, reason: "name_match_no_email", existing_id: existing[0].id });
           continue;
         }
       }
