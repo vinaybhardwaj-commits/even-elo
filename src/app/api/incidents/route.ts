@@ -16,7 +16,7 @@ const CATEGORIES = new Set([
   "documentation", "etiquette", "vendor_compliance", "other",
 ]);
 const SEVERITIES = new Set(["low", "medium", "high", "critical"]);
-const SOURCES = new Set(["patient", "peer"]); // governance (SGO) arrives in Phase 2
+const SOURCES = new Set(["patient", "peer", "governance"]); // governance = Site Governance Officer (Users PRD #17)
 const POLARITIES = new Set(["positive", "negative"]);
 const COMMENDATIONS = new Set([
   "Clinical Excellence", "Patient Experience", "Teamwork & Collaboration",
@@ -274,10 +274,15 @@ export async function POST(req: NextRequest) {
   const sql = neon(url);
 
   // Feedback PRD #9/#17: only admins (super_admin / SMH / HR) file from this surface.
-  const callerRows = (await sql`SELECT is_super_admin, is_site_medical_head, is_hr FROM profiles_with_roles WHERE id = ${actor.profileId}::uuid LIMIT 1`) as Array<{ is_super_admin: boolean; is_site_medical_head: boolean; is_hr: boolean }>;
+  const callerRows = (await sql`SELECT is_super_admin, is_site_medical_head, is_hr, is_sgc_member FROM profiles_with_roles WHERE id = ${actor.profileId}::uuid LIMIT 1`) as Array<{ is_super_admin: boolean; is_site_medical_head: boolean; is_hr: boolean; is_sgc_member: boolean }>;
   const caller = callerRows[0];
-  if (!caller || !(caller.is_super_admin || caller.is_site_medical_head || caller.is_hr)) {
-    return NextResponse.json({ ok: false, error: "Not permitted to file feedback from this surface" }, { status: 403, headers: NO_STORE });
+  if (!caller) return NextResponse.json({ ok: false, error: "Not permitted" }, { status: 403, headers: NO_STORE });
+  // Feedback PRD permission matrix: governance = SGO + super_admin; patient/peer = super_admin / SMH / HR.
+  const allowedToFile = source === "governance"
+    ? (caller.is_super_admin || caller.is_sgc_member)
+    : (caller.is_super_admin || caller.is_site_medical_head || caller.is_hr);
+  if (!allowedToFile) {
+    return NextResponse.json({ ok: false, error: source === "governance" ? "Governance feedback is filed by Site Governance Officers (or super admins)." : "Not permitted to file feedback from this surface" }, { status: 403, headers: NO_STORE });
   }
 
   // v3.0d: hospital_id is required on submit (PRD §D.2). Resolve + validate

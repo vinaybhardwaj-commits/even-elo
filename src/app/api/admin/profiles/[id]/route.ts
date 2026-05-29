@@ -87,6 +87,10 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
   if (before.length === 0) return NextResponse.json({ ok: false, error: "not found" }, { status: 404, headers: NO_STORE });
   const b = before[0];
 
+  const meSuper = (await sql`SELECT is_super_admin FROM profiles_with_roles WHERE id = ${actor.profileId}::uuid LIMIT 1`) as Array<{ is_super_admin: boolean }>;
+  if (meSuper.length === 0 || !meSuper[0].is_super_admin) return NextResponse.json({ ok: false, error: "Super admin only" }, { status: 403, headers: NO_STORE });
+
+
   // Don't let an admin demote the only remaining active super_admin
   if (body.is_super_admin === false && b.is_super_admin === true) {
     const others = (await sql`

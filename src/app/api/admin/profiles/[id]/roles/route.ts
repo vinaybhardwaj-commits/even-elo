@@ -31,6 +31,8 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
   const url = process.env.DATABASE_URL;
   if (!url) return NextResponse.json({ ok: false, error: "DATABASE_URL not configured" }, { status: 500, headers: NO_STORE });
   const sql = neon(url);
+  const meSuper = (await sql`SELECT is_super_admin FROM profiles_with_roles WHERE id = ${actor.profileId}::uuid LIMIT 1`) as Array<{ is_super_admin: boolean }>;
+  if (meSuper.length === 0 || !meSuper[0].is_super_admin) return NextResponse.json({ ok: false, error: "Super admin only" }, { status: 403, headers: NO_STORE });
   const rows = (await sql`
     SELECT
       r.role,
@@ -61,6 +63,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   const url = process.env.DATABASE_URL;
   if (!url) return NextResponse.json({ ok: false, error: "DATABASE_URL not configured" }, { status: 500, headers: NO_STORE });
   const sql = neon(url);
+  const meSuper = (await sql`SELECT is_super_admin FROM profiles_with_roles WHERE id = ${actor.profileId}::uuid LIMIT 1`) as Array<{ is_super_admin: boolean }>;
+  if (meSuper.length === 0 || !meSuper[0].is_super_admin) return NextResponse.json({ ok: false, error: "Super admin only" }, { status: 403, headers: NO_STORE });
 
   const h = (await sql`SELECT id::text AS id FROM hospitals WHERE code = ${hospital_code} AND is_active = true LIMIT 1`) as Array<{ id: string }>;
   if (h.length === 0) return NextResponse.json({ ok: false, error: `Unknown hospital ${hospital_code}` }, { status: 400, headers: NO_STORE });

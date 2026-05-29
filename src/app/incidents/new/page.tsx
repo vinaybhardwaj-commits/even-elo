@@ -19,6 +19,8 @@ interface MeSummary {
   full_name: string;
   position_label: string;
   hospital_code: string;
+  is_super_admin?: boolean;
+  is_sgc_member?: boolean;
 }
 
 const CATEGORIES: { v: string; label: string }[] = [
@@ -64,7 +66,7 @@ function colorFor(name: string): string {
   return AVATAR_COLORS[h % AVATAR_COLORS.length];
 }
 
-type Source = "patient" | "peer";
+type Source = "patient" | "peer" | "governance";
 type Polarity = "positive" | "negative";
 
 function NewIncidentInner() {
@@ -300,7 +302,7 @@ function NewIncidentInner() {
                 <div>
                   <label className="block text-xs font-medium text-stone-500 mb-1.5">Source</label>
                   <div className="flex gap-1.5">
-                    {([["patient", "Patient feedback"], ["peer", "Peer concern"]] as [Source, string][]).map(([v, label]) => (
+                    {([["patient", "Patient feedback"], ["peer", "Peer concern"], ...((me?.is_super_admin || me?.is_sgc_member) ? ([["governance", "Governance"]] as [Source, string][]) : [])] as [Source, string][]).map(([v, label]) => (
                       <button key={v} type="button" onClick={() => setSource(v)}
                         className={`px-3 py-1.5 rounded-full text-[12px] font-medium border ${source === v ? "bg-brand text-white border-brand" : "bg-white text-stone-700 border-stone-200 hover:bg-stone-50"}`}>
                         {label}

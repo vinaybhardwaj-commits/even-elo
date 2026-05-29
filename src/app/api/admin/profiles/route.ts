@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getHospitalFilterId } from "@/lib/hospital-filter";
 import { neon } from "@neondatabase/serverless";
+import { actorFromRequest } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -16,9 +17,13 @@ const NO_STORE = { "Cache-Control": "no-store, max-age=0" };
  * super_admin on /api/admin/* paths.
  */
 export async function GET(req: NextRequest) {
+  let actor;
+  try { actor = await actorFromRequest(); } catch { return NextResponse.json({ ok: false, error: "Unauthenticated" }, { status: 401, headers: NO_STORE }); }
   const url = process.env.DATABASE_URL;
   if (!url) return NextResponse.json({ ok: false, error: "DATABASE_URL not configured" }, { status: 500, headers: NO_STORE });
   const sql = neon(url);
+  const meSuper = (await sql`SELECT is_super_admin FROM profiles_with_roles WHERE id = ${actor.profileId}::uuid LIMIT 1`) as Array<{ is_super_admin: boolean }>;
+  if (meSuper.length === 0 || !meSuper[0].is_super_admin) return NextResponse.json({ ok: false, error: "Super admin only" }, { status: 403, headers: NO_STORE });
   const params = req.nextUrl.searchParams;
   const status = (params.get("status") ?? "").trim();
   const hfid = await getHospitalFilterId();
