@@ -24,6 +24,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
       registration_number, registration_council, registration_expiry,
       indemnity_expiry, docs_external_url,
       email, phone, date_joined_network, current_status, notes,
+      portal_access,
       created_at, updated_at
     FROM physicians WHERE id = ${id}::uuid
   `) as Array<Record<string, unknown>>;

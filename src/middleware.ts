@@ -58,6 +58,31 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // -- Physician portal: separate auth surface (epi_physician_session) --
+  if (pathname.startsWith("/portal") || pathname.startsWith("/api/portal")) {
+    if (pathname === "/portal/login" || pathname.startsWith("/api/portal/auth/")) {
+      return NextResponse.next();
+    }
+    const ptoken = request.cookies.get("epi_physician_session")?.value;
+    const psecret = getJwtSecret();
+    if (!ptoken || !psecret) {
+      if (pathname.startsWith("/api/")) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+      return NextResponse.redirect(new URL("/portal/login", request.url));
+    }
+    try {
+      const { payload } = await jwtVerify(ptoken, psecret);
+      if ((payload as Record<string, unknown>).kind !== "physician") throw new Error("not physician");
+      if ((payload as Record<string, unknown>).portal_must_change_pin === true && pathname !== "/portal/set-pin") {
+        if (pathname.startsWith("/api/")) return NextResponse.json({ ok: false, error: "PIN change required" }, { status: 403 });
+        return NextResponse.redirect(new URL("/portal/set-pin", request.url));
+      }
+      return NextResponse.next();
+    } catch {
+      if (pathname.startsWith("/api/")) return NextResponse.json({ ok: false, error: "Session expired" }, { status: 401 });
+      return NextResponse.redirect(new URL("/portal/login", request.url));
+    }
+  }
+
   // Public pages
   if (PUBLIC_ROUTES.some((r) => pathname === r)) {
     return NextResponse.next();

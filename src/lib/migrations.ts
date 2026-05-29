@@ -954,5 +954,28 @@ export const MIGRATIONS: Migration[] = [
       ALTER TABLE profiles ADD COLUMN IF NOT EXISTS must_change_pin boolean NOT NULL DEFAULT false;
     `,
   },
+  {
+    id: "021_doctor_portal",
+    description: "Doctor Portal #1 — physicians.portal_access/portal_pin_hash/portal_must_change_pin + resignation_requests table. Additive.",
+    sql: `
+      ALTER TABLE physicians ADD COLUMN IF NOT EXISTS portal_access boolean NOT NULL DEFAULT false;
+      ALTER TABLE physicians ADD COLUMN IF NOT EXISTS portal_pin_hash text;
+      ALTER TABLE physicians ADD COLUMN IF NOT EXISTS portal_must_change_pin boolean NOT NULL DEFAULT false;
+
+      CREATE TABLE IF NOT EXISTS resignation_requests (
+        id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        physician_id      uuid NOT NULL REFERENCES physicians(id) ON DELETE CASCADE,
+        hospital_id       uuid REFERENCES hospitals(id),
+        reason            text,
+        intended_last_date date,
+        status            text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','processed','withdrawn')),
+        requested_at      timestamptz NOT NULL DEFAULT now(),
+        processed_by      uuid REFERENCES profiles(id),
+        processed_at      timestamptz
+      );
+      CREATE INDEX IF NOT EXISTS idx_resignation_physician ON resignation_requests(physician_id);
+      CREATE INDEX IF NOT EXISTS idx_resignation_status    ON resignation_requests(status);
+    `,
+  },
 ];
 

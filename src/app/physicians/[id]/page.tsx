@@ -25,6 +25,7 @@ interface Physician {
   phone: string | null;
   date_joined_network: string | null;
   current_status: string;
+  portal_access?: boolean;
   notes: string | null;
 }
 
@@ -242,6 +243,25 @@ export default function PhysicianProfilePage() {
   const [err, setErr] = useState<string | null>(null);
   const [section, setSection] = useState<string>("overview");
   const [addEng, setAddEng] = useState(false);
+
+  async function portalPost(bodyObj: Record<string, unknown>): Promise<boolean> {
+    const r = await fetch(`/api/physicians/${id}/portal-access`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(bodyObj) });
+    const j = await r.json();
+    if (!r.ok || !j.ok) { alert(j.error || "Failed"); return false; }
+    return true;
+  }
+  async function enablePortal() {
+    const pin = String(Math.floor(1000 + Math.random() * 9000));
+    if (await portalPost({ enabled: true, pin })) { alert(`Portal access enabled. Temporary PIN: ${pin}\n\nShare it with the doctor — they'll set their own on first login.`); load(); }
+  }
+  async function resetPortalPin() {
+    const pin = String(Math.floor(1000 + Math.random() * 9000));
+    if (await portalPost({ enabled: true, pin })) { alert(`Portal PIN reset. New temporary PIN: ${pin}`); load(); }
+  }
+  async function disablePortal() {
+    if (!confirm("Disable portal access for this physician?")) return;
+    if (await portalPost({ enabled: false })) load();
+  }
 
   function load() {
     if (!id) return;
@@ -463,6 +483,16 @@ export default function PhysicianProfilePage() {
                 <button onClick={deletePhysician} className="px-3 py-2 rounded-lg text-sm font-medium text-red-700 bg-red-50 hover:bg-red-100">
                   Mark terminated
                 </button>
+              )}
+              {(me?.is_super_admin || me?.is_site_medical_head || me?.is_hr) && (
+                physician.portal_access ? (
+                  <>
+                    <button onClick={resetPortalPin} className="px-3 py-2 rounded-lg text-sm font-medium text-teal-700 bg-teal-50 hover:bg-teal-100">Reset portal PIN</button>
+                    <button onClick={disablePortal} className="px-3 py-2 rounded-lg text-sm font-medium text-stone-600 bg-stone-100 hover:bg-stone-200">Disable portal</button>
+                  </>
+                ) : (
+                  <button onClick={enablePortal} className="px-3 py-2 rounded-lg text-sm font-medium text-teal-700 bg-teal-50 hover:bg-teal-100">Enable portal</button>
+                )
               )}
             </div>
           </div>
