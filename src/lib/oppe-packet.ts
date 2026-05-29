@@ -4,7 +4,7 @@ import type { NeonQueryFunction } from "@neondatabase/serverless";
  * Aggregate the OPPE packet for a single (physician × hospital × period).
  *
  * Per PRD §C.6: clinical_metrics_monthly + incidents (open + retracted) +
- * patient_feedback, all scoped to the period_start → period_end window.
+ * incident-derived feedback, all scoped to the period_start → period_end window.
  *
  * The snapshot is frozen at OPPE creation time so a doctor can't game it by
  * delaying review.
@@ -33,6 +33,10 @@ export async function buildOppePacket(
       id::text AS id,
       category,
       severity,
+      polarity,
+      source,
+      commendation_category,
+      patient_rating,
       status,
       submitted_at,
       anonymous_flag,
@@ -43,15 +47,6 @@ export async function buildOppePacket(
       AND submitted_at >= ${periodStart}::date
       AND submitted_at <= ${periodEnd}::date + INTERVAL '1 day'
     ORDER BY submitted_at DESC
-  `) as Array<Record<string, unknown>>;
-
-  const feedbackRows = (await sql`
-    SELECT feedback_period, csat_score, complaint_count, source
-    FROM patient_feedback
-    WHERE physician_id = ${physicianId}::uuid
-      AND hospital_id = ${hospitalId}::uuid
-    ORDER BY feedback_period DESC
-    LIMIT 4
   `) as Array<Record<string, unknown>>;
 
   type Totals = { opd: number; ipd: number; ot: number; revenue: number };
@@ -69,20 +64,40 @@ export async function buildOppePacket(
   const openIncidents = incidentRows.filter((r) => r.status === "open").length;
   const retractedIncidents = incidentRows.filter((r) => r.status === "retracted").length;
 
+  // Feedback PRD #14 — unified feedback summary derived from incidents (polarity x source + avg patient rating).
+  const live = incidentRows.filter((r) => r.status !== "retracted");
+  const positive = live.filter((r) => r.polarity === "positive").length;
+  const negative = live.filter((r) => r.polarity === "negative").length;
+  const bySource = (src: string) => ({
+    positive: live.filter((r) => r.source === src && r.polarity === "positive").length,
+    negative: live.filter((r) => r.source === src && r.polarity === "negative").length,
+  });
+  const ratings = live
+    .filter((r) => r.source === "patient" && r.patient_rating != null)
+    .map((r) => Number(r.patient_rating));
+  const avgPatientRating = ratings.length ? Math.round((ratings.reduce((a, b) => a + b, 0) / ratings.length) * 10) / 10 : null;
+
   return {
     snapshot_at: new Date().toISOString(),
     period_start: periodStart,
     period_end: periodEnd,
     clinical_metrics_monthly: metricRows,
     incidents: incidentRows,
-    patient_feedback: feedbackRows,
+    feedback_summary: {
+      positive,
+      negative,
+      by_source: { patient: bySource("patient"), peer: bySource("peer"), governance: bySource("governance") },
+      avg_patient_rating: avgPatientRating,
+      patient_rating_n: ratings.length,
+    },
     summary: {
       months_covered: metricRows.length,
       totals,
       incidents_total: incidentRows.length,
       open_incidents: openIncidents,
       retracted_incidents: retractedIncidents,
-      feedback_periods: feedbackRows.length,
+      positive_feedback: positive,
+      negative_feedback: negative,
     },
   };
 }

@@ -937,5 +937,12 @@ export const MIGRATIONS: Migration[] = [
       END $$;
     `,
   },
+  {
+    id: "019_drop_patient_feedback",
+    description: "Feedback PRD #15 — patient_feedback merged into incidents. Drop the table + CSV path (bundled with code cutover). Empty table, no data loss.",
+    sql: `
+      DROP TABLE IF EXISTS patient_feedback CASCADE;
+    `,
+  },
 ];
 

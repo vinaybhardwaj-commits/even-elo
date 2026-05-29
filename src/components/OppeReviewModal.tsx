@@ -8,15 +8,16 @@ interface OppePacket {
   period_start?: string;
   period_end?: string;
   clinical_metrics_monthly?: Array<{ year: number; month: number; opd_count?: number | null; ipd_admissions?: number | null; ot_cases?: number | null; revenue_inr?: number | null }>;
-  incidents?: Array<{ id: string; category: string; severity: string; status: string; submitted_at: string; anonymous_flag?: boolean }>;
-  patient_feedback?: Array<{ feedback_period: string; csat_score?: number | null; complaint_count?: number | null; source?: string | null }>;
+  incidents?: Array<{ id: string; category: string | null; severity: string | null; polarity?: string; source?: string; commendation_category?: string | null; patient_rating?: number | null; status: string; submitted_at: string; anonymous_flag?: boolean }>;
+  feedback_summary?: { positive: number; negative: number; by_source: { patient: { positive: number; negative: number }; peer: { positive: number; negative: number }; governance: { positive: number; negative: number } }; avg_patient_rating: number | null; patient_rating_n: number };
   summary?: {
     months_covered: number;
     totals: { opd: number; ipd: number; ot: number; revenue: number };
     incidents_total: number;
     open_incidents: number;
     retracted_incidents: number;
-    feedback_periods: number;
+    positive_feedback: number;
+    negative_feedback: number;
   };
 }
 
@@ -118,9 +119,9 @@ export function OppeReviewModal({ oppeId, onClose, onSaved }: { oppeId: string; 
                       <div className="text-[10px] text-stone-400 mt-0.5">{packet.summary.open_incidents} open · {packet.summary.retracted_incidents} retracted</div>
                     </div>
                     <div className="bg-stone-50 rounded-lg p-3">
-                      <div className="text-[11px] text-stone-500">Feedback periods</div>
-                      <div className="num text-lg font-semibold">{packet.summary.feedback_periods}</div>
-                      <div className="text-[10px] text-stone-400 mt-0.5">(window ≈ last 12mo)</div>
+                      <div className="text-[11px] text-stone-500">Feedback</div>
+                      <div className="num text-lg font-semibold"><span className="text-emerald-700">{packet.summary.positive_feedback}</span> / <span className="text-stone-700">{packet.summary.negative_feedback}</span></div>
+                      <div className="text-[10px] text-stone-400 mt-0.5">positive / negative</div>
                     </div>
                     <div className="bg-stone-50 rounded-lg p-3">
                       <div className="text-[11px] text-stone-500">Revenue (₹)</div>
@@ -172,9 +173,10 @@ export function OppeReviewModal({ oppeId, onClose, onSaved }: { oppeId: string; 
                         <span className={`px-2 py-0.5 rounded-full font-medium ${
                           i.status === "open" ? "bg-amber-50 text-amber-800" : i.status === "retracted" ? "bg-stone-100 text-stone-500" : "bg-emerald-50 text-emerald-700"
                         }`}>{i.status}</span>
-                        <span className="text-stone-600">{i.category}</span>
+                        <span className={`px-1.5 py-0.5 rounded-full font-medium ${i.polarity === "positive" ? "bg-emerald-50 text-emerald-700" : "bg-stone-100 text-stone-600"}`}>{i.polarity === "positive" ? "positive" : "negative"}</span>
+                        <span className="text-stone-500">{i.source ?? "peer"}</span>
                         <span className="text-stone-400">·</span>
-                        <span className={i.severity === "critical" ? "text-red-700 font-medium" : "text-stone-500"}>{i.severity}</span>
+                        <span className={i.severity === "critical" ? "text-red-700 font-medium" : "text-stone-500"}>{i.polarity === "positive" ? (i.commendation_category ?? "commendation") : `${i.category ?? "—"} / ${i.severity ?? "—"}`}</span>
                         <span className="text-stone-400 mono text-[10px] ml-auto">{i.submitted_at?.slice(0, 10)}</span>
                       </div>
                     ))}
@@ -182,16 +184,20 @@ export function OppeReviewModal({ oppeId, onClose, onSaved }: { oppeId: string; 
                 </section>
               )}
 
-              {packet?.patient_feedback && packet.patient_feedback.length > 0 && (
+              {packet?.feedback_summary && (
                 <section>
-                  <div className="text-[11px] uppercase tracking-wider text-stone-500 font-medium mb-2">Patient feedback</div>
-                  <div className="grid grid-cols-2 gap-2">
-                    {packet.patient_feedback.map((f, idx) => (
-                      <div key={`${f.feedback_period}-${idx}`} className="border border-stone-200 rounded-lg px-3 py-2">
-                        <div className="text-xs text-stone-500 font-medium">{f.feedback_period}</div>
-                        <div className="text-[11px] text-stone-700 mt-0.5">CSAT {f.csat_score ?? "—"} · {f.complaint_count ?? 0} complaints</div>
+                  <div className="text-[11px] uppercase tracking-wider text-stone-500 font-medium mb-2">Feedback summary</div>
+                  <div className="grid grid-cols-4 gap-2 text-xs">
+                    {(([["patient","Patient"],["peer","Peer"],["governance","Governance"]]) as [("patient"|"peer"|"governance"), string][]).map(([k,label]) => (
+                      <div key={k} className="border border-stone-200 rounded-lg px-3 py-2">
+                        <div className="text-stone-500 font-medium">{label}</div>
+                        <div className="mt-0.5"><span className="text-emerald-700 font-medium">{packet.feedback_summary!.by_source[k].positive}+</span> {" / "} <span className="text-stone-700 font-medium">{packet.feedback_summary!.by_source[k].negative}-</span></div>
                       </div>
                     ))}
+                    <div className="border border-stone-200 rounded-lg px-3 py-2">
+                      <div className="text-stone-500 font-medium">Avg patient rating</div>
+                      <div className="mt-0.5 text-stone-700 font-medium">{packet.feedback_summary.avg_patient_rating ?? "—"}{packet.feedback_summary.patient_rating_n ? ` (${packet.feedback_summary.patient_rating_n})` : ""}</div>
+                    </div>
                   </div>
                 </section>
               )}

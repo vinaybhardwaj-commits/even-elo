@@ -48,7 +48,6 @@ export async function POST() {
   await sql`TRUNCATE privilege_requests RESTART IDENTITY CASCADE`;
   await sql`TRUNCATE oppe_reviews        RESTART IDENTITY CASCADE`;
   await sql`TRUNCATE incident_views      RESTART IDENTITY CASCADE`;
-  await sql`TRUNCATE patient_feedback    RESTART IDENTITY CASCADE`;
   await sql`TRUNCATE incident_replies    RESTART IDENTITY CASCADE`;
   await sql`TRUNCATE incidents           RESTART IDENTITY CASCADE`;
   await sql`TRUNCATE clinical_metrics_monthly RESTART IDENTITY CASCADE`;
@@ -57,7 +56,7 @@ export async function POST() {
   await sql`TRUNCATE vc_observation_cases RESTART IDENTITY CASCADE`;
   await sql`TRUNCATE vc_prescreen_hospitals RESTART IDENTITY CASCADE`;
   await sql`TRUNCATE vc_prescreens       RESTART IDENTITY CASCADE`;
-  log.push(`2. Truncated: privilege_requests, oppe_reviews, incident_views, patient_feedback, incidents+replies, clinical_metrics_monthly, qualifications, privileges, vc_observation_cases, vc_prescreen_hospitals, vc_prescreens`);
+  log.push(`2. Truncated: privilege_requests, oppe_reviews, incident_views, incidents+replies, clinical_metrics_monthly, qualifications, privileges, vc_observation_cases, vc_prescreen_hospitals, vc_prescreens`);
 
   // 3. physicians + engagements last
   await sql`DELETE FROM physician_engagements`;
@@ -76,7 +75,6 @@ export async function POST() {
       (SELECT COUNT(*)::int FROM qualifications)         AS qualifications,
       (SELECT COUNT(*)::int FROM privileges)             AS privileges,
       (SELECT COUNT(*)::int FROM clinical_metrics_monthly) AS clinical_metrics,
-      (SELECT COUNT(*)::int FROM patient_feedback)       AS patient_feedback,
       (SELECT COUNT(*)::int FROM incidents)              AS incidents,
       (SELECT COUNT(*)::int FROM incident_replies)       AS incident_replies,
       (SELECT COUNT(*)::int FROM incident_views)         AS incident_views,
