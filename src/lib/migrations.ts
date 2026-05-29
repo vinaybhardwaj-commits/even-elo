@@ -897,5 +897,45 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_prreq_status    ON privilege_requests(status);
     `,
   },
+  {
+    id: "018_feedback_incidents_schema",
+    description: "Feedback + Doctor Portal foundation: incidents polarity/source/commendation_category/patient_rating/patient_ref + author polymorphism (physician|profile) on incidents and incident_replies; relax severity/category/submitter NOT NULL. Additive.",
+    sql: `
+      ALTER TABLE incidents ADD COLUMN IF NOT EXISTS polarity text NOT NULL DEFAULT 'negative'
+        CHECK (polarity IN ('positive','negative'));
+      ALTER TABLE incidents ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'peer'
+        CHECK (source IN ('patient','peer','governance'));
+      ALTER TABLE incidents ADD COLUMN IF NOT EXISTS commendation_category text;
+      ALTER TABLE incidents ADD COLUMN IF NOT EXISTS patient_rating smallint
+        CHECK (patient_rating IS NULL OR (patient_rating BETWEEN 1 AND 5));
+      ALTER TABLE incidents ADD COLUMN IF NOT EXISTS patient_ref text;
+      ALTER TABLE incidents ADD COLUMN IF NOT EXISTS submitter_physician_id uuid REFERENCES physicians(id);
+
+      ALTER TABLE incidents ALTER COLUMN submitter_user_id DROP NOT NULL;
+      ALTER TABLE incidents ALTER COLUMN severity DROP NOT NULL;
+      ALTER TABLE incidents ALTER COLUMN category DROP NOT NULL;
+
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name='incidents_one_author_chk' AND table_name='incidents') THEN
+          ALTER TABLE incidents ADD CONSTRAINT incidents_one_author_chk
+            CHECK ((submitter_user_id IS NOT NULL)::int + (submitter_physician_id IS NOT NULL)::int = 1);
+        END IF;
+      END $$;
+
+      CREATE INDEX IF NOT EXISTS idx_incidents_polarity ON incidents(polarity);
+      CREATE INDEX IF NOT EXISTS idx_incidents_source ON incidents(source);
+      CREATE INDEX IF NOT EXISTS idx_incidents_submitter_phys ON incidents(submitter_physician_id);
+
+      ALTER TABLE incident_replies ADD COLUMN IF NOT EXISTS replied_by_physician_id uuid REFERENCES physicians(id);
+      ALTER TABLE incident_replies ALTER COLUMN replied_by_profile_id DROP NOT NULL;
+
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name='incident_replies_one_author_chk' AND table_name='incident_replies') THEN
+          ALTER TABLE incident_replies ADD CONSTRAINT incident_replies_one_author_chk
+            CHECK ((replied_by_profile_id IS NOT NULL)::int + (replied_by_physician_id IS NOT NULL)::int = 1);
+        END IF;
+      END $$;
+    `,
+  },
 ];
 
