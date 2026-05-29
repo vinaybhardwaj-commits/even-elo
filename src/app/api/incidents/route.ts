@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { neon } from "@neondatabase/serverless";
 import { actorFromRequest } from "@/lib/auth";
 import { getHospitalFilterId } from "@/lib/hospital-filter";
+import { sendEmail, wrapHtml } from "@/lib/email";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -377,21 +378,17 @@ export async function POST(req: NextRequest) {
       })}::jsonb
     )
   `;
-  // EPI.2c — email send-stub. Resend integration is deferred to v1.x per
-  // locked decision. For now, log the would-be email to Vercel runtime so
-  // the post-submit notification path is exercised + observable.
-  console.log(JSON.stringify({
-    epi_email_stub: "incident_notification",
-    polarity,
-    source,
-    incident_id: inserted[0].id,
-    target_physician_id,
-    target_physician_email: ph[0].email,
-    severity,
-    category,
-    anonymous_flag: Boolean(anonymous_flag),
-    submitted_at: new Date().toISOString(),
-  }));
+  // N.1 — notify the target physician. Anonymity-safe: never names the reporter or
+  // includes the narrative; the doctor signs in to the portal for details. Best-effort,
+  // gated by EMAIL_SENDING_ENABLED (logs while disabled). Doesn't block the response.
+  if (ph[0].email) {
+    const kind = polarity === "positive" ? "positive feedback" : "a report";
+    void sendEmail({
+      to: ph[0].email as string,
+      subject: `New ${polarity === "positive" ? "feedback" : "report"} on your Even profile`,
+      html: wrapHtml("New feedback recorded", `<p>${kind.charAt(0).toUpperCase() + kind.slice(1)} has been recorded on your physician profile.</p><p>Sign in to your physician portal to view the details.</p>`),
+    }).catch(() => undefined);
+  }
 
   return NextResponse.json({ ok: true, incident: inserted[0] }, { headers: NO_STORE });
 }
