@@ -12,8 +12,12 @@ interface Row {
   anonymous_flag: boolean;
   submitter_label: string;
   hospital_code: string | null;
-  category: string;
-  severity: string;
+  category: string | null;
+  severity: string | null;
+  polarity: string;
+  source: string;
+  commendation_category: string | null;
+  patient_rating: number | null;
   narrative_preview: string;
   status: string;
   retracted_at: string | null;
@@ -62,6 +66,8 @@ export default function IncidentsInbox() {
   const [status, setStatus] = useState("open");
   const [severity, setSeverity] = useState("");
   const [category, setCategory] = useState("");
+  const [polarity, setPolarity] = useState("");
+  const [src, setSrc] = useState("");
 
   function load() {
     setLoading(true);
@@ -84,6 +90,7 @@ export default function IncidentsInbox() {
   // Totals across visible scope (sum of counts regardless of current filter)
   const totalByStatus: Record<string, number> = {};
   for (const c of counts) totalByStatus[c.status] = (totalByStatus[c.status] ?? 0) + c.n;
+  const visible = rows.filter((r) => (!polarity || r.polarity === polarity) && (!src || r.source === src));
 
   return (
     <>
@@ -91,13 +98,13 @@ export default function IncidentsInbox() {
       <main className="max-w-[1400px] mx-auto px-8 py-8">
         <div className="flex items-end justify-between mb-6">
           <div>
-            <h1 className="text-[22px] font-semibold tracking-tight">Incidents</h1>
+            <h1 className="text-[22px] font-semibold tracking-tight">Feedback</h1>
             <div className="text-sm text-stone-500 mt-1">
               {Object.entries(totalByStatus).map(([s, n]) => `${s.replace("_", " ")}: ${n}`).join(" · ") || "—"}
             </div>
           </div>
           <Link href="/incidents/new" className="bg-brand text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-brand-hover">
-            + Report an incident
+            + Add feedback
           </Link>
         </div>
 
@@ -135,35 +142,55 @@ export default function IncidentsInbox() {
             <option value="">All categories</option>
             {Object.entries(CATEGORY_LABEL).map(([v, label]) => <option key={v} value={v}>{label}</option>)}
           </select>
+          <select value={polarity} onChange={(e) => setPolarity(e.target.value)} className="px-3 py-1.5 border border-stone-200 rounded-lg text-[13px] bg-white">
+            <option value="">All polarities</option>
+            <option value="positive">Positive</option>
+            <option value="negative">Negative</option>
+          </select>
+          <select value={src} onChange={(e) => setSrc(e.target.value)} className="px-3 py-1.5 border border-stone-200 rounded-lg text-[13px] bg-white">
+            <option value="">All sources</option>
+            <option value="patient">Patient</option>
+            <option value="peer">Peer</option>
+            <option value="governance">Governance</option>
+          </select>
         </div>
 
         {/* List */}
         <div className="bg-white border border-stone-200 rounded-xl overflow-hidden">
           {loading ? (
             <div className="py-12 text-center text-sm text-stone-500">Loading…</div>
-          ) : rows.length === 0 ? (
+          ) : visible.length === 0 ? (
             <div className="py-16 text-center text-sm text-stone-500">
-              No incidents match these filters.
+              No feedback matches these filters.
             </div>
           ) : (
             <div className="divide-y divide-stone-100">
-              {rows.map((r) => (
+              {visible.map((r) => (
                 <Link
                   key={r.id}
                   href={`/incidents/${r.id}`}
                   className={`block px-5 py-4 hover:bg-stone-50 ${r.status === "retracted" ? "opacity-70" : ""}`}
                 >
-                  <div className="flex items-start gap-3">
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${SEV_PILL[r.severity] ?? "bg-stone-100 text-stone-700"}`}>
-                      {r.severity}
+                  <div className="flex items-start gap-1.5 flex-wrap">
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${r.polarity === "positive" ? "bg-emerald-50 text-emerald-700" : "bg-stone-800 text-white"}`}>
+                      {r.polarity === "positive" ? "Positive" : "Negative"}
                     </span>
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-violet-50 text-violet-700">
+                      {r.source === "patient" ? "Patient" : r.source === "governance" ? "Governance" : "Peer"}
+                    </span>
+                    {r.polarity === "positive"
+                      ? (r.commendation_category ? <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700">{r.commendation_category}</span> : null)
+                      : <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${SEV_PILL[r.severity ?? ""] ?? "bg-stone-100 text-stone-700"}`}>{r.severity ?? "\u2014"}</span>}
                     <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${STATUS_PILL[r.status] ?? "bg-stone-100 text-stone-700"}`}>
                       {r.status}
                     </span>
-                    <span className="text-[11px] text-stone-500 px-2 py-0.5 rounded-full bg-stone-50">
-                      {CATEGORY_LABEL[r.category] ?? r.category}
-                    </span>
-                    <div className="flex-1 min-w-0">
+                    {r.polarity !== "positive" && (
+                      <span className="text-[11px] text-stone-500 px-2 py-0.5 rounded-full bg-stone-50">
+                        {CATEGORY_LABEL[r.category ?? ""] ?? r.category}
+                      </span>
+                    )}
+                    {r.patient_rating != null && <span className="text-[11px] text-amber-700 px-2 py-0.5 rounded-full bg-amber-50">{"\u2605"} {r.patient_rating}/5</span>}
+                    <div className="w-full mt-1.5">
                       <div className={`text-sm font-medium ${r.status === "retracted" ? "line-through text-stone-500" : "text-stone-900"}`}>
                         {r.target_physician_name}
                         {r.hospital_code && <span className="font-normal text-stone-500"> · {r.hospital_code}</span>}

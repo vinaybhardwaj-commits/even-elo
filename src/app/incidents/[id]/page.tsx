@@ -15,8 +15,13 @@ interface Incident {
   anonymous_flag: boolean;
   submitter_label: string;
   hospital_code: string | null;
-  category: string;
-  severity: string;
+  category: string | null;
+  severity: string | null;
+  polarity: string;
+  source: string;
+  commendation_category: string | null;
+  patient_rating: number | null;
+  patient_ref: string | null;
   narrative: string;
   evidence_urls: string[];
   status: string;
@@ -192,7 +197,7 @@ function Inner() {
       <TopNav />
       <main className="max-w-[900px] mx-auto px-8 py-8">
         <div className="text-sm text-stone-500 mb-2">
-          <Link href="/incidents" className="hover:text-stone-900">Incidents</Link>
+          <Link href="/incidents" className="hover:text-stone-900">Feedback</Link>
           <span className="mx-1.5">/</span>
           <span className="text-stone-900 font-medium">#{i.id.slice(0, 8)}</span>
         </div>
@@ -205,23 +210,32 @@ function Inner() {
 
         {/* Header card */}
         <section className="bg-white border border-stone-200 rounded-xl p-5 mb-4">
-          <div className="flex items-start gap-3 mb-3">
-            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${SEV_PILL[i.severity] ?? "bg-stone-100 text-stone-700"}`}>
-              {i.severity}
+          <div className="flex items-start gap-1.5 mb-3 flex-wrap">
+            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${i.polarity === "positive" ? "bg-emerald-50 text-emerald-700" : "bg-stone-800 text-white"}`}>
+              {i.polarity === "positive" ? "Positive" : "Negative"}
             </span>
+            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-violet-50 text-violet-700">
+              {i.source === "patient" ? "Patient" : i.source === "governance" ? "Governance" : "Peer"}
+            </span>
+            {i.polarity === "positive"
+              ? (i.commendation_category ? <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700">{i.commendation_category}</span> : null)
+              : <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${SEV_PILL[i.severity ?? ""] ?? "bg-stone-100 text-stone-700"}`}>{i.severity ?? "\u2014"}</span>}
             <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${STATUS_PILL[i.status] ?? "bg-stone-100 text-stone-700"}`}>
               {i.status}
             </span>
-            <span className="text-[11px] text-stone-500 px-2 py-0.5 rounded-full bg-stone-50">
-              {CATEGORY_LABEL[i.category] ?? i.category}
-            </span>
+            {i.polarity !== "positive" && (
+              <span className="text-[11px] text-stone-500 px-2 py-0.5 rounded-full bg-stone-50">
+                {CATEGORY_LABEL[i.category ?? ""] ?? i.category}
+              </span>
+            )}
+            {i.patient_rating != null && <span className="text-[11px] text-amber-700 px-2 py-0.5 rounded-full bg-amber-50">{"\u2605"} {i.patient_rating}/5</span>}
             {i.hospital_code && (
               <span className="text-[11px] text-stone-500 px-2 py-0.5 rounded-full bg-stone-50">{i.hospital_code}</span>
             )}
           </div>
 
           <h1 className={`text-lg font-semibold ${isRetracted ? "line-through text-stone-500" : ""}`}>
-            Report on <Link href={`/physicians/${i.target_physician_id}`} className="text-brand hover:underline">{i.target_physician_name}</Link>
+            {i.polarity === "positive" ? "Feedback on" : "Report on"} <Link href={`/physicians/${i.target_physician_id}`} className="text-brand hover:underline">{i.target_physician_name}</Link>
           </h1>
           <div className="text-xs text-stone-500 mt-1">
             Submitted {fmtTime(i.submitted_at)} ·{" "}
@@ -340,7 +354,7 @@ function Inner() {
         </section>
 
         <div className="text-[11px] text-stone-400 mt-4 text-center">
-          Incident {i.id}
+          Feedback {i.id}
         </div>
       </main>
     </>
