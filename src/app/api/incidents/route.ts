@@ -16,6 +16,12 @@ const CATEGORIES = new Set([
   "documentation", "etiquette", "vendor_compliance", "other",
 ]);
 const SEVERITIES = new Set(["low", "medium", "high", "critical"]);
+const SOURCES = new Set(["patient", "peer"]); // governance (SGO) arrives in Phase 2
+const POLARITIES = new Set(["positive", "negative"]);
+const COMMENDATIONS = new Set([
+  "Clinical Excellence", "Patient Experience", "Teamwork & Collaboration",
+  "Teaching & Mentorship", "Going Above & Beyond",
+]);
 
 interface IncidentListRow {
   id: string;
@@ -27,8 +33,12 @@ interface IncidentListRow {
   anonymous_flag: boolean;
   submitter_label: string;  // either submitter_position_at_time + email OR "Anonymous"
   hospital_code: string | null;
-  category: string;
-  severity: string;
+  category: string | null;
+  severity: string | null;
+  polarity: string;
+  source: string;
+  commendation_category: string | null;
+  patient_rating: number | null;
   narrative_preview: string;
   status: string;
   retracted_at: string | null;
@@ -103,6 +113,10 @@ export async function GET(req: NextRequest) {
         h.code AS hospital_code,
         i.category,
         i.severity,
+        i.polarity,
+        i.source,
+        i.commendation_category,
+        i.patient_rating,
         i.narrative,
         i.status,
         i.retracted_at,
@@ -147,8 +161,12 @@ export async function GET(req: NextRequest) {
         ? `${(r.submitter_position_at_time as string) ?? ""}${r.submitter_email ? ` · ${r.submitter_email}` : ""}`
         : "Anonymous",
       hospital_code: (r.hospital_code as string | null) ?? null,
-      category: r.category as string,
-      severity: r.severity as string,
+      category: (r.category as string | null) ?? null,
+      severity: (r.severity as string | null) ?? null,
+      polarity: (r.polarity as string) ?? "negative",
+      source: (r.source as string) ?? "peer",
+      commendation_category: (r.commendation_category as string | null) ?? null,
+      patient_rating: r.patient_rating == null ? null : Number(r.patient_rating),
       narrative_preview: ((r.narrative as string) ?? "").slice(0, 240),
       status: r.status as string,
       retracted_at: (r.retracted_at as string | null) ?? null,
@@ -198,7 +216,16 @@ export async function POST(req: NextRequest) {
     evidence_urls,
     attestation,
     hospital_id: bodyHospitalId,   // v3.0d — required from step-3 picker
+    polarity: bodyPolarity,
+    source: bodySource,
+    commendation_category: bodyCommendation,
+    patient_rating: bodyRating,
+    patient_ref: bodyPatientRef,
   } = body ?? {};
+
+  // Feedback PRD: polarity + source drive which fields are required.
+  const polarity = typeof bodyPolarity === "string" && POLARITIES.has(bodyPolarity) ? bodyPolarity : "negative";
+  const source = typeof bodySource === "string" && SOURCES.has(bodySource) ? bodySource : "peer";
 
   if (!attestation) {
     return NextResponse.json({ ok: false, error: "attestation required" }, { status: 400, headers: NO_STORE });
@@ -206,12 +233,35 @@ export async function POST(req: NextRequest) {
   if (!target_physician_id || !UUID_RE.test(target_physician_id)) {
     return NextResponse.json({ ok: false, error: "valid target_physician_id required" }, { status: 400, headers: NO_STORE });
   }
-  if (!category || !CATEGORIES.has(category)) {
-    return NextResponse.json({ ok: false, error: "category must be one of the 8 allowed" }, { status: 400, headers: NO_STORE });
+  // Negative rows carry severity + category; positive rows carry a commendation category instead.
+  let commendationValue: string | null = null;
+  let severityValue: string | null = null;
+  let categoryValue: string | null = null;
+  if (polarity === "negative") {
+    if (!category || !CATEGORIES.has(category)) {
+      return NextResponse.json({ ok: false, error: "category must be one of the 8 allowed" }, { status: 400, headers: NO_STORE });
+    }
+    if (!severity || !SEVERITIES.has(severity)) {
+      return NextResponse.json({ ok: false, error: "severity must be low|medium|high|critical" }, { status: 400, headers: NO_STORE });
+    }
+    severityValue = severity;
+    categoryValue = category;
+  } else {
+    if (!bodyCommendation || !COMMENDATIONS.has(bodyCommendation)) {
+      return NextResponse.json({ ok: false, error: "commendation_category required for positive feedback" }, { status: 400, headers: NO_STORE });
+    }
+    commendationValue = bodyCommendation;
   }
-  if (!severity || !SEVERITIES.has(severity)) {
-    return NextResponse.json({ ok: false, error: "severity must be low|medium|high|critical" }, { status: 400, headers: NO_STORE });
+  let ratingValue: number | null = null;
+  if (source === "patient" && bodyRating != null && bodyRating !== "") {
+    const n = Number(bodyRating);
+    if (!Number.isInteger(n) || n < 1 || n > 5) {
+      return NextResponse.json({ ok: false, error: "patient_rating must be an integer 1-5" }, { status: 400, headers: NO_STORE });
+    }
+    ratingValue = n;
   }
+  const patientRefValue: string | null = (source === "patient" && typeof bodyPatientRef === "string" && bodyPatientRef.trim())
+    ? bodyPatientRef.trim() : null;
   if (!narrative || typeof narrative !== "string" || !narrative.trim()) {
     return NextResponse.json({ ok: false, error: "narrative required" }, { status: 400, headers: NO_STORE });
   }
@@ -222,6 +272,13 @@ export async function POST(req: NextRequest) {
   const url = process.env.DATABASE_URL;
   if (!url) return NextResponse.json({ ok: false, error: "DATABASE_URL not configured" }, { status: 500, headers: NO_STORE });
   const sql = neon(url);
+
+  // Feedback PRD #9/#17: only admins (super_admin / SMH / HR) file from this surface.
+  const callerRows = (await sql`SELECT is_super_admin, is_site_medical_head, is_hr FROM profiles_with_roles WHERE id = ${actor.profileId}::uuid LIMIT 1`) as Array<{ is_super_admin: boolean; is_site_medical_head: boolean; is_hr: boolean }>;
+  const caller = callerRows[0];
+  if (!caller || !(caller.is_super_admin || caller.is_site_medical_head || caller.is_hr)) {
+    return NextResponse.json({ ok: false, error: "Not permitted to file feedback from this surface" }, { status: 403, headers: NO_STORE });
+  }
 
   // v3.0d: hospital_id is required on submit (PRD §D.2). Resolve + validate
   // against the target physician's active engagements.
@@ -268,7 +325,8 @@ export async function POST(req: NextRequest) {
   const inserted = (await sql`
     INSERT INTO incidents (
       target_physician_id, submitted_from_ip, submitter_user_id, submitter_position_at_time,
-      anonymous_flag, hospital_id, category, severity, narrative, evidence_urls
+      anonymous_flag, hospital_id, polarity, source, category, severity,
+      commendation_category, patient_rating, patient_ref, narrative, evidence_urls
     ) VALUES (
       ${target_physician_id}::uuid,
       ${ip},
@@ -276,12 +334,17 @@ export async function POST(req: NextRequest) {
       ${actor.position_label},
       ${Boolean(anonymous_flag)},
       ${ph[0].hospital_id}::uuid,
-      ${category},
-      ${severity},
+      ${polarity},
+      ${source},
+      ${categoryValue},
+      ${severityValue},
+      ${commendationValue},
+      ${ratingValue},
+      ${patientRefValue},
       ${String(narrative).trim()},
       ${urls.length > 0 ? urls : null}
     )
-    RETURNING id::text AS id, target_physician_id::text AS target_physician_id, submitted_at, anonymous_flag, category, severity, status
+    RETURNING id::text AS id, target_physician_id::text AS target_physician_id, submitted_at, anonymous_flag, polarity, source, category, severity, status
   `) as Array<Record<string, unknown>>;
 
   // Audit row — captures the REAL submitter identity even for anonymous incidents
@@ -297,8 +360,11 @@ export async function POST(req: NextRequest) {
         physician_id: target_physician_id,
         target_physician_name: ph[0].full_name,
         anonymous_flag: Boolean(anonymous_flag),
-        category,
-        severity,
+        polarity,
+        source,
+        category: categoryValue,
+        severity: severityValue,
+        commendation_category: commendationValue,
         submitter_email: actor.email,
         submitter_position: actor.position_label,
       })}::jsonb
@@ -309,6 +375,8 @@ export async function POST(req: NextRequest) {
   // the post-submit notification path is exercised + observable.
   console.log(JSON.stringify({
     epi_email_stub: "incident_notification",
+    polarity,
+    source,
     incident_id: inserted[0].id,
     target_physician_id,
     target_physician_email: ph[0].email,
