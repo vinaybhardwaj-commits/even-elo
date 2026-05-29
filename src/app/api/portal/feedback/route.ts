@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { neon } from "@neondatabase/serverless";
 import { getCurrentPhysician } from "@/lib/physician-auth";
+import { sendEmail, wrapHtml } from "@/lib/email";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -54,10 +55,10 @@ export async function POST(req: NextRequest) {
   const sql = neon(url);
 
   const tgt = (await sql`
-    SELECT p.id::text AS id, p.full_name,
+    SELECT p.id::text AS id, p.full_name, p.email,
       COALESCE((SELECT json_agg(e.hospital_id::text ORDER BY e.start_date DESC) FROM physician_engagements e WHERE e.physician_id = p.id AND e.status='active'), '[]'::json) AS active_hospital_ids
     FROM physicians p WHERE p.id = ${target_physician_id}::uuid AND p.current_status = 'active'
-  `) as Array<{ id: string; full_name: string; active_hospital_ids: string[] }>;
+  `) as Array<{ id: string; full_name: string; email: string | null; active_hospital_ids: string[] }>;
   if (tgt.length === 0) return NextResponse.json({ ok: false, error: "Target physician not found or not active." }, { status: 404, headers: NO_STORE });
   const hospIds = Array.isArray(tgt[0].active_hospital_ids) ? tgt[0].active_hospital_ids : [];
   if (hospIds.length === 0) return NextResponse.json({ ok: false, error: "Target physician has no active engagement to attach this to." }, { status: 400, headers: NO_STORE });
@@ -81,6 +82,17 @@ export async function POST(req: NextRequest) {
   await sql`INSERT INTO audit_log_v2 (action, entity_type, entity_id, after_json)
             VALUES ('create', 'incident', ${inserted[0].id as string},
             ${JSON.stringify({ via: "portal_peer", source: "peer", polarity, anonymous_flag: anon, target_physician_id, submitter_physician_id: me.physicianId, submitter_name: me.full_name })}::jsonb)`;
+
+  // N.2 — notify the target physician of new peer feedback. Anonymity-safe: never
+  // names the reporter or includes the narrative (the doctor signs in for details).
+  // Best-effort, gated by EMAIL_SENDING_ENABLED.
+  if (tgt[0].email) {
+    void sendEmail({
+      to: tgt[0].email as string,
+      subject: `New ${polarity === "positive" ? "feedback" : "report"} on your Even profile`,
+      html: wrapHtml("New feedback recorded", `<p>${polarity === "positive" ? "Positive feedback" : "A report"} has been recorded on your physician profile by a colleague.</p><p>Sign in to your physician portal to view the details.</p>`),
+    }).catch(() => undefined);
+  }
 
   return NextResponse.json({ ok: true, incident: inserted[0] }, { headers: NO_STORE });
 }

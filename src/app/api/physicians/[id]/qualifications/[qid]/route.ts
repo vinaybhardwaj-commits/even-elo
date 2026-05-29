@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { neon } from "@neondatabase/serverless";
 import { actorFromRequest } from "@/lib/auth";
+import { sendEmail, wrapHtml } from "@/lib/email";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -87,6 +88,20 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
       ${JSON.stringify({ ...after[0], physician_id: id })}::jsonb
     )
   `;
+  // N.2 — if this PATCH just transitioned the qualification to verified, notify the
+  // physician. Their own degree name is not sensitive; no reviewer identity included.
+  if (body.verified === true && !(b.verified as boolean)) {
+    const ph = (await sql`SELECT email, full_name FROM physicians WHERE id = ${id}::uuid LIMIT 1`) as Array<{ email: string | null; full_name: string }>;
+    if (ph.length > 0 && ph[0].email) {
+      const deg = String(merged.degree ?? "");
+      void sendEmail({
+        to: ph[0].email,
+        subject: "A qualification on your Even profile was verified",
+        html: wrapHtml("Qualification verified", `<p>Your qualification${deg ? ` <strong>${deg}</strong>` : ""} has been verified on your Even physician profile.</p><p>Sign in to your physician portal to review your verified credentials.</p>`),
+      }).catch(() => undefined);
+    }
+  }
+
   return NextResponse.json({ ok: true, qualification: after[0] }, { headers: NO_STORE });
 }
 
