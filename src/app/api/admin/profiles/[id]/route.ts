@@ -42,7 +42,8 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
            pr.is_super_admin, pr.is_sgc_member, pr.is_hr, pr.is_site_medical_head,
            pr.position_id::text AS position_id, pos.position_name AS position_label,
            pr.hospital_id::text AS hospital_id, h.code AS hospital_code, h.name AS hospital_name,
-           pr.last_login_at, pr.created_at
+           pr.last_login_at, pr.created_at,
+           (SELECT base.must_change_pin FROM profiles base WHERE base.id = pr.id) AS must_change_pin
     FROM profiles_with_roles pr
     JOIN positions pos ON pos.id = pr.position_id
     LEFT JOIN hospitals h ON h.id = pr.hospital_id

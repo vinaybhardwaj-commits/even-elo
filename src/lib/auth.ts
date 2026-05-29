@@ -30,6 +30,7 @@ export interface JWTPayload {
   is_sgc_member: boolean;
   is_hr: boolean;
   is_site_medical_head: boolean;
+  must_change_pin?: boolean;
 }
 
 export async function createToken(payload: JWTPayload): Promise<string> {

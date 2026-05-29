@@ -67,7 +67,8 @@ export async function POST(request: NextRequest) {
         p.is_super_admin,
         p.is_sgc_member,
         p.is_hr,
-        p.is_site_medical_head
+        p.is_site_medical_head,
+        (SELECT base.must_change_pin FROM profiles base WHERE base.id = p.id) AS must_change_pin
       FROM profiles_with_roles p
       JOIN positions pos ON pos.id = p.position_id
       JOIN hospitals h   ON h.id   = p.hospital_id
@@ -101,6 +102,12 @@ export async function POST(request: NextRequest) {
         { status: 403 },
       );
     }
+    if (p.status === "deactivated") {
+      return NextResponse.json(
+        { ok: false, error: "Your account has been deactivated." },
+        { status: 403 },
+      );
+    }
 
     const ok = await verifyPin(String(pin), p.password_hash as string);
     if (!ok) {
@@ -125,6 +132,7 @@ export async function POST(request: NextRequest) {
       is_sgc_member: Boolean(p.is_sgc_member),
       is_hr: Boolean(p.is_hr),
       is_site_medical_head: Boolean(p.is_site_medical_head),
+      must_change_pin: Boolean(p.must_change_pin),
     });
     await setSessionCookie(token);
 

@@ -1,77 +1,37 @@
 import { NextRequest, NextResponse } from "next/server";
 import { neon } from "@neondatabase/serverless";
-import {
-  getCurrentUser,
-  hashPin,
-  verifyPin,
-  isValidPin,
-} from "@/lib/auth";
+import { getCurrentUser, createToken, setSessionCookie, hashPin, isValidPin } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
-export const revalidate = 0;
-export const fetchCache = "force-no-store";
 export const runtime = "nodejs";
+const NO_STORE = { "Cache-Control": "no-store, max-age=0" };
 
-export async function POST(request: NextRequest) {
-  try {
-    const user = await getCurrentUser();
-    if (!user) {
-      return NextResponse.json(
-        { ok: false, error: "Not authenticated" },
-        { status: 401 },
-      );
-    }
-    const body = await request.json();
-    const { old_pin, new_pin } = body ?? {};
-    if (!old_pin || !new_pin) {
-      return NextResponse.json(
-        { ok: false, error: "old_pin and new_pin are required" },
-        { status: 400 },
-      );
-    }
-    if (!isValidPin(new_pin)) {
-      return NextResponse.json(
-        { ok: false, error: "New PIN must be 4 digits" },
-        { status: 400 },
-      );
-    }
+/** POST /api/auth/change-pin — user sets a new PIN, clears must_change_pin, re-issues the session. */
+export async function POST(req: NextRequest) {
+  const u = await getCurrentUser();
+  if (!u) return NextResponse.json({ ok: false, error: "Unauthenticated" }, { status: 401, headers: NO_STORE });
 
-    const url = process.env.DATABASE_URL;
-    if (!url) {
-      return NextResponse.json(
-        { ok: false, error: "DATABASE_URL not configured" },
-        { status: 500 },
-      );
-    }
-    const sql = neon(url);
+  const body = await req.json().catch(() => ({}));
+  const newPin = String(body?.new_pin ?? "");
+  if (!isValidPin(newPin)) return NextResponse.json({ ok: false, error: "PIN must be exactly 4 digits" }, { status: 400, headers: NO_STORE });
 
-    const rows = (await sql`
-      SELECT password_hash FROM profiles WHERE id = ${user.profileId}::uuid LIMIT 1
-    `) as Array<{ password_hash: string }>;
-    if (rows.length === 0) {
-      return NextResponse.json(
-        { ok: false, error: "Profile not found" },
-        { status: 404 },
-      );
-    }
-    const ok = await verifyPin(String(old_pin), rows[0].password_hash);
-    if (!ok) {
-      return NextResponse.json(
-        { ok: false, error: "Old PIN incorrect" },
-        { status: 401 },
-      );
-    }
+  const url = process.env.DATABASE_URL;
+  if (!url) return NextResponse.json({ ok: false, error: "DATABASE_URL not configured" }, { status: 500, headers: NO_STORE });
+  const sql = neon(url);
 
-    const newHash = await hashPin(String(new_pin));
-    await sql`UPDATE profiles SET password_hash = ${newHash}, updated_at = NOW() WHERE id = ${user.profileId}::uuid`;
-    return NextResponse.json(
-      { ok: true },
-      { headers: { "Cache-Control": "no-store, max-age=0" } },
-    );
-  } catch (e) {
-    return NextResponse.json(
-      { ok: false, error: e instanceof Error ? e.message : String(e) },
-      { status: 500 },
-    );
-  }
+  const hash = await hashPin(newPin);
+  await sql`UPDATE profiles SET password_hash = ${hash}, must_change_pin = false, updated_at = NOW() WHERE id = ${u.profileId}::uuid`;
+  await sql`INSERT INTO audit_log_v2 (actor_user_id, action, entity_type, entity_id, after_json)
+            VALUES (${u.profileId}::uuid, 'pin_change_self', 'profile', ${u.profileId}, ${JSON.stringify({ must_change_pin: false })}::jsonb)`;
+
+  const token = await createToken({
+    profileId: u.profileId, email: u.email, full_name: u.full_name,
+    position_id: u.position_id, position_label: u.position_label,
+    hospital_id: u.hospital_id, hospital_code: u.hospital_code, status: u.status,
+    is_super_admin: u.is_super_admin, is_sgc_member: u.is_sgc_member, is_hr: u.is_hr,
+    is_site_medical_head: u.is_site_medical_head, must_change_pin: false,
+  });
+  await setSessionCookie(token);
+
+  return NextResponse.json({ ok: true }, { headers: NO_STORE });
 }

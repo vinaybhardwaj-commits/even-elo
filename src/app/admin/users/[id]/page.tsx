@@ -21,6 +21,7 @@ interface Profile {
   hospital_name: string | null;
   last_login_at: string | null;
   created_at: string;
+  must_change_pin?: boolean;
 }
 interface RoleRow { role: string; hospital_code: string }
 interface AuditRow { id: number; action: string; entity_type: string; created_at: string; actor_email: string | null }
@@ -56,6 +57,7 @@ export default function UserDetailPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [resetResult, setResetResult] = useState<string | null>(null);
 
   // identity edit state
   const [fullName, setFullName] = useState("");
@@ -102,6 +104,18 @@ export default function UserDetailPage() {
     try {
       await fetch(`/api/admin/profiles/${id}/roles`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ hospital_code, role, granted: !on }) });
     } catch { load(); }
+  }
+
+  async function resetPin() {
+    const pin = String(Math.floor(1000 + Math.random() * 9000));
+    setBusy(true);
+    try {
+      const r = await fetch(`/api/admin/profiles/${id}/reset-pin`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ pin }) });
+      const j = await r.json();
+      if (!r.ok || !j.ok) { alert(j.error || "Reset failed"); return; }
+      setResetResult(pin);
+      load();
+    } finally { setBusy(false); }
   }
 
   if (loading) return (<><TopNav /><main className="max-w-[1000px] mx-auto px-8 py-8 text-sm text-stone-500">Loading…</main></>);
@@ -190,7 +204,17 @@ export default function UserDetailPage() {
                 <input type="checkbox" checked={profile.is_super_admin} disabled={busy} onChange={(e) => patch({ is_super_admin: e.target.checked })} className="accent-teal-600" />
                 Super Admin (network-wide)
               </label>
-              <div className="text-[11px] text-stone-400">PIN reset arrives in the next sprint (B2.3).</div>
+              <div className="pt-2 border-t border-stone-100">
+                <button disabled={busy} onClick={resetPin} className="text-sm text-brand font-medium hover:underline disabled:opacity-50">Reset PIN</button>
+                {resetResult && (
+                  <div className="mt-1.5 text-xs bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-amber-800">
+                    New temporary PIN: <span className="num font-semibold">{resetResult}</span> — share it with the user. They'll be prompted to set their own on next login.
+                  </div>
+                )}
+                {profile.must_change_pin && !resetResult && (
+                  <div className="mt-1.5 text-[11px] text-amber-700">This user must change their PIN on next login.</div>
+                )}
+              </div>
             </div>
           </section>
         </div>

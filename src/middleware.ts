@@ -40,6 +40,7 @@ interface MiddlewarePayload {
   status?: unknown;
   is_super_admin?: unknown;
   is_sgc_member?: unknown;
+  must_change_pin?: unknown;
 }
 
 export async function middleware(request: NextRequest) {
@@ -100,6 +101,19 @@ export async function middleware(request: NextRequest) {
         );
       }
       return NextResponse.redirect(new URL("/auth/pending", request.url));
+    }
+
+    // Users Module #11 — force first-login PIN change. Exempt the change-pin
+    // page + all /api/auth/* so the user can complete it (no lock-out).
+    if (
+      payload.must_change_pin === true &&
+      pathname !== "/auth/change-pin" &&
+      !pathname.startsWith("/api/auth/")
+    ) {
+      if (pathname.startsWith("/api/")) {
+        return NextResponse.json({ ok: false, error: "PIN change required" }, { status: 403 });
+      }
+      return NextResponse.redirect(new URL("/auth/change-pin", request.url));
     }
 
     // /surgical-elo gated to super_admin OR sgc_member (lock-down decision)
