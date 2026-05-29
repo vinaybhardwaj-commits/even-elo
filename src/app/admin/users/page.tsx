@@ -219,7 +219,7 @@ export default function UsersPage() {
                         {initials(r.full_name)}
                       </span>
                       <div>
-                        <div className="text-sm font-medium text-stone-900">{r.full_name}</div>
+                        <Link href={`/admin/users/${r.id}`} className="text-sm font-medium text-stone-900 hover:text-brand hover:underline">{r.full_name}</Link>
                         <div className="text-xs text-stone-500">{r.email}</div>
                       </div>
                     </div>

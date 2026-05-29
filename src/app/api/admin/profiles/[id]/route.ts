@@ -26,6 +26,46 @@ const FLAG_TO_ROLE: Record<string, string> = {
  * Per-hospital granular grants come in v3.0c via the inline-expand 4x3 grid.
  * is_super_admin stays as a column (network-scoped).
  */
+export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const { id } = await ctx.params;
+  if (!UUID_RE.test(id)) return NextResponse.json({ ok: false, error: "invalid id" }, { status: 400, headers: NO_STORE });
+  let actor;
+  try { actor = await actorFromRequest(); } catch { return NextResponse.json({ ok: false, error: "Unauthenticated" }, { status: 401, headers: NO_STORE }); }
+  const url = process.env.DATABASE_URL;
+  if (!url) return NextResponse.json({ ok: false, error: "DATABASE_URL not configured" }, { status: 500, headers: NO_STORE });
+  const sql = neon(url);
+  const meRows = (await sql`SELECT is_super_admin FROM profiles_with_roles WHERE id = ${actor.profileId}::uuid LIMIT 1`) as Array<{ is_super_admin: boolean }>;
+  if (meRows.length === 0 || !meRows[0].is_super_admin) return NextResponse.json({ ok: false, error: "Super admin only" }, { status: 403, headers: NO_STORE });
+
+  const rows = (await sql`
+    SELECT pr.id::text AS id, pr.email, pr.full_name, pr.status,
+           pr.is_super_admin, pr.is_sgc_member, pr.is_hr, pr.is_site_medical_head,
+           pr.position_id::text AS position_id, pos.position_name AS position_label,
+           pr.hospital_id::text AS hospital_id, h.code AS hospital_code, h.name AS hospital_name,
+           pr.last_login_at, pr.created_at
+    FROM profiles_with_roles pr
+    JOIN positions pos ON pos.id = pr.position_id
+    LEFT JOIN hospitals h ON h.id = pr.hospital_id
+    WHERE pr.id = ${id}::uuid
+  `) as Array<Record<string, unknown>>;
+  if (rows.length === 0) return NextResponse.json({ ok: false, error: "not found" }, { status: 404, headers: NO_STORE });
+
+  const roles = (await sql`
+    SELECT r.role, h.code AS hospital_code
+    FROM profile_hospital_roles r JOIN hospitals h ON h.id = r.hospital_id
+    WHERE r.profile_id = ${id}::uuid ORDER BY h.code, r.role
+  `) as Array<Record<string, unknown>>;
+
+  const audit = (await sql`
+    SELECT a.id, a.action, a.entity_type, a.created_at, p.email AS actor_email
+    FROM audit_log_v2 a LEFT JOIN profiles p ON p.id = a.actor_user_id
+    WHERE a.entity_id = ${id} AND a.entity_type IN ('profile','profile_hospital_role')
+    ORDER BY a.created_at DESC LIMIT 20
+  `) as Array<Record<string, unknown>>;
+
+  return NextResponse.json({ ok: true, profile: rows[0], roles, audit }, { headers: NO_STORE });
+}
+
 export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
   if (!UUID_RE.test(id)) return NextResponse.json({ ok: false, error: "invalid id" }, { status: 400, headers: NO_STORE });
@@ -60,13 +100,29 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     return NextResponse.json({ ok: false, error: "invalid status" }, { status: 400, headers: NO_STORE });
   }
 
-  // 1. Direct profiles column updates (status + is_super_admin)
+  // 1. Direct profiles column updates (status + is_super_admin + identity edits)
   const nextStatus = body.status ?? b.status;
   const nextSuper  = body.is_super_admin ?? b.is_super_admin;
+  let nextPositionId = b.position_id as string;
+  if (typeof body.position_name === "string" && body.position_name.trim()) {
+    const pr = (await sql`SELECT id::text AS id FROM positions WHERE position_name = ${body.position_name} LIMIT 1`) as Array<{ id: string }>;
+    if (pr.length === 0) return NextResponse.json({ ok: false, error: `Position '${body.position_name}' not found` }, { status: 400, headers: NO_STORE });
+    nextPositionId = pr[0].id;
+  }
+  let nextHospitalId = b.hospital_id as string;
+  if (typeof body.hospital_code === "string" && body.hospital_code.trim()) {
+    const hr = (await sql`SELECT id::text AS id FROM hospitals WHERE code = ${body.hospital_code} AND is_active = true LIMIT 1`) as Array<{ id: string }>;
+    if (hr.length === 0) return NextResponse.json({ ok: false, error: `Hospital ${body.hospital_code} not active` }, { status: 400, headers: NO_STORE });
+    nextHospitalId = hr[0].id;
+  }
+  const nextFullName = (typeof body.full_name === "string" && body.full_name.trim()) ? body.full_name.trim() : (b.full_name as string);
   await sql`
     UPDATE profiles SET
       status         = ${nextStatus as string},
       is_super_admin = ${Boolean(nextSuper)},
+      full_name      = ${nextFullName},
+      position_id    = ${nextPositionId}::uuid,
+      hospital_id    = ${nextHospitalId}::uuid,
       updated_at     = NOW()
     WHERE id = ${id}::uuid
   `;
