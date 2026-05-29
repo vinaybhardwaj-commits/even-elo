@@ -6,16 +6,30 @@ export default function PortalLogin() {
   const [pin, setPin] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [requesting, setRequesting] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    setError(null); setSubmitting(true);
+    setError(null); setNotice(null); setSubmitting(true);
     try {
       const r = await fetch("/api/portal/auth/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: email.trim().toLowerCase(), pin }) });
       const j = await r.json();
       if (!r.ok || !j.ok) { setError(j.error || "Login failed."); setSubmitting(false); return; }
       window.location.href = j.must_change_pin ? "/portal/set-pin" : "/portal";
     } catch { setError("Network error."); setSubmitting(false); }
+  }
+
+  async function requestPin() {
+    setError(null); setNotice(null);
+    if (!email.trim() || !email.includes("@")) { setError("Enter your hospital email above, then tap ‘Email me a PIN’."); return; }
+    setRequesting(true);
+    try {
+      const r = await fetch("/api/portal/auth/request-pin", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: email.trim().toLowerCase() }) });
+      const j = await r.json();
+      setNotice(j.message || "If an account exists for that email, a PIN has been sent to it.");
+    } catch { setError("Network error."); }
+    setRequesting(false);
   }
 
   return (
@@ -36,8 +50,15 @@ export default function PortalLogin() {
             <input type="password" inputMode="numeric" value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 4))} className="w-full px-3 py-2 border border-stone-200 rounded-lg text-sm num outline-none focus:border-teal-600" placeholder="****" />
           </div>
           {error && <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</div>}
+          {notice && <div className="text-sm text-teal-800 bg-teal-50 border border-teal-200 rounded-lg px-3 py-2">{notice}</div>}
           <button type="submit" disabled={submitting || !email.trim() || pin.length !== 4} className="w-full bg-teal-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-teal-700 disabled:opacity-50">
             {submitting ? "Signing in..." : "Sign in"}
+          </button>
+        </div>
+        <div className="mt-4 pt-4 border-t border-stone-100 text-center">
+          <p className="text-xs text-stone-500 mb-1">First time here, or forgot your PIN?</p>
+          <button type="button" onClick={requestPin} disabled={requesting} className="text-sm font-medium text-teal-700 hover:text-teal-800 disabled:opacity-50">
+            {requesting ? "Sending…" : "Email me a PIN"}
           </button>
         </div>
       </form>

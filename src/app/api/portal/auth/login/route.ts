@@ -21,9 +21,9 @@ export async function POST(request: NextRequest) {
   if (rows.length === 0) return NextResponse.json({ ok: false, error: "No portal account found with this email." }, { status: 401, headers: NO_STORE });
   const p = rows[0];
 
-  if (!p.portal_access) return NextResponse.json({ ok: false, error: "Portal access isn't enabled for this account. Ask an administrator to enable it." }, { status: 403, headers: NO_STORE });
+  if (!p.portal_access) return NextResponse.json({ ok: false, error: "No PIN set for this account yet. Use \u2018Email me a PIN\u2019 below to get one." }, { status: 403, headers: NO_STORE });
   if (p.current_status !== "active") return NextResponse.json({ ok: false, error: "This account is not active." }, { status: 403, headers: NO_STORE });
-  if (!p.portal_pin_hash) return NextResponse.json({ ok: false, error: "No PIN set. Ask an administrator to set a temporary PIN." }, { status: 403, headers: NO_STORE });
+  if (!p.portal_pin_hash) return NextResponse.json({ ok: false, error: "No PIN set for this account yet. Use \u2018Email me a PIN\u2019 below to get one." }, { status: 403, headers: NO_STORE });
 
   const ok = await verifyPortalPin(String(pin), p.portal_pin_hash as string);
   if (!ok) return NextResponse.json({ ok: false, error: "Incorrect PIN." }, { status: 401, headers: NO_STORE });
