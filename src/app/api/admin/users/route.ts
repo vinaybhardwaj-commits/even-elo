@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { neon } from "@neondatabase/serverless";
 import bcrypt from "bcryptjs";
 import { actorFromRequest } from "@/lib/auth";
+import { sendEmail, wrapHtml } from "@/lib/email";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -77,5 +78,25 @@ export async function POST(req: NextRequest) {
     VALUES (${actor.profileId}::uuid, 'user_create', 'profile', ${newId},
       ${JSON.stringify({ email: lowerEmail, full_name, position_name, hospital_code, status: "active", is_super_admin: Boolean(is_super_admin), granted_roles: grantedRoles, must_change_pin: true, created_via: "/admin/users" })}::jsonb)
   `;
+  // N.3 — invite email to the new user: their login (email) + temporary PIN
+  // (force-changed on first sign-in via must_change_pin). Gated by EMAIL_SENDING_ENABLED.
+  {
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://even-elo.vercel.app";
+    void sendEmail({
+      to: lowerEmail,
+      subject: "You've been added to the Even Physician Index",
+      html: wrapHtml("Welcome to the Even Physician Index", `
+        <p>Hi ${full_name.trim()},</p>
+        <p>An account has been created for you on the Even Physician Index.</p>
+        <p style="margin:16px 0;padding:12px 16px;background:#f5f5f4;border-radius:8px;">
+          <strong>Sign in:</strong> <a href="${appUrl}" style="color:#0f766e;">${appUrl}</a><br>
+          <strong>Email:</strong> ${lowerEmail}<br>
+          <strong>Temporary PIN:</strong> <code style="font-size:15px;">${pin}</code>
+        </p>
+        <p>For your security, you'll be asked to set a new PIN the first time you sign in. This temporary PIN works only until then.</p>
+        <p>If you weren't expecting this, please contact your administrator.</p>`),
+    }).catch(() => undefined);
+  }
+
   return NextResponse.json({ ok: true, profile: inserted[0] }, { headers: NO_STORE });
 }
