@@ -84,7 +84,7 @@ export async function POST(req: NextRequest) {
            (registration_expiry - CURRENT_DATE) AS days_remaining
     FROM physicians
     WHERE current_status = 'active' AND registration_expiry IS NOT NULL
-      AND registration_expiry <= CURRENT_DATE + ${windowDays}
+      AND registration_expiry <= CURRENT_DATE + (${windowDays})::int
     ORDER BY registration_expiry ASC
   `) as Array<{ full_name: string; registration_council: string | null; registration_number: string | null; expiry: string; days_remaining: number }>;
 
@@ -92,7 +92,7 @@ export async function POST(req: NextRequest) {
     SELECT full_name, indemnity_expiry::text AS expiry, (indemnity_expiry - CURRENT_DATE) AS days_remaining
     FROM physicians
     WHERE current_status = 'active' AND indemnity_expiry IS NOT NULL
-      AND indemnity_expiry <= CURRENT_DATE + ${windowDays}
+      AND indemnity_expiry <= CURRENT_DATE + (${windowDays})::int
     ORDER BY indemnity_expiry ASC
   `) as Array<{ full_name: string; expiry: string; days_remaining: number }>;
 
@@ -102,7 +102,7 @@ export async function POST(req: NextRequest) {
     FROM privileges pr JOIN physicians ph ON ph.id = pr.physician_id
     WHERE pr.expires_at IS NOT NULL AND COALESCE(pr.is_core, false) = false
       AND pr.withdrawn_date IS NULL
-      AND pr.expires_at <= CURRENT_DATE + ${windowDays}
+      AND pr.expires_at <= CURRENT_DATE + (${windowDays})::int
     ORDER BY pr.expires_at ASC
   `) as Array<{ full_name: string; procedure_or_specialty: string; expiry: string; days_remaining: number }>;
 
