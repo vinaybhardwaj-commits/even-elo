@@ -151,7 +151,9 @@ export default function PortalHome() {
     } catch { setResErr("Network error."); setResBusy(false); }
   }
 
-  const TABS: Array<[typeof tab, string]> = [["overview", "Overview"], ["qualifications", "Qualifications"], ["privileges", "Current Privileges"], ["report", "Report feedback"], ["aboutme", "About me"], ["resign", "Resign"]];
+  // NOTE: "Resign" tab intentionally hidden for all doctors (stakeholder decision — portal-initiated
+// resignations withdrawn). The resign panel + submitResign handler remain in the code, just unreachable.
+const TABS: Array<[typeof tab, string]> = [["overview", "Overview"], ["qualifications", "Qualifications"], ["privileges", "Current Privileges"], ["report", "Report feedback"], ["aboutme", "About me"]];
   const SOON: string[] = [];
 
   return (
