@@ -22,7 +22,7 @@ export async function GET() {
   if (rows.length === 0) return NextResponse.json({ ok: false, error: "not found" }, { status: 404, headers: NO_STORE });
 
   const engagements = (await sql`
-    SELECT e.id::text AS id, e.category, e.status, e.start_date, h.code AS hospital_code, h.name AS hospital_name
+    SELECT e.id::text AS id, e.hospital_id::text AS hospital_id, e.category, e.status, e.start_date, h.code AS hospital_code, h.name AS hospital_name
     FROM physician_engagements e JOIN hospitals h ON h.id = e.hospital_id
     WHERE e.physician_id = ${me.physicianId}::uuid
     ORDER BY e.start_date DESC NULLS LAST

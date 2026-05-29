@@ -3,9 +3,12 @@
 import { useEffect, useState } from "react";
 
 interface Phys { id: string; full_name: string; preferred_name: string | null; primary_specialty: string | null; registration_number: string | null; registration_council: string | null; registration_expiry: string | null; email: string | null; phone: string | null; date_joined_network: string | null; current_status: string }
-interface Eng { id: string; category: string; status: string; start_date: string | null; hospital_code: string; hospital_name: string }
+interface Eng { id: string; hospital_id: string; category: string; status: string; start_date: string | null; hospital_code: string; hospital_name: string }
 interface Qual { id: string; degree: string; institution: string | null; institution_tier: string | null; year_completed: number | null; country: string | null; verified: boolean; has_file: boolean; file_filename: string | null }
 interface Priv { id: string; procedure_or_specialty: string; is_core: boolean; granted_date: string | null; expires_at: string | null; withdrawn_date: string | null; hospital_code: string }
+interface Reply { id: string; text: string; at: string; author: string }
+interface About { id: string; polarity: string; source: string; category: string | null; severity: string | null; commendation_category: string | null; patient_rating: number | null; narrative: string; status: string; anonymous_flag: boolean; submitted_at: string; hospital_code: string | null; reporter_display: string; replies: Reply[] }
+interface ResignReq { id: string; reason: string; intended_last_date: string | null; status: string; requested_at: string; hospital_code: string | null }
 
 const CAT_LABEL: Record<string, string> = { provisional: "Provisional", active: "Active", visiting_consultant: "Visiting Consultant", locum_tenens: "Locum", affiliate: "Affiliate" };
 const FB_CATEGORIES: { v: string; label: string }[] = [
@@ -31,7 +34,7 @@ export default function PortalHome() {
   const [engs, setEngs] = useState<Eng[]>([]);
   const [quals, setQuals] = useState<Qual[]>([]);
   const [privs, setPrivs] = useState<Priv[]>([]);
-  const [tab, setTab] = useState<"overview" | "qualifications" | "privileges" | "report">("overview");
+  const [tab, setTab] = useState<"overview" | "qualifications" | "privileges" | "report" | "aboutme" | "resign">("overview");
   const [loading, setLoading] = useState(true);
 
   // add-qual form
@@ -48,6 +51,12 @@ export default function PortalHome() {
   const [rCategory, setRCategory] = useState(""); const [rSeverity, setRSeverity] = useState("medium"); const [rComm, setRComm] = useState("");
   const [rNarr, setRNarr] = useState(""); const [rAnon, setRAnon] = useState(false);
   const [rBusy, setRBusy] = useState(false); const [rErr, setRErr] = useState<string | null>(null); const [rDone, setRDone] = useState(false);
+  // about-me + resign
+  const [about, setAbout] = useState<About[]>([]);
+  const [replyFor, setReplyFor] = useState<string | null>(null); const [replyText, setReplyText] = useState("");
+  const [resignReqs, setResignReqs] = useState<ResignReq[]>([]);
+  const [resReason, setResReason] = useState(""); const [resDate, setResDate] = useState(""); const [resHosp, setResHosp] = useState("");
+  const [resBusy, setResBusy] = useState(false); const [resErr, setResErr] = useState<string | null>(null);
 
   function loadAll() {
     setLoading(true);
@@ -55,10 +64,14 @@ export default function PortalHome() {
       fetch("/api/portal/me").then((r) => r.json()),
       fetch("/api/portal/qualifications").then((r) => r.json()),
       fetch("/api/portal/privileges").then((r) => r.json()),
-    ]).then(([m, q, p]) => {
+      fetch("/api/portal/about-me").then((r) => r.json()),
+      fetch("/api/portal/resignation").then((r) => r.json()),
+    ]).then(([m, q, p, a, rg]) => {
       if (m.ok) { setMe(m.physician); setEngs(m.engagements ?? []); }
       if (q.ok) setQuals(q.rows ?? []);
       if (p.ok) setPrivs(p.rows ?? []);
+      if (a.ok) setAbout(a.rows ?? []);
+      if (rg.ok) setResignReqs(rg.rows ?? []);
     }).finally(() => setLoading(false));
   }
   useEffect(() => { loadAll(); }, []);
@@ -119,8 +132,27 @@ export default function PortalHome() {
     setEditId(null); loadAll();
   }
 
-  const TABS: Array<[typeof tab, string]> = [["overview", "Overview"], ["qualifications", "Qualifications"], ["privileges", "Current Privileges"], ["report", "Report feedback"]];
-  const SOON = ["About me", "Resign"];
+  async function sendReply(incidentId: string) {
+    if (!replyText.trim()) return;
+    const r = await fetch(`/api/portal/incidents/${incidentId}/reply`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ reply_text: replyText.trim() }) });
+    const j = await r.json();
+    if (!r.ok || !j.ok) { alert(j.error || "Reply failed"); return; }
+    setReplyText(""); setReplyFor(null); loadAll();
+  }
+  async function submitResign(e: React.FormEvent) {
+    e.preventDefault(); setResErr(null);
+    if (!resReason.trim()) { setResErr("Please give a reason."); return; }
+    setResBusy(true);
+    try {
+      const r = await fetch("/api/portal/resignation", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ reason: resReason.trim(), intended_last_date: resDate || null, hospital_id: resHosp || null }) });
+      const j = await r.json();
+      if (!r.ok || !j.ok) { setResErr(j.error || "Failed."); setResBusy(false); return; }
+      setResReason(""); setResDate(""); setResHosp(""); loadAll(); setResBusy(false);
+    } catch { setResErr("Network error."); setResBusy(false); }
+  }
+
+  const TABS: Array<[typeof tab, string]> = [["overview", "Overview"], ["qualifications", "Qualifications"], ["privileges", "Current Privileges"], ["report", "Report feedback"], ["aboutme", "About me"], ["resign", "Resign"]];
+  const SOON: string[] = [];
 
   return (
     <main className="min-h-screen bg-stone-50">
@@ -245,6 +277,86 @@ export default function PortalHome() {
               )}
             </section>
           )}
+          {tab === "aboutme" && (
+            <section className="bg-white border border-stone-200 rounded-xl">
+              <div className="px-5 py-3.5 border-b border-stone-100"><h2 className="text-sm font-semibold">Feedback about you</h2></div>
+              {about.length === 0 ? <div className="px-5 py-10 text-center text-sm text-stone-500">Nothing has been filed about you.</div> : (
+                <div className="divide-y divide-stone-100">
+                  {about.map((a) => {
+                    const isPos = a.polarity === "positive";
+                    return (
+                      <div key={a.id} className={`px-5 py-4 ${a.status === "retracted" ? "opacity-70" : ""}`}>
+                        <div className="flex items-center gap-1.5 flex-wrap mb-1.5">
+                          <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${isPos ? "bg-emerald-50 text-emerald-700" : "bg-stone-800 text-white"}`}>{isPos ? "Positive" : "Concern"}</span>
+                          <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-violet-50 text-violet-700">{a.source === "patient" ? "Patient" : a.source === "governance" ? "Governance" : "Peer"}</span>
+                          {isPos ? (a.commendation_category && <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700">{a.commendation_category}</span>)
+                                 : <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-50 text-amber-800">{a.severity ?? "—"}</span>}
+                          {a.patient_rating != null && <span className="px-2 py-0.5 rounded-full text-[11px] text-amber-700 bg-amber-50">{a.patient_rating}/5</span>}
+                          {a.status === "retracted" && <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-red-50 text-red-700">retracted</span>}
+                        </div>
+                        <div className="text-sm text-stone-800">{a.narrative}</div>
+                        <div className="text-[11px] text-stone-400 mt-1">From: {a.reporter_display}{a.hospital_code ? ` · ${a.hospital_code}` : ""} · {new Date(a.submitted_at).toISOString().slice(0, 10)}</div>
+                        {a.replies.length > 0 && (
+                          <div className="mt-2 space-y-1.5 border-l-2 border-stone-100 pl-3">
+                            {a.replies.map((rp) => (<div key={rp.id} className="text-xs text-stone-600"><span className="font-medium">{rp.author}</span>: {rp.text} <span className="text-stone-400">· {new Date(rp.at).toISOString().slice(0, 10)}</span></div>))}
+                          </div>
+                        )}
+                        {replyFor === a.id ? (
+                          <div className="mt-2 flex gap-2">
+                            <input value={replyText} onChange={(e) => setReplyText(e.target.value)} placeholder="Your response…" className="flex-1 px-3 py-1.5 border border-stone-200 rounded-lg text-sm" />
+                            <button onClick={() => sendReply(a.id)} className="text-xs bg-teal-600 text-white px-3 py-1.5 rounded-lg font-medium">Send</button>
+                            <button onClick={() => { setReplyFor(null); setReplyText(""); }} className="text-xs text-stone-500">Cancel</button>
+                          </div>
+                        ) : (
+                          <button onClick={() => setReplyFor(a.id)} className="mt-2 text-[12px] text-teal-700 font-medium">Respond</button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          )}
+
+          {tab === "resign" && (
+            <section className="bg-white border border-stone-200 rounded-xl p-5">
+              <h2 className="text-sm font-semibold mb-1">Submit a resignation</h2>
+              <p className="text-[11px] text-stone-400 mb-4">This sends a request to administrators — they process the formal status change. You can withdraw by contacting your administrator.</p>
+              {resignReqs.length > 0 && (
+                <div className="mb-4 space-y-1.5">
+                  {resignReqs.map((rq) => (
+                    <div key={rq.id} className="flex items-center gap-2 text-xs border border-stone-100 rounded-lg px-3 py-2">
+                      <span className="font-medium">{rq.hospital_code ?? "All hospitals"}</span>
+                      <span className="text-stone-500">{rq.intended_last_date ? `last day ${rq.intended_last_date.slice(0, 10)}` : ""}</span>
+                      <span className={`ml-auto px-2 py-0.5 rounded-full font-medium ${rq.status === "pending" ? "bg-amber-50 text-amber-800" : rq.status === "processed" ? "bg-stone-100 text-stone-600" : "bg-stone-100 text-stone-500"}`}>{rq.status}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <form onSubmit={submitResign} className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-stone-500 mb-1">Hospital</label>
+                    <select value={resHosp} onChange={(e) => setResHosp(e.target.value)} className="w-full px-3 py-2 border border-stone-200 rounded-lg text-sm bg-white">
+                      <option value="">All my engagements</option>
+                      {engs.map((e) => <option key={e.id} value={e.hospital_id}>{e.hospital_code}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-stone-500 mb-1">Intended last working day</label>
+                    <input type="date" value={resDate} onChange={(e) => setResDate(e.target.value)} className="w-full px-3 py-2 border border-stone-200 rounded-lg text-sm" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-stone-500 mb-1">Reason</label>
+                  <textarea value={resReason} onChange={(e) => setResReason(e.target.value)} rows={4} className="w-full px-3 py-2 border border-stone-200 rounded-lg text-sm" />
+                </div>
+                {resErr && <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{resErr}</div>}
+                <button type="submit" disabled={resBusy} className="bg-stone-800 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-stone-900 disabled:opacity-50">{resBusy ? "Submitting…" : "Submit resignation request"}</button>
+              </form>
+            </section>
+          )}
+
           {tab === "report" && (
             <section className="bg-white border border-stone-200 rounded-xl p-5">
               <h2 className="text-sm font-semibold mb-1">Report feedback on another doctor</h2>
