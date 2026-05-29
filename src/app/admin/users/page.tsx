@@ -26,6 +26,7 @@ const STATUS_PILL: Record<string, string> = {
   pending_approval: "bg-amber-50 text-amber-700",
   suspended: "bg-stone-100 text-stone-600",
   rejected: "bg-red-50 text-red-700",
+  deactivated: "bg-stone-200 text-stone-500",
 };
 
 const AVATAR_COLORS = [
@@ -56,11 +57,16 @@ export default function UsersPage() {
   const [hospitals, setHospitals] = useState<HospitalOption[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [rolesByProfile, setRolesByProfile] = useState<Record<string, Set<string>>>({});
+  const [positions, setPositions] = useState<string[]>([]);
+  const [addOpen, setAddOpen] = useState(false);
 
   // load hospitals once (drives the grid columns)
   useEffect(() => {
     fetch("/api/hospitals").then((r) => r.json()).then((j) => {
       if (j.ok) setHospitals(j.hospitals as HospitalOption[]);
+    }).catch(() => undefined);
+    fetch("/api/positions").then((r) => r.json()).then((j) => {
+      if (j.ok) setPositions((j.positions as Array<{ position_name: string }>).map((p) => p.position_name));
     }).catch(() => undefined);
   }, []);
 
@@ -168,10 +174,11 @@ export default function UsersPage() {
               {Object.entries(counts).map(([k, v]) => `${k}: ${v}`).join(" · ") || "—"}
             </div>
           </div>
+          <button onClick={() => setAddOpen(true)} className="bg-brand text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-brand-hover">+ Add user</button>
         </div>
 
         <div className="flex gap-2 mb-4 text-sm">
-          {["", "active", "pending_approval", "suspended", "rejected"].map((s) => (
+          {["", "active", "pending_approval", "suspended", "rejected", "deactivated"].map((s) => (
             <button
               key={s || "all"}
               onClick={() => setFilter(s)}
@@ -274,6 +281,7 @@ export default function UsersPage() {
                       <option value="pending_approval">Pending</option>
                       <option value="suspended">Suspend</option>
                       <option value="rejected">Reject</option>
+                      <option value="deactivated">Deactivate</option>
                     </select>
                   </td>
                 </tr>
@@ -326,6 +334,100 @@ export default function UsersPage() {
           </table>
         </div>
       </main>
+      {addOpen && (
+        <AddUserModal
+          hospitals={hospitals}
+          positions={positions}
+          onClose={() => setAddOpen(false)}
+          onCreated={() => { setAddOpen(false); load(); }}
+        />
+      )}
     </>
+  );
+}
+
+function genPin(): string { return String(Math.floor(1000 + Math.random() * 9000)); }
+
+function AddUserModal({ hospitals, positions, onClose, onCreated }: { hospitals: HospitalOption[]; positions: string[]; onClose: () => void; onCreated: () => void }) {
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [position, setPosition] = useState("");
+  const [hospital, setHospital] = useState(hospitals[0]?.code ?? "EHRC");
+  const [superAdmin, setSuperAdmin] = useState(false);
+  const [pin, setPin] = useState(genPin());
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const emailOk = /@even\.in$/i.test(email.trim());
+  const canSubmit = !!fullName.trim() && emailOk && !!position && !!hospital && /^\d{4}$/.test(pin) && !submitting;
+
+  async function submit() {
+    setError(null); setSubmitting(true);
+    try {
+      const r = await fetch("/api/admin/users", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ full_name: fullName.trim(), email: email.trim().toLowerCase(), pin, position_name: position, hospital_code: hospital, is_super_admin: superAdmin }),
+      });
+      const j = await r.json();
+      if (!r.ok || !j.ok) { setError(j.error || "Create failed"); setSubmitting(false); return; }
+      onCreated();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Network error"); setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-white rounded-xl w-full max-w-md p-5" onClick={(e) => e.stopPropagation()}>
+        <h2 className="text-base font-semibold mb-1">Add user</h2>
+        <p className="text-xs text-stone-500 mb-4">Creates an active account with a temporary PIN. The user changes it on first login. Assign per-hospital roles afterward from the Roles grid.</p>
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs font-medium text-stone-500 mb-1">Full name</label>
+            <input value={fullName} onChange={(e) => setFullName(e.target.value)} className="w-full px-3 py-2 border border-stone-200 rounded-lg text-sm outline-none focus:border-brand" placeholder="Dr. Jane Doe" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-stone-500 mb-1">Email</label>
+            <input value={email} onChange={(e) => setEmail(e.target.value)} className="w-full px-3 py-2 border border-stone-200 rounded-lg text-sm outline-none focus:border-brand" placeholder="jane.doe@even.in" />
+            {email.trim() && !emailOk && <div className="text-[11px] text-red-600 mt-1">Must be an @even.in address.</div>}
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-stone-500 mb-1">Position</label>
+              <select value={position} onChange={(e) => setPosition(e.target.value)} className="w-full px-3 py-2 border border-stone-200 rounded-lg text-sm bg-white">
+                <option value="">— Choose —</option>
+                {positions.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-stone-500 mb-1">Home hospital</label>
+              <select value={hospital} onChange={(e) => setHospital(e.target.value)} className="w-full px-3 py-2 border border-stone-200 rounded-lg text-sm bg-white">
+                {hospitals.map((h) => <option key={h.code} value={h.code}>{h.code}</option>)}
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-stone-500 mb-1">Temporary PIN (4 digits)</label>
+            <div className="flex items-center gap-2">
+              <input value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 4))} className="w-28 px-3 py-2 border border-stone-200 rounded-lg text-sm num" />
+              <button type="button" onClick={() => setPin(genPin())} className="text-xs text-brand font-medium">Generate</button>
+            </div>
+            <div className="text-[11px] text-stone-400 mt-1">User must change this on first login.</div>
+          </div>
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={superAdmin} onChange={(e) => setSuperAdmin(e.target.checked)} className="accent-teal-600" />
+            Super Admin (network-wide)
+          </label>
+          {error && <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</div>}
+        </div>
+        <div className="flex justify-end gap-2 mt-5">
+          <button onClick={onClose} className="btn-ghost">Cancel</button>
+          <button onClick={submit} disabled={!canSubmit} className="bg-brand text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-brand-hover disabled:opacity-50 disabled:cursor-not-allowed">
+            {submitting ? "Creating…" : "Create user"}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

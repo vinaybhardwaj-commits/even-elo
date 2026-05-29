@@ -9,7 +9,7 @@ export const runtime = "nodejs";
 
 const NO_STORE = { "Cache-Control": "no-store, max-age=0" };
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const ALLOWED_STATUS = new Set(["pending_approval", "active", "suspended", "rejected"]);
+const ALLOWED_STATUS = new Set(["pending_approval", "active", "suspended", "rejected", "deactivated"]);
 const FLAG_TO_ROLE: Record<string, string> = {
   is_sgc_member: "sgc_member",
   is_hr: "hr",

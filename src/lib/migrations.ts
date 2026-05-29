@@ -944,5 +944,15 @@ export const MIGRATIONS: Migration[] = [
       DROP TABLE IF EXISTS patient_feedback CASCADE;
     `,
   },
+  {
+    id: "020_users_module",
+    description: "Users Module #9/#11 — widen profiles.status to add 'deactivated'; add profiles.must_change_pin (force PIN change on first login). Additive.",
+    sql: `
+      ALTER TABLE profiles DROP CONSTRAINT IF EXISTS profiles_status_check;
+      ALTER TABLE profiles ADD CONSTRAINT profiles_status_check
+        CHECK (status IN ('pending_approval','active','suspended','rejected','deactivated'));
+      ALTER TABLE profiles ADD COLUMN IF NOT EXISTS must_change_pin boolean NOT NULL DEFAULT false;
+    `,
+  },
 ];
 
