@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { TopNav } from "@/components/TopNav";
+import { ROLE_META } from "@/lib/roles";
 
 interface ProfileRow {
   id: string;
@@ -236,14 +237,14 @@ export default function UsersPage() {
                         onClick={() => toggleFlag(r.id, "is_super_admin", !r.is_super_admin)}
                         disabled={busy === r.id}
                         className={`px-2 py-0.5 rounded-full font-medium ${r.is_super_admin ? "bg-teal-100 text-teal-800" : "bg-stone-100 text-stone-500 hover:bg-stone-200"}`}
-                        title={r.is_super_admin ? "Click to revoke Super Admin (network-wide)" : "Click to grant Super Admin (network-wide)"}
+                        title={ROLE_META.super_admin.desc}
                       >
                         Super
                       </button>
-                      {[["SGC", r.is_sgc_member], ["HR", r.is_hr], ["Site MH", r.is_site_medical_head]].map(([label, val]) => (
-                        <span key={label as string} className={`px-2 py-0.5 rounded-full font-medium ${val ? "bg-emerald-50 text-emerald-700" : "bg-stone-100 text-stone-400"}`}
-                          title={val ? `Has ${label} role at ≥1 hospital — click Roles ▾ to manage per-site` : `No ${label} role anywhere`}>
-                          {label}
+                      {(([["sgc_member", r.is_sgc_member], ["hr", r.is_hr], ["site_medical_head", r.is_site_medical_head]]) as [string, boolean][]).map(([rk, val]) => (
+                        <span key={rk} className={`px-2 py-0.5 rounded-full font-medium ${val ? "bg-emerald-50 text-emerald-700" : "bg-stone-100 text-stone-400"}`}
+                          title={`${ROLE_META[rk].label} (${ROLE_META[rk].scope}) — ${ROLE_META[rk].desc}`}>
+                          {ROLE_META[rk].short}
                         </span>
                       ))}
                       <button
@@ -295,7 +296,7 @@ export default function UsersPage() {
                             <tr className="text-stone-500">
                               <th className="text-left pr-3 py-1 font-medium">Hospital</th>
                               {(["site_medical_head","hr","sgc_member"] as const).map((role) => (
-                                <th key={role} className="px-3 py-1 font-medium text-center">{role === "site_medical_head" ? "Site MH" : role === "hr" ? "HR" : "SGC"}</th>
+                                <th key={role} className="px-3 py-1 font-medium text-center" title={ROLE_META[role].desc}>{ROLE_META[role].short}</th>
                               ))}
                             </tr>
                           </thead>

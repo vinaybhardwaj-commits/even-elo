@@ -116,11 +116,10 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(new URL("/auth/change-pin", request.url));
     }
 
-    // /surgical-elo gated to super_admin OR sgc_member (lock-down decision)
+    // /surgical-elo gated to super_admin only (Users PRD #18 — ELO super_admin-only)
     if (
       pathname.startsWith("/surgical-elo") &&
-      !payload.is_super_admin &&
-      !payload.is_sgc_member
+      !payload.is_super_admin
     ) {
       if (pathname.startsWith("/api/")) {
         return NextResponse.json(

@@ -4,6 +4,7 @@ import React, { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { TopNav } from "@/components/TopNav";
+import { ROLE_META } from "@/lib/roles";
 
 interface Profile {
   id: string;
@@ -39,11 +40,7 @@ function initials(name: string): string { const p = name.trim().split(/\s+/).fil
 function colorFor(name: string): string { let h=0; for (let i=0;i<name.length;i++) h=(h*31+name.charCodeAt(i))&0xffff; return AVATAR_COLORS[h%AVATAR_COLORS.length]; }
 function timeAgo(iso: string): string { const s=Math.max(1,Math.floor((Date.now()-new Date(iso).getTime())/1000)); if(s<60)return `${s}s ago`; if(s<3600)return `${Math.floor(s/60)}m ago`; if(s<86400)return `${Math.floor(s/3600)}h ago`; return `${Math.floor(s/86400)}d ago`; }
 
-const ROLE_COLS: Array<{ role: string; label: string }> = [
-  { role: "site_medical_head", label: "Site MH" },
-  { role: "hr", label: "HR" },
-  { role: "sgc_member", label: "SGC" },
-];
+const ROLE_COLS: string[] = ["site_medical_head", "hr", "sgc_member"];
 
 export default function UserDetailPage() {
   const params = useParams<{ id: string }>();
@@ -228,18 +225,18 @@ export default function UserDetailPage() {
               <thead>
                 <tr className="text-stone-500">
                   <th className="text-left pr-4 py-1 font-medium">Hospital</th>
-                  {ROLE_COLS.map((c) => <th key={c.role} className="px-4 py-1 font-medium text-center">{c.label}</th>)}
+                  {ROLE_COLS.map((role) => <th key={role} className="px-4 py-1 font-medium text-center" title={ROLE_META[role].desc}>{ROLE_META[role].short}</th>)}
                 </tr>
               </thead>
               <tbody>
                 {hospitals.map((h) => (
                   <tr key={h.code} className="border-t border-stone-200/50">
                     <td className="pr-4 py-1.5 font-medium text-stone-700">{h.code}</td>
-                    {ROLE_COLS.map((c) => {
-                      const on = roles.has(`${h.code}|${c.role}`);
+                    {ROLE_COLS.map((role) => {
+                      const on = roles.has(`${h.code}|${role}`);
                       return (
-                        <td key={c.role} className="px-4 py-1.5 text-center">
-                          <input type="checkbox" checked={on} onChange={() => toggleRole(h.code, c.role, on)} className="w-4 h-4 accent-teal-600 cursor-pointer" />
+                        <td key={role} className="px-4 py-1.5 text-center">
+                          <input type="checkbox" checked={on} onChange={() => toggleRole(h.code, role, on)} className="w-4 h-4 accent-teal-600 cursor-pointer" />
                         </td>
                       );
                     })}

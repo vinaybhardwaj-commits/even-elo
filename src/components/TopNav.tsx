@@ -62,7 +62,7 @@ export function TopNav({ nav }: { nav?: NavItem[] } = {}) {
       .catch(() => undefined);
   }, [user]);
 
-  const showElo = !!user && (user.is_super_admin || user.is_sgc_member);
+  const showElo = !!user && user.is_super_admin; // Even ELO is super_admin-only (Users PRD #18)
   const showAdmin = !!user && user.is_super_admin;
   const navItems: NavItem[] = nav ?? defaultNav(showElo, showAdmin, pendingCount, openIncidentsCount, openVcCount);
 
