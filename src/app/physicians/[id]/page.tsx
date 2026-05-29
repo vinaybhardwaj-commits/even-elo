@@ -103,8 +103,12 @@ interface IncidentRow {
   submitted_at: string;
   anonymous_flag: boolean;
   submitter_label: string;
-  category: string;
-  severity: string;
+  category: string | null;
+  severity: string | null;
+  polarity: string;
+  source: string;
+  commendation_category: string | null;
+  patient_rating: number | null;
   narrative_preview: string;
   status: string;
   retracted_at: string | null;
@@ -195,8 +199,7 @@ const SECTIONS = [
   { key: "metrics", label: "Clinical metrics", available: true },
   { key: "oppe", label: "OPPE", available: true },
   { key: "elo", label: "Surgical score · Even ELO", available: false, sprint: "Phase 3" },
-  { key: "incidents", label: "Incidents", available: true },
-  { key: "feedback", label: "Patient feedback", available: true },
+  { key: "feedback", label: "Feedback", available: true },
 ] as const;
 
 function timeAgo(iso: string): string {
@@ -227,7 +230,7 @@ export default function PhysicianProfilePage() {
   const [me, setMe] = useState<UserSummary | null>(null);
   const [metrics, setMetrics] = useState<MetricsRow[]>([]);
   const [incidentsList, setIncidentsList] = useState<IncidentRow[]>([]);
-  const [feedback, setFeedback] = useState<FeedbackRow[]>([]);
+  const [fbFilter, setFbFilter] = useState<{ pol: string; src: string }>({ pol: "all", src: "all" });
   const [addQual, setAddQual] = useState(false);
   const [addPriv, setAddPriv] = useState(false);
   const [triggerFppe, setTriggerFppe] = useState(false);
@@ -251,10 +254,9 @@ export default function PhysicianProfilePage() {
       fetch(`/api/auth/me`).then((r) => r.json()),
       fetch(`/api/physicians/${id}/clinical-metrics?months=24`).then((r) => r.json()),
       fetch(`/api/incidents?physician_id=${id}&limit=100`).then((r) => r.json()),
-      fetch(`/api/physicians/${id}/patient-feedback`).then((r) => r.json()),
       fetch(`/api/physicians/${id}/oppe`).then((r) => r.json()),
     ])
-      .then(([pj, aj, qj, prj, mj, mxj, inj, fj, oj]) => {
+      .then(([pj, aj, qj, prj, mj, mxj, inj, oj]) => {
         if (!pj.ok) { setErr(pj.error || "Not found"); return; }
         setPhysician(pj.physician as Physician);
         setEngagements((pj.engagements ?? []) as Engagement[]);
@@ -265,7 +267,6 @@ export default function PhysicianProfilePage() {
         if (mj.ok) setMe(mj.user as UserSummary);
         if (mxj.ok) setMetrics(mxj.rows ?? []);
         if (inj.ok) setIncidentsList(inj.rows ?? []);
-        if (fj.ok) setFeedback(fj.rows ?? []);
         if (oj.ok) setOppeRows((oj.rows ?? []) as OppeRow[]);
       })
       .catch((e) => setErr(e instanceof Error ? e.message : String(e)))
@@ -506,7 +507,7 @@ export default function PhysicianProfilePage() {
                   <div className="bg-stone-50 rounded-lg p-3">
                     <div className="text-[11px] font-medium text-stone-500 tracking-wider uppercase">Open incidents</div>
                     <div className={`num text-xl font-semibold mt-1 ${incidentsList.filter((r) => r.status === "open").length > 0 ? "text-amber-700" : "text-stone-400"}`}>{incidentsList.filter((r) => r.status === "open").length}</div>
-                    <button onClick={() => setSection("incidents")} className="text-[11px] text-brand hover:underline mt-0.5">View →</button>
+                    <button onClick={() => setSection("feedback")} className="text-[11px] text-brand hover:underline mt-0.5">View →</button>
                   </div>
                   <div className="bg-stone-50 rounded-lg p-3">
                     <div className="text-[11px] font-medium text-stone-500 tracking-wider uppercase">ELO composite</div>
@@ -873,153 +874,64 @@ export default function PhysicianProfilePage() {
             </div>
           )}
 
-          {section === "incidents" && (
+          {section === "feedback" && (
             <section className="bg-white border border-stone-200 rounded-xl">
               <div className="px-5 py-3.5 border-b border-stone-100 flex items-center justify-between">
                 <h2 className="text-sm font-semibold">
-                  Incidents <span className="text-[11px] bg-stone-100 text-stone-600 rounded-full px-2 py-0.5 font-medium ml-1">{incidentsList.length}</span>
+                  Feedback <span className="text-[11px] bg-stone-100 text-stone-600 rounded-full px-2 py-0.5 font-medium ml-1">{incidentsList.length}</span>
                 </h2>
-                <Link href={`/incidents/new?target=${id}`} className="text-[12px] text-brand font-medium">+ Report an incident</Link>
+                <Link href={`/incidents/new?target=${id}`} className="text-[12px] text-brand font-medium">+ Add feedback</Link>
               </div>
-              {incidentsList.length === 0 ? (
-                <div className="px-5 py-12 text-center text-sm text-stone-500">
-                  No incidents on this physician.
-                </div>
-              ) : (
-                <div className="divide-y divide-stone-100">
-                  {incidentsList.map((r) => {
-                    const sevPill: Record<string, string> = {
-                      low: "bg-stone-100 text-stone-700",
-                      medium: "bg-amber-50 text-amber-800",
-                      high: "bg-orange-50 text-orange-800",
-                      critical: "bg-red-50 text-red-800",
-                    };
-                    const statusPill: Record<string, string> = {
-                      open: "bg-emerald-50 text-emerald-700",
-                      closed: "bg-stone-100 text-stone-600",
-                      retracted: "bg-red-50 text-red-700",
-                    };
-                    const catLabel: Record<string, string> = {
-                      clinical: "Clinical", patient_safety: "Patient safety", medical_error: "Medical error",
-                      professionalism: "Professionalism", documentation: "Documentation",
-                      etiquette: "Etiquette", vendor_compliance: "Vendor compliance", other: "Other",
-                    };
-                    const isRetracted = r.status === "retracted";
-                    return (
-                      <Link
-                        key={r.id}
-                        href={`/incidents/${r.id}`}
-                        className={`block px-5 py-4 hover:bg-stone-50 ${isRetracted ? "opacity-70" : ""}`}
-                      >
-                        <div className="flex items-start gap-3">
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${sevPill[r.severity] ?? "bg-stone-100 text-stone-700"}`}>
-                            {r.severity}
-                          </span>
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${statusPill[r.status] ?? "bg-stone-100 text-stone-700"}`}>
-                            {r.status}
-                          </span>
-                          <span className="text-[11px] text-stone-500 px-2 py-0.5 rounded-full bg-stone-50">
-                            {catLabel[r.category] ?? r.category}
-                          </span>
-                          <div className="flex-1 min-w-0">
-                            <div className={`text-sm font-medium ${isRetracted ? "line-through text-stone-500" : "text-stone-900"}`}>
-                              {r.anonymous_flag ? "Anonymous submission" : (r.submitter_label || "Submitter")}
-                            </div>
-                            <div className="text-xs text-stone-500 mt-0.5 truncate">{r.narrative_preview}</div>
-                            <div className="text-[11px] text-stone-400 mt-1">
-                              {timeAgo(r.submitted_at)}
-                              {r.reply_count > 0 ? ` · ${r.reply_count} ${r.reply_count === 1 ? "reply" : "replies"}` : ""}
-                              {isRetracted && r.retraction_reason ? ` · retracted: ${r.retraction_reason}` : ""}
-                            </div>
+              <div className="px-5 py-2.5 border-b border-stone-100 flex flex-wrap items-center gap-1.5">
+                {(([["all","All"],["positive","Positive"],["negative","Negative"]]) as [string,string][]).map(([v,l]) => (
+                  <button key={v} type="button" onClick={() => setFbFilter((f) => ({ ...f, pol: v }))}
+                    className={`px-2.5 py-1 rounded-full text-[11px] font-medium border ${fbFilter.pol===v?"bg-stone-800 text-white border-stone-800":"bg-white text-stone-600 border-stone-200 hover:bg-stone-50"}`}>{l}</button>
+                ))}
+                <span className="w-px h-4 bg-stone-200 mx-1" />
+                {(([["all","All sources"],["patient","Patient"],["peer","Peer"],["governance","Governance"]]) as [string,string][]).map(([v,l]) => (
+                  <button key={v} type="button" onClick={() => setFbFilter((f) => ({ ...f, src: v }))}
+                    className={`px-2.5 py-1 rounded-full text-[11px] font-medium border ${fbFilter.src===v?"bg-brand text-white border-brand":"bg-white text-stone-600 border-stone-200 hover:bg-stone-50"}`}>{l}</button>
+                ))}
+              </div>
+              {(() => {
+                const filtered = incidentsList.filter((r) => (fbFilter.pol==="all"||r.polarity===fbFilter.pol) && (fbFilter.src==="all"||r.source===fbFilter.src));
+                if (filtered.length===0) return <div className="px-5 py-12 text-center text-sm text-stone-500">No matching feedback.</div>;
+                const sevPill: Record<string,string> = { low:"bg-stone-100 text-stone-700", medium:"bg-amber-50 text-amber-800", high:"bg-orange-50 text-orange-800", critical:"bg-red-50 text-red-800" };
+                const statusPill: Record<string,string> = { open:"bg-emerald-50 text-emerald-700", closed:"bg-stone-100 text-stone-600", retracted:"bg-red-50 text-red-700" };
+                const catLabel: Record<string,string> = { clinical:"Clinical", patient_safety:"Patient safety", medical_error:"Medical error", professionalism:"Professionalism", documentation:"Documentation", etiquette:"Etiquette", vendor_compliance:"Vendor compliance", other:"Other" };
+                const srcLabel: Record<string,string> = { patient:"Patient", peer:"Peer", governance:"Governance" };
+                return (
+                  <div className="divide-y divide-stone-100">
+                    {filtered.map((r) => {
+                      const isRetracted = r.status === "retracted";
+                      const isPos = r.polarity === "positive";
+                      return (
+                        <Link key={r.id} href={`/incidents/${r.id}`} className={`block px-5 py-4 hover:bg-stone-50 ${isRetracted?"opacity-70":""}`}>
+                          <div className="flex items-start gap-1.5 flex-wrap">
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${isPos?"bg-emerald-50 text-emerald-700":"bg-stone-800 text-white"}`}>{isPos?"Positive":"Negative"}</span>
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-violet-50 text-violet-700">{srcLabel[r.source] ?? r.source}</span>
+                            {isPos
+                              ? (r.commendation_category ? <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700">{r.commendation_category}</span> : null)
+                              : <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${sevPill[r.severity ?? ""] ?? "bg-stone-100 text-stone-700"}`}>{r.severity ?? "—"}</span>}
+                            {!isPos && <span className="text-[11px] text-stone-500 px-2 py-0.5 rounded-full bg-stone-50">{catLabel[r.category ?? ""] ?? r.category}</span>}
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${statusPill[r.status] ?? "bg-stone-100 text-stone-700"}`}>{r.status}</span>
+                            {r.patient_rating != null && <span className="text-[11px] text-amber-700 px-2 py-0.5 rounded-full bg-amber-50">{"\u2605"} {r.patient_rating}/5</span>}
                           </div>
-                        </div>
-                      </Link>
-                    );
-                  })}
-                </div>
-              )}
+                          <div className="mt-1.5">
+                            <div className={`text-sm font-medium ${isRetracted?"line-through text-stone-500":"text-stone-900"}`}>{r.anonymous_flag ? "Anonymous submission" : (r.submitter_label || "Submitter")}</div>
+                            <div className="text-xs text-stone-500 mt-0.5 truncate">{r.narrative_preview}</div>
+                            <div className="text-[11px] text-stone-400 mt-1">{timeAgo(r.submitted_at)}{r.reply_count>0?` · ${r.reply_count} ${r.reply_count===1?"reply":"replies"}`:""}{isRetracted&&r.retraction_reason?` · retracted: ${r.retraction_reason}`:""}</div>
+                          </div>
+                        </Link>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
             </section>
           )}
 
-
-          {section === "feedback" && (
-            <div className="space-y-4">
-              {feedback.length === 0 ? (
-                <section className="bg-white border border-stone-200 rounded-xl py-12 text-center">
-                  <div className="text-sm text-stone-700 font-medium">No patient feedback yet</div>
-                  <div className="text-xs text-stone-500 mt-1">
-                    Super-admin uploads quarterly CSVs from{" "}
-                    <Link href="/admin/patient-feedback" className="text-brand font-medium">/admin/patient-feedback</Link>.
-                  </div>
-                </section>
-              ) : (
-                (() => {
-                  // Group by hospital
-                  const byHospital = new Map<string, FeedbackRow[]>();
-                  for (const f of feedback) {
-                    const list = byHospital.get(f.hospital_code) ?? [];
-                    list.push(f);
-                    byHospital.set(f.hospital_code, list);
-                  }
-                  const fmt = (n: number | null) => n === null || n === undefined ? "—" : Number(n).toLocaleString("en-IN");
-                  return Array.from(byHospital.entries()).map(([code, list]) => {
-                    const sorted = [...list].sort((a, b) => a.feedback_period.localeCompare(b.feedback_period));
-                    const labels = sorted.map((m) => m.feedback_period);
-                    const csatPoints = sorted.map((m, i) => ({ x: i, y: (m.csat_score ?? null) as number | null, label: labels[i] }));
-                    const complaintPoints = sorted.map((m, i) => ({ x: i, y: (m.complaint_count ?? null) as number | null, label: labels[i] }));
-                    const last = sorted[sorted.length - 1];
-                    return (
-                      <section key={code} className="bg-white border border-stone-200 rounded-xl">
-                        <div className="px-5 py-3.5 border-b border-stone-100 flex items-center justify-between">
-                          <h2 className="text-sm font-semibold">{code} <span className="text-[11px] text-stone-500 font-normal">· last {sorted.length} periods</span></h2>
-                        </div>
-                        <div className="grid grid-cols-2 gap-3 px-5 py-4">
-                          <div className="bg-stone-50 rounded-lg p-3">
-                            <div className="flex items-baseline justify-between mb-1.5">
-                              <div className="text-[11px] font-medium text-stone-500 tracking-wider uppercase">CSAT</div>
-                              <div className="text-sm font-semibold num">{fmt(last?.csat_score)}</div>
-                            </div>
-                            <MiniLineChart points={csatPoints} color="#0f766e" />
-                          </div>
-                          <div className="bg-stone-50 rounded-lg p-3">
-                            <div className="flex items-baseline justify-between mb-1.5">
-                              <div className="text-[11px] font-medium text-stone-500 tracking-wider uppercase">Complaints</div>
-                              <div className="text-sm font-semibold num">{fmt(last?.complaint_count)}</div>
-                            </div>
-                            <MiniLineChart points={complaintPoints} color="#dc2626" />
-                          </div>
-                        </div>
-                        <div className="border-t border-stone-100 px-5 py-3 max-h-[260px] overflow-y-auto">
-                          <table className="w-full text-xs">
-                            <thead>
-                              <tr className="text-stone-500 text-left">
-                                <th className="py-1.5 font-medium">Period</th>
-                                <th className="py-1.5 font-medium text-right">CSAT</th>
-                                <th className="py-1.5 font-medium text-right">Complaints</th>
-                                <th className="py-1.5 font-medium">Source</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-stone-100">
-                              {[...sorted].reverse().map((m, i) => (
-                                <tr key={i}>
-                                  <td className="py-1.5 num">{m.feedback_period}</td>
-                                  <td className="py-1.5 text-right num">{fmt(m.csat_score)}</td>
-                                  <td className="py-1.5 text-right num">{fmt(m.complaint_count)}</td>
-                                  <td className="py-1.5 text-stone-600">{m.source ?? "—"}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      </section>
-                    );
-                  });
-                })()
-              )}
-            </div>
-          )}
-
-          {!["overview", "engagements", "qualifications", "metrics", "oppe", "incidents", "feedback"].includes(section) && (
+          {!["overview", "engagements", "qualifications", "metrics", "oppe", "feedback"].includes(section) && (
             <div className="bg-white border border-stone-200 rounded-xl py-16 text-center">
               <div className="text-sm text-stone-500">This section ships in the next sprint.</div>
             </div>
