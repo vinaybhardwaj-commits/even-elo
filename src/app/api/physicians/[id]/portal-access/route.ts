@@ -24,7 +24,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     return NextResponse.json({ ok: false, error: "Not permitted" }, { status: 403, headers: NO_STORE });
   }
 
-  const body = (await req.json().catch(() => ({}))) as { enabled?: boolean; pin?: string };
+  const body = (await req.json().catch(() => ({}))) as { enabled?: boolean; pin?: string; permanent?: boolean };
   const phys = (await sql`SELECT id::text AS id, email, portal_access FROM physicians WHERE id = ${id}::uuid LIMIT 1`) as Array<{ id: string; email: string | null; portal_access: boolean }>;
   if (phys.length === 0) return NextResponse.json({ ok: false, error: "not found" }, { status: 404, headers: NO_STORE });
 
@@ -39,7 +39,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   const pin = String(body.pin ?? "");
   if (!isValidPin(pin)) return NextResponse.json({ ok: false, error: "pin must be exactly 4 digits" }, { status: 400, headers: NO_STORE });
   const hash = await hashPortalPin(pin);
-  await sql`UPDATE physicians SET portal_access = true, portal_pin_hash = ${hash}, portal_must_change_pin = true, updated_at = NOW() WHERE id = ${id}::uuid`;
-  await sql`INSERT INTO audit_log_v2 (actor_user_id, action, entity_type, entity_id, after_json) VALUES (${actor.profileId}::uuid, 'portal_enable', 'physician', ${id}, ${JSON.stringify({ portal_access: true, must_change_pin: true })}::jsonb)`;
+  const mustChange = body.permanent === true ? false : true;
+  await sql`UPDATE physicians SET portal_access = true, portal_pin_hash = ${hash}, portal_must_change_pin = ${mustChange}, updated_at = NOW() WHERE id = ${id}::uuid`;
+  await sql`INSERT INTO audit_log_v2 (actor_user_id, action, entity_type, entity_id, after_json) VALUES (${actor.profileId}::uuid, 'portal_enable', 'physician', ${id}, ${JSON.stringify({ portal_access: true, must_change_pin: mustChange })}::jsonb)`;
   return NextResponse.json({ ok: true, portal_access: true }, { headers: NO_STORE });
 }
