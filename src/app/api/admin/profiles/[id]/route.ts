@@ -214,6 +214,8 @@ export async function DELETE(_req: NextRequest, ctx: { params: Promise<{ id: str
   if (authored[0].n > 0) return NextResponse.json({ ok: false, error: "This user has authored feedback/incidents — deactivate instead of deleting to preserve the record." }, { status: 409, headers: NO_STORE });
   await sql`DELETE FROM incident_views WHERE profile_id = ${id}::uuid`;
   await sql`DELETE FROM profile_hospital_roles WHERE profile_id = ${id}::uuid`;
+  // Unlink (preserve) any audit rows this user authored so the FK doesn't block the delete.
+  await sql`UPDATE audit_log_v2 SET actor_user_id = NULL WHERE actor_user_id = ${id}::uuid`;
   await sql`DELETE FROM profiles WHERE id = ${id}::uuid`;
   await sql`INSERT INTO audit_log_v2 (actor_user_id, action, entity_type, entity_id, before_json) VALUES (${actor.profileId}::uuid, 'user_delete', 'profile', ${id}, ${JSON.stringify({ hard_delete: true })}::jsonb)`;
   return NextResponse.json({ ok: true }, { headers: NO_STORE });
