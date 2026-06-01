@@ -58,6 +58,16 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // -- Friendly host routing --
+  // doctors.evenos.app  → Doctor Portal (root redirects to /portal, which then
+  //                       cascades to /portal/login if there's no physician session).
+  // governance.evenos.app → Admin app served at root by default (no rewrite needed).
+  // even-elo.vercel.app stays fully path-addressable for both surfaces.
+  const host = (request.headers.get("host") || "").toLowerCase();
+  if (host.startsWith("doctors.") && pathname === "/") {
+    return NextResponse.redirect(new URL("/portal", request.url));
+  }
+
   // -- Physician portal: separate auth surface (epi_physician_session) --
   if (pathname.startsWith("/portal") || pathname.startsWith("/api/portal")) {
     if (pathname === "/portal/login" || pathname.startsWith("/api/portal/auth/")) {
