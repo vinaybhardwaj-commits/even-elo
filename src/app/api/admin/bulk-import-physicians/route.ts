@@ -68,6 +68,7 @@ export async function POST(req: NextRequest) {
   const created: Array<{ row_index: number; physician_id: string; full_name: string }> = [];
   const skipped: Array<{ row_index: number; full_name: string; reason: string; existing_id?: string }> = [];
   const errors: Array<{ row_index: number; full_name: string; error: string }> = [];
+  const engagementsAdded: Array<{ row_index: number; physician_id: string; full_name: string }> = [];
 
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
@@ -79,23 +80,6 @@ export async function POST(req: NextRequest) {
     const lowerEmail = (r.email ?? "").trim().toLowerCase();
 
     try {
-      // Dupe check by email (preferred), or by lower(full_name) when no email.
-      // The fallback prevents email=null rows from re-inserting during
-      // timeout/retry cycles where the same payload is fired twice.
-      if (lowerEmail) {
-        const existing = (await sql`SELECT id::text AS id FROM physicians WHERE lower(email) = ${lowerEmail} LIMIT 1`) as Array<{ id: string }>;
-        if (existing.length > 0) {
-          skipped.push({ row_index: i, full_name: fullName, reason: "email_already_exists", existing_id: existing[0].id });
-          continue;
-        }
-      } else {
-        const existing = (await sql`SELECT id::text AS id FROM physicians WHERE lower(full_name) = ${fullName.toLowerCase()} LIMIT 1`) as Array<{ id: string }>;
-        if (existing.length > 0) {
-          skipped.push({ row_index: i, full_name: fullName, reason: "name_match_no_email", existing_id: existing[0].id });
-          continue;
-        }
-      }
-
       // Validate category
       const cat = (r.category ?? "active").trim();
       if (!CATEGORIES.has(cat)) {
@@ -104,6 +88,34 @@ export async function POST(req: NextRequest) {
       }
 
       const joinDate = (r.date_joined_network ?? "").trim() || new Date().toISOString().slice(0, 10);
+
+      // Existing physician (multi-hospital) — add an engagement at this hospital instead of skipping.
+      let existingId: string | null = null;
+      if (lowerEmail) {
+        const ex = (await sql`SELECT id::text AS id FROM physicians WHERE lower(email) = ${lowerEmail} LIMIT 1`) as Array<{ id: string }>;
+        if (ex.length > 0) existingId = ex[0].id;
+      } else {
+        const ex = (await sql`SELECT id::text AS id FROM physicians WHERE lower(full_name) = ${fullName.toLowerCase()} LIMIT 1`) as Array<{ id: string }>;
+        if (ex.length > 0) existingId = ex[0].id;
+      }
+      if (existingId) {
+        const eng = (await sql`SELECT id FROM physician_engagements WHERE physician_id = ${existingId}::uuid AND hospital_id = ${hospitalId}::uuid LIMIT 1`) as Array<{ id: string }>;
+        if (eng.length > 0) {
+          skipped.push({ row_index: i, full_name: fullName, reason: "engagement_exists", existing_id: existingId });
+          continue;
+        }
+        await sql`
+          INSERT INTO physician_engagements (physician_id, hospital_id, category, start_date, specialty, status)
+          VALUES (${existingId}::uuid, ${hospitalId}::uuid, ${cat}, ${joinDate}, ${(r.primary_specialty ?? null) || null}, 'active')
+        `;
+        await sql`
+          INSERT INTO audit_log_v2 (action, entity_type, entity_id, after_json)
+          VALUES ('engagement_added', 'physician', ${existingId},
+            ${JSON.stringify({ row_index: i, full_name: fullName, hospital_code, category: cat, sheet_code: r.external_code ?? null, seeded_via: "bulk-import (existing->engagement)" })}::jsonb)
+        `;
+        engagementsAdded.push({ row_index: i, physician_id: existingId, full_name: fullName });
+        continue;
+      }
 
       const ins = (await sql`
         INSERT INTO physicians (
@@ -165,9 +177,11 @@ export async function POST(req: NextRequest) {
       hospital_code,
       total_rows: rows.length,
       created_count: created.length,
+      engagement_added_count: engagementsAdded.length,
       skipped_count: skipped.length,
       error_count: errors.length,
       created,
+      engagementsAdded,
       skipped,
       errors,
     },

@@ -977,5 +977,12 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_resignation_status    ON resignation_requests(status);
     `,
   },
+  {
+    id: "022_rename_ehbr_hospital",
+    description: "Rename EHBR hospital record to its real name (Even Healthcare HBR Layout / Altius). Idempotent.",
+    sql: `
+      UPDATE hospitals SET name = 'Even Healthcare HBR Layout (Altius)' WHERE code = 'EHBR';
+    `,
+  },
 ];
 
