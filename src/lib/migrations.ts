@@ -1,5 +1,5 @@
 /**
- * Even-ELO migrations — inline so they bundle cleanly in Vercel serverless.
+ * Surgical Governance migrations — inline so they bundle cleanly in Vercel serverless.
  *
  * Each migration is identified by a stable id. The migrate endpoint maintains
  * a `_migrations` marker table and skips migrations whose id is already

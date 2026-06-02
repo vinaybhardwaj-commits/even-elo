@@ -3,7 +3,7 @@ import { sql } from "./db";
 /**
  * Atomic case_ref generator + INSERT.
  *
- * case_ref format: `ELO-YYYY-MM-NNNN` (zero-padded sequence within the
+ * case_ref format: `SG-YYYY-MM-NNNN` (zero-padded sequence within the
  * surgery_date's year+month).
  *
  * Concurrency strategy: chained CTE selects MAX(seq) for the prefix and
@@ -54,7 +54,7 @@ export async function insertCaseAtomic(input: InsertCaseInput): Promise<CaseRow>
   if (!/^\d{4}-\d{2}$/.test(yyyymm)) {
     throw new Error(`Invalid surgery_date '${input.surgery_date}', expected YYYY-MM-DD`);
   }
-  const prefix = `ELO-${yyyymm}`;
+  const prefix = `SG-${yyyymm}`;
   const likePattern = `${prefix}-%`;
 
   let lastError: unknown = null;

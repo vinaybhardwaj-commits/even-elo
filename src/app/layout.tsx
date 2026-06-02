@@ -17,7 +17,7 @@ const jetbrainsMono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "Even Physician Index",
   description:
-    "Even Physician Index (EPI) — longitudinal physician record for the Even Hospital network. Even ELO surgical-scoring module included.",
+    "Even Physician Index (EPI) — longitudinal physician record for the Even Hospital network. Surgical Governance surgical-scoring module included.",
   robots: { index: false, follow: false },
 };
 

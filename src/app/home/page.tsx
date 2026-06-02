@@ -223,9 +223,9 @@ export default async function HomePage() {
           <div className="flex items-center gap-2 min-w-0">
             <h2 className="text-sm font-semibold">Watchlist</h2>
             <span className="text-[11px] bg-stone-100 text-stone-600 rounded-full px-2 py-0.5 font-medium">0</span>
-            <span className="text-[12px] text-stone-400 truncate">No tier moves yet — surgeons appear here when ELO data lands.</span>
+            <span className="text-[12px] text-stone-400 truncate">No tier moves yet — surgeons appear here when Surgical Governance data lands.</span>
           </div>
-          <Link href="/surgical-elo" className="text-[12px] text-brand font-medium shrink-0 ml-3">Open Even ELO →</Link>
+          <Link href="/surgical-governance" className="text-[12px] text-brand font-medium shrink-0 ml-3">Open Surgical Governance →</Link>
         </section>
       </main>
     </>

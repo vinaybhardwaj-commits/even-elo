@@ -151,9 +151,9 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(new URL("/auth/change-pin", request.url));
     }
 
-    // /surgical-elo gated to super_admin only (Users PRD #18 — ELO super_admin-only)
+    // /surgical-governance gated to super_admin only (Users PRD #18 — ELO super_admin-only)
     if (
-      pathname.startsWith("/surgical-elo") &&
+      pathname.startsWith("/surgical-governance") &&
       !payload.is_super_admin
     ) {
       if (pathname.startsWith("/api/")) {
@@ -165,9 +165,9 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(new URL("/home", request.url));
     }
 
-    // /surgical-elo/admin and any /admin gated to super_admin only
+    // /surgical-governance/admin and any /admin gated to super_admin only
     if (
-      (pathname.startsWith("/surgical-elo/admin") ||
+      (pathname.startsWith("/surgical-governance/admin") ||
         pathname.startsWith("/admin")) &&
       !payload.is_super_admin
     ) {

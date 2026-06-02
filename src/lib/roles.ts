@@ -1,6 +1,6 @@
 // Users Module #13/#15 — single source of truth for role labels + tooltips.
 // NOTE: the DB role value `sgc_member` is now surfaced as "Site Governance Officer (SGO)".
-// Even ELO visibility is super_admin-only (#18) — there is no separate ELO grant.
+// Surgical Governance visibility is super_admin-only (#18) — there is no separate ELO grant.
 export interface RoleMeta { short: string; label: string; scope: string; desc: string }
 
 export const ROLE_META: Record<string, RoleMeta> = {

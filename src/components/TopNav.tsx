@@ -62,7 +62,7 @@ export function TopNav({ nav }: { nav?: NavItem[] } = {}) {
       .catch(() => undefined);
   }, [user]);
 
-  const showElo = !!user && user.is_super_admin; // Even ELO is super_admin-only (Users PRD #18)
+  const showElo = !!user && user.is_super_admin; // Surgical Governance is super_admin-only (Users PRD #18)
   const showAdmin = !!user && user.is_super_admin;
   const navItems: NavItem[] = nav ?? defaultNav(showElo, showAdmin, pendingCount, openIncidentsCount, openVcCount);
 
@@ -114,7 +114,7 @@ function defaultNav(showElo: boolean, showAdmin: boolean, pending: number, openI
     { label: "Credentialing", href: "/onboarding", badge: openVc || undefined },
     { label: "Feedback", href: "/incidents", badge: openIncidents || undefined },
   ];
-  if (showElo) items.push({ label: "Even ELO", href: "/surgical-elo" });
+  if (showElo) items.push({ label: "Surgical Governance", href: "/surgical-governance" });
   if (showAdmin) items.push({ label: "Admin", href: "/admin", badge: pending || undefined });
   return items;
 }

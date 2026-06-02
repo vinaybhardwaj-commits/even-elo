@@ -199,7 +199,7 @@ const SECTIONS = [
   { key: "qualifications", label: "Qualifications & privileges", available: true },
   { key: "metrics", label: "Clinical metrics", available: true },
   { key: "oppe", label: "OPPE", available: true },
-  { key: "elo", label: "Surgical score · Even ELO", available: false, sprint: "Phase 3" },
+  { key: "elo", label: "Surgical Governance score", available: false, sprint: "Phase 3" },
   { key: "feedback", label: "Feedback", available: true },
 ] as const;
 
@@ -464,7 +464,7 @@ export default function PhysicianProfilePage() {
                 </div>
                 <div className="border-l border-stone-200 h-9"></div>
                 <div>
-                  <div className="text-[11px] font-medium text-stone-500 tracking-wider uppercase">ELO composite</div>
+                  <div className="text-[11px] font-medium text-stone-500 tracking-wider uppercase">Governance score</div>
                   <div className="text-sm font-medium mt-1.5 text-stone-400">— · Phase 3</div>
                 </div>
               </div>
@@ -540,7 +540,7 @@ export default function PhysicianProfilePage() {
                     <button onClick={() => setSection("feedback")} className="text-[11px] text-brand hover:underline mt-0.5">View →</button>
                   </div>
                   <div className="bg-stone-50 rounded-lg p-3">
-                    <div className="text-[11px] font-medium text-stone-500 tracking-wider uppercase">ELO composite</div>
+                    <div className="text-[11px] font-medium text-stone-500 tracking-wider uppercase">Governance score</div>
                     <div className="num text-xl font-semibold mt-1 text-stone-400">—</div>
                     <div className="text-[11px] text-stone-400 mt-0.5">Phase 3</div>
                   </div>

@@ -144,7 +144,7 @@ export function CaseTable({ streams, expectedTeam, expectedTeamLabel }: CaseTabl
       const surgeon = vcs.find((v) => v.id === vcId)?.full_name ?? "VC";
       const delta =
         prev !== undefined ? `${prev.toFixed(1)} → ${j.recompute.composite.toFixed(1)}` : j.recompute.composite.toFixed(1);
-      setToast(`Cell saved · ${surgeon} ELO: ${delta} (${j.recompute.tier})`);
+      setToast(`Cell saved · ${surgeon} score: ${delta} (${j.recompute.tier})`);
       setTimeout(() => setToast(null), 4000);
     } else if (j.recompute && !j.recompute.ok) {
       setToast(`Saved, but recompute failed: ${j.recompute.error}`);
