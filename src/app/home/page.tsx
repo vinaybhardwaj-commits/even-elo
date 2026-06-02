@@ -3,94 +3,86 @@ import { neon } from "@neondatabase/serverless";
 import { getCurrentUser } from "@/lib/auth";
 import { getHospitalFilter, getHospitalFilterId } from "@/lib/hospital-filter";
 import { TopNav } from "@/components/TopNav";
+import MiniPhysicianDB from "@/components/MiniPhysicianDB";
+import CensusCards from "@/components/CensusCards";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 export const fetchCache = "force-no-store";
 export const runtime = "nodejs";
 
-type Counts = {
-  active_physicians: number;
-  open_incidents: number;     // open NEGATIVE concerns — drives the "Open concerns" KPI + Inbox badge
-  positive_feedback: number;  // positive feedback total
-};
+type Counts = { active_physicians: number; open_incidents: number; positive_feedback: number };
+type InboxRow = { id: string; polarity: string; category: string | null; commendation_category: string | null; severity: string | null; created_at: string; physician_name: string };
+type AuditRow = { id: number; action: string; entity_type: string; entity_id: string | null; created_at: string; actor_email: string | null; actor_position: string | null };
+type HospCensus = { code: string; name: string; vc: number; staff: number; total: number };
+type SpecCensus = { specialty: string; vc: number; staff: number; total: number };
 
-type InboxRow = {
-  id: string;
-  polarity: string;
-  category: string | null;
-  commendation_category: string | null;
-  severity: string | null;
-  created_at: string;
-  physician_name: string;
-};
-
-type AuditRow = {
-  id: number;
-  action: string;
-  entity_type: string;
-  entity_id: string | null;
-  created_at: string;
-  actor_email: string | null;
-  actor_position: string | null;
-};
-
-async function fetchData(hospitalId: string | null): Promise<{
-  counts: Counts;
-  inbox: InboxRow[];
-  audit: AuditRow[];
-} | null> {
+async function fetchData(hospitalId: string | null) {
   const url = process.env.DATABASE_URL;
   if (!url) return null;
   const sql = neon(url);
 
-  // KPIs respect the global hospital filter.
   const cRows = hospitalId
     ? (await sql`
         SELECT
-          (SELECT count(DISTINCT pe.physician_id)::int
-             FROM physician_engagements pe
-             JOIN physicians p ON p.id = pe.physician_id
+          (SELECT count(DISTINCT pe.physician_id)::int FROM physician_engagements pe JOIN physicians p ON p.id = pe.physician_id
              WHERE pe.hospital_id = ${hospitalId}::uuid AND pe.status = 'active' AND p.current_status = 'active') AS active_physicians,
           (SELECT count(*)::int FROM incidents WHERE status = 'open' AND polarity = 'negative' AND hospital_id = ${hospitalId}::uuid) AS open_incidents,
-          (SELECT count(*)::int FROM incidents WHERE polarity = 'positive' AND hospital_id = ${hospitalId}::uuid) AS positive_feedback
-      `) as Array<Counts>
+          (SELECT count(*)::int FROM incidents WHERE polarity = 'positive' AND hospital_id = ${hospitalId}::uuid) AS positive_feedback`) as Array<Counts>
     : (await sql`
         SELECT
           (SELECT count(*)::int FROM physicians WHERE current_status = 'active') AS active_physicians,
           (SELECT count(*)::int FROM incidents WHERE status = 'open' AND polarity = 'negative') AS open_incidents,
-          (SELECT count(*)::int FROM incidents WHERE polarity = 'positive') AS positive_feedback
-      `) as Array<Counts>;
+          (SELECT count(*)::int FROM incidents WHERE polarity = 'positive') AS positive_feedback`) as Array<Counts>;
 
-  // Inbox — combined live feed (Q-A): open NEGATIVE concerns + positive feedback,
-  // newest first, capped. Filter-aware. Links through to the incident detail.
   const iRows = hospitalId
     ? (await sql`
-        SELECT i.id::text AS id, i.polarity, i.category, i.commendation_category, i.severity,
-               i.created_at, p.full_name AS physician_name
+        SELECT i.id::text AS id, i.polarity, i.category, i.commendation_category, i.severity, i.created_at, p.full_name AS physician_name
         FROM incidents i JOIN physicians p ON p.id = i.target_physician_id
-        WHERE ((i.status = 'open' AND i.polarity = 'negative') OR i.polarity = 'positive')
-          AND i.hospital_id = ${hospitalId}::uuid
-        ORDER BY i.created_at DESC LIMIT 12
-      `) as Array<InboxRow>
+        WHERE ((i.status = 'open' AND i.polarity = 'negative') OR i.polarity = 'positive') AND i.hospital_id = ${hospitalId}::uuid
+        ORDER BY i.created_at DESC LIMIT 12`) as Array<InboxRow>
     : (await sql`
-        SELECT i.id::text AS id, i.polarity, i.category, i.commendation_category, i.severity,
-               i.created_at, p.full_name AS physician_name
+        SELECT i.id::text AS id, i.polarity, i.category, i.commendation_category, i.severity, i.created_at, p.full_name AS physician_name
         FROM incidents i JOIN physicians p ON p.id = i.target_physician_id
         WHERE ((i.status = 'open' AND i.polarity = 'negative') OR i.polarity = 'positive')
-        ORDER BY i.created_at DESC LIMIT 12
-      `) as Array<InboxRow>;
+        ORDER BY i.created_at DESC LIMIT 12`) as Array<InboxRow>;
+
+  const byHospital = hospitalId
+    ? (await sql`
+        WITH base AS (SELECT pe.hospital_id, pe.physician_id, bool_or(pe.category='visiting_consultant') AS is_vc
+          FROM physician_engagements pe JOIN physicians p ON p.id=pe.physician_id
+          WHERE pe.status='active' AND p.current_status='active' AND pe.hospital_id=${hospitalId}::uuid GROUP BY pe.hospital_id, pe.physician_id)
+        SELECT h.code, h.name, count(*) FILTER (WHERE base.is_vc)::int AS vc, count(*) FILTER (WHERE NOT base.is_vc)::int AS staff, count(*)::int AS total
+        FROM base JOIN hospitals h ON h.id=base.hospital_id GROUP BY h.code, h.name ORDER BY h.name`) as Array<HospCensus>
+    : (await sql`
+        WITH base AS (SELECT pe.hospital_id, pe.physician_id, bool_or(pe.category='visiting_consultant') AS is_vc
+          FROM physician_engagements pe JOIN physicians p ON p.id=pe.physician_id
+          WHERE pe.status='active' AND p.current_status='active' GROUP BY pe.hospital_id, pe.physician_id)
+        SELECT h.code, h.name, count(*) FILTER (WHERE base.is_vc)::int AS vc, count(*) FILTER (WHERE NOT base.is_vc)::int AS staff, count(*)::int AS total
+        FROM base JOIN hospitals h ON h.id=base.hospital_id GROUP BY h.code, h.name ORDER BY h.name`) as Array<HospCensus>;
+
+  const bySpecialty = hospitalId
+    ? (await sql`
+        WITH base AS (SELECT pe.hospital_id, pe.physician_id, bool_or(pe.category='visiting_consultant') AS is_vc,
+            max(COALESCE(NULLIF(trim(p.primary_specialty),''),'Unspecified')) AS specialty
+          FROM physician_engagements pe JOIN physicians p ON p.id=pe.physician_id
+          WHERE pe.status='active' AND p.current_status='active' AND pe.hospital_id=${hospitalId}::uuid GROUP BY pe.hospital_id, pe.physician_id)
+        SELECT specialty, count(*) FILTER (WHERE is_vc)::int AS vc, count(*) FILTER (WHERE NOT is_vc)::int AS staff, count(*)::int AS total
+        FROM base GROUP BY specialty ORDER BY total DESC, specialty`) as Array<SpecCensus>
+    : (await sql`
+        WITH base AS (SELECT pe.hospital_id, pe.physician_id, bool_or(pe.category='visiting_consultant') AS is_vc,
+            max(COALESCE(NULLIF(trim(p.primary_specialty),''),'Unspecified')) AS specialty
+          FROM physician_engagements pe JOIN physicians p ON p.id=pe.physician_id
+          WHERE pe.status='active' AND p.current_status='active' GROUP BY pe.hospital_id, pe.physician_id)
+        SELECT specialty, count(*) FILTER (WHERE is_vc)::int AS vc, count(*) FILTER (WHERE NOT is_vc)::int AS staff, count(*)::int AS total
+        FROM base GROUP BY specialty ORDER BY total DESC, specialty`) as Array<SpecCensus>;
 
   const aRows = (await sql`
-    SELECT a.id, a.action, a.entity_type, a.entity_id, a.created_at,
-      p.email AS actor_email, pos.position_name AS actor_position
-    FROM audit_log_v2 a
-    LEFT JOIN profiles p ON p.id = a.actor_user_id
-    LEFT JOIN positions pos ON pos.id = p.position_id
-    ORDER BY a.created_at DESC LIMIT 20
-  `) as Array<AuditRow>;
+    SELECT a.id, a.action, a.entity_type, a.entity_id, a.created_at, p.email AS actor_email, pos.position_name AS actor_position
+    FROM audit_log_v2 a LEFT JOIN profiles p ON p.id = a.actor_user_id LEFT JOIN positions pos ON pos.id = p.position_id
+    ORDER BY a.created_at DESC LIMIT 20`) as Array<AuditRow>;
 
-  return { counts: cRows[0], inbox: iRows, audit: aRows };
+  return { counts: cRows[0], inbox: iRows, byHospital, bySpecialty, audit: aRows };
 }
 
 function timeAgo(iso: string): string {
@@ -101,7 +93,6 @@ function timeAgo(iso: string): string {
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
   return `${Math.floor(s / 86400)}d ago`;
 }
-
 function actionColor(a: string) {
   if (a === "delete" || a === "retract") return "text-red-700";
   if (a === "update") return "text-blue-700";
@@ -110,21 +101,22 @@ function actionColor(a: string) {
 
 export default async function HomePage() {
   const user = await getCurrentUser();
-  if (!user) return null; // middleware redirects; defensive
+  if (!user) return null;
 
   const filterCode = await getHospitalFilter();
-  const filterId   = await getHospitalFilterId();
+  const filterId = await getHospitalFilterId();
   const data = await fetchData(filterId);
 
   const counts = data?.counts ?? { active_physicians: 0, open_incidents: 0, positive_feedback: 0 };
   const inbox = data?.inbox ?? [];
+  const byHospital = data?.byHospital ?? [];
+  const bySpecialty = data?.bySpecialty ?? [];
   const audit = data?.audit ?? [];
 
   const today = new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
   const HONORIFICS = new Set(["dr.", "dr", "prof.", "prof", "mr.", "mr", "ms.", "ms", "mrs.", "mrs"]);
   function firstNameFrom(fn: string): string {
-    const toks = fn.trim().split(/\s+/);
-    let i = 0;
+    const toks = fn.trim().split(/\s+/); let i = 0;
     while (i < toks.length - 1 && HONORIFICS.has(toks[i].toLowerCase())) i++;
     return toks[i] ?? fn;
   }
@@ -134,20 +126,18 @@ export default async function HomePage() {
     <>
       <TopNav />
       <main className="max-w-[1400px] mx-auto px-8 py-8">
-        {/* Greeting */}
         <div className="flex items-end justify-between mb-6">
           <div>
             <h1 className="text-[22px] font-semibold tracking-tight">Good morning, {firstName}</h1>
             <div className="text-sm text-stone-500 mt-1">
-              {today}
-              {user.is_super_admin ? " · Super Admin" : ""}
+              {today}{user.is_super_admin ? " · Super Admin" : ""}
               {user.position_label && user.position_label !== "Hospital PM" ? ` · ${user.position_label}` : (!user.is_super_admin ? ` · ${user.position_label}` : "")}
               {" · viewing "}{filterCode === "all" ? "all hospitals" : filterCode}
             </div>
           </div>
         </div>
 
-        {/* KPI strip — Active physicians + Open concerns (Credentialing + ELO-tier KPIs removed) */}
+        {/* KPI strip */}
         <div className="grid grid-cols-2 gap-3 mb-6 max-w-2xl">
           <div className="bg-white border border-stone-200 rounded-xl p-4">
             <div className="text-[11px] font-medium text-stone-500 tracking-wider uppercase">Active physicians</div>
@@ -164,18 +154,21 @@ export default async function HomePage() {
           </div>
         </div>
 
-        {/* 2-col layout */}
+        {/* Row 1 — Physician DB (½) + Census (½) */}
+        <div className="grid grid-cols-2 gap-4 mb-4">
+          <MiniPhysicianDB />
+          <CensusCards byHospital={byHospital} bySpecialty={bySpecialty} />
+        </div>
+
+        {/* Row 2 — Inbox + Watchlist (⅔) + Audit feed (⅓) */}
         <div className="grid grid-cols-3 gap-4">
-          {/* LEFT — Inbox + Watchlist */}
           <div className="col-span-2 space-y-4">
             <section className="bg-white border border-stone-200 rounded-xl">
               <div className="flex items-center justify-between px-5 py-3.5 border-b border-stone-100">
                 <div className="flex items-center gap-2">
                   <h2 className="text-sm font-semibold">Inbox</h2>
                   <span className="text-[11px] bg-stone-100 text-stone-600 rounded-full px-2 py-0.5 font-medium">{counts.open_incidents}</span>
-                  {counts.positive_feedback > 0 && (
-                    <span className="text-[11px] text-emerald-600 font-medium">+{counts.positive_feedback} positive</span>
-                  )}
+                  {counts.positive_feedback > 0 && <span className="text-[11px] text-emerald-600 font-medium">+{counts.positive_feedback} positive</span>}
                 </div>
                 <Link href="/incidents" className="text-[12px] text-brand font-medium">Open inbox →</Link>
               </div>
@@ -189,14 +182,10 @@ export default async function HomePage() {
                     return (
                       <Link key={r.id} href={`/incidents/${r.id}`} className="flex items-center justify-between px-5 py-3 hover:bg-stone-50 transition">
                         <div className="flex items-center gap-3 min-w-0">
-                          <span className={`inline-flex shrink-0 items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${isPos ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"}`}>
-                            {isPos ? "Positive" : "Concern"}
-                          </span>
+                          <span className={`inline-flex shrink-0 items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${isPos ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"}`}>{isPos ? "Positive" : "Concern"}</span>
                           <div className="min-w-0">
                             <div className="text-sm font-medium text-stone-800 truncate">{r.physician_name}</div>
-                            <div className="text-[12px] text-stone-500 truncate">
-                              {label}{!isPos && r.severity ? ` · ${r.severity}` : ""}
-                            </div>
+                            <div className="text-[12px] text-stone-500 truncate">{label}{!isPos && r.severity ? ` · ${r.severity}` : ""}</div>
                           </div>
                         </div>
                         <span className="text-[11px] text-stone-400 shrink-0 ml-3">{timeAgo(r.created_at)}</span>
@@ -215,13 +204,10 @@ export default async function HomePage() {
                 </div>
                 <Link href="/surgical-elo" className="text-[12px] text-brand font-medium">Open Even ELO →</Link>
               </div>
-              <div className="px-5 py-10 text-center text-sm text-stone-500">
-                No tier moves yet — surgeons will appear here when ELO data lands.
-              </div>
+              <div className="px-5 py-10 text-center text-sm text-stone-500">No tier moves yet — surgeons will appear here when ELO data lands.</div>
             </section>
           </div>
 
-          {/* RIGHT — Audit feed (VC pipeline panel removed) */}
           <div className="space-y-4">
             <section className="bg-white border border-stone-200 rounded-xl">
               <div className="flex items-center justify-between px-5 py-3.5 border-b border-stone-100">
@@ -236,9 +222,7 @@ export default async function HomePage() {
                     <div key={r.id} className="py-1.5 border-b border-dashed border-stone-100 last:border-b-0 leading-relaxed">
                       <div className="text-stone-400 text-[10px]">{timeAgo(r.created_at)}</div>
                       <div>{r.actor_email ?? "—"}{r.actor_position ? ` · ${r.actor_position}` : ""}</div>
-                      <div className={actionColor(r.action)}>
-                        {r.action} {r.entity_type}{r.entity_id ? ` (${r.entity_id})` : ""}
-                      </div>
+                      <div className={actionColor(r.action)}>{r.action} {r.entity_type}{r.entity_id ? ` (${r.entity_id})` : ""}</div>
                     </div>
                   ))}
                 </div>

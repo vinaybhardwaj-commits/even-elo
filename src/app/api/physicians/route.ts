@@ -45,7 +45,9 @@ export async function GET(req: NextRequest) {
   const q = (params.get("q") ?? "").trim();
   const specialty = (params.get("specialty") ?? "").trim();
   let hospitalCode = (params.get("hospital_code") ?? "").trim();
-  if (!hospitalCode) {
+  if (hospitalCode.toLowerCase() === "all") {
+    hospitalCode = ""; // explicit "all" — no filter, and do NOT fall back to the cookie (lets callers be filter-independent)
+  } else if (!hospitalCode) {
     const cookieFilter = await getHospitalFilter();
     if (cookieFilter !== "all") hospitalCode = cookieFilter;
   }
