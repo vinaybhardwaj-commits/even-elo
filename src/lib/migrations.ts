@@ -984,5 +984,35 @@ export const MIGRATIONS: Migration[] = [
       UPDATE hospitals SET name = 'Even Healthcare HBR Layout (Altius)' WHERE code = 'EHBR';
     `,
   },
+  {
+    id: "023_ehbr_existing_credentials",
+    description: "Backfill EHBR-sheet credential dates onto the 4 pre-existing physicians who got an EHBR engagement during the roster import (importer is additive-only on existing). COALESCE = fill only when currently null; never overwrite.",
+    sql: `
+      UPDATE physicians SET
+        registration_number = COALESCE(registration_number, '81226'),
+        registration_expiry = COALESCE(registration_expiry, '2029-01-20'::date)
+      WHERE id = '40e81ac3-cac4-44ad-8ea6-507d3eefa9bb';
+
+      UPDATE physicians SET
+        registration_number = COALESCE(registration_number, 'KMC 84341'),
+        registration_council = COALESCE(registration_council, 'KMC'),
+        registration_expiry = COALESCE(registration_expiry, '2026-12-21'::date),
+        indemnity_expiry = COALESCE(indemnity_expiry, '2026-06-30'::date)
+      WHERE id = '8f576f23-c11b-457d-a3e2-c22514395187';
+
+      UPDATE physicians SET
+        registration_number = COALESCE(registration_number, 'KMC MAH 2011 0000101 KTK'),
+        registration_council = COALESCE(registration_council, 'KMC'),
+        registration_expiry = COALESCE(registration_expiry, '2027-02-07'::date),
+        indemnity_expiry = COALESCE(indemnity_expiry, '2026-02-20'::date)
+      WHERE id = '1d2496b3-0d4f-4ae4-a59c-a037c06258a4';
+
+      UPDATE physicians SET
+        registration_number = COALESCE(registration_number, 'KMC 113696'),
+        registration_council = COALESCE(registration_council, 'KMC'),
+        registration_expiry = COALESCE(registration_expiry, '2026-11-15'::date)
+      WHERE id = 'feb51691-b376-4552-954d-0dcff78ff814';
+    `,
+  },
 ];
 
