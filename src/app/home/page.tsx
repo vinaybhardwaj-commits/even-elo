@@ -14,8 +14,8 @@ export const runtime = "nodejs";
 type Counts = { active_physicians: number; open_incidents: number; positive_feedback: number };
 type InboxRow = { id: string; polarity: string; category: string | null; commendation_category: string | null; severity: string | null; created_at: string; physician_name: string };
 type AuditRow = { id: number; action: string; entity_type: string; entity_id: string | null; created_at: string; actor_email: string | null; actor_position: string | null };
-type HospCensus = { code: string; name: string; vc: number; staff: number; total: number };
-type SpecCensus = { specialty: string; vc: number; staff: number; total: number };
+type Spec = { specialty: string; vc: number; staff: number; total: number };
+type Hosp = { code: string; name: string; vc: number; staff: number; total: number; specialties: Spec[] };
 
 async function fetchData(hospitalId: string | null) {
   const url = process.env.DATABASE_URL;
@@ -25,64 +25,69 @@ async function fetchData(hospitalId: string | null) {
   const cRows = hospitalId
     ? (await sql`
         SELECT
-          (SELECT count(DISTINCT pe.physician_id)::int FROM physician_engagements pe JOIN physicians p ON p.id = pe.physician_id
-             WHERE pe.hospital_id = ${hospitalId}::uuid AND pe.status = 'active' AND p.current_status = 'active') AS active_physicians,
-          (SELECT count(*)::int FROM incidents WHERE status = 'open' AND polarity = 'negative' AND hospital_id = ${hospitalId}::uuid) AS open_incidents,
-          (SELECT count(*)::int FROM incidents WHERE polarity = 'positive' AND hospital_id = ${hospitalId}::uuid) AS positive_feedback`) as Array<Counts>
+          (SELECT count(DISTINCT pe.physician_id)::int FROM physician_engagements pe JOIN physicians p ON p.id=pe.physician_id
+             WHERE pe.hospital_id=${hospitalId}::uuid AND pe.status='active' AND p.current_status='active') AS active_physicians,
+          (SELECT count(*)::int FROM incidents WHERE status='open' AND polarity='negative' AND hospital_id=${hospitalId}::uuid) AS open_incidents,
+          (SELECT count(*)::int FROM incidents WHERE polarity='positive' AND hospital_id=${hospitalId}::uuid) AS positive_feedback`) as Array<Counts>
     : (await sql`
         SELECT
-          (SELECT count(*)::int FROM physicians WHERE current_status = 'active') AS active_physicians,
-          (SELECT count(*)::int FROM incidents WHERE status = 'open' AND polarity = 'negative') AS open_incidents,
-          (SELECT count(*)::int FROM incidents WHERE polarity = 'positive') AS positive_feedback`) as Array<Counts>;
+          (SELECT count(*)::int FROM physicians WHERE current_status='active') AS active_physicians,
+          (SELECT count(*)::int FROM incidents WHERE status='open' AND polarity='negative') AS open_incidents,
+          (SELECT count(*)::int FROM incidents WHERE polarity='positive') AS positive_feedback`) as Array<Counts>;
 
   const iRows = hospitalId
     ? (await sql`
         SELECT i.id::text AS id, i.polarity, i.category, i.commendation_category, i.severity, i.created_at, p.full_name AS physician_name
-        FROM incidents i JOIN physicians p ON p.id = i.target_physician_id
-        WHERE ((i.status = 'open' AND i.polarity = 'negative') OR i.polarity = 'positive') AND i.hospital_id = ${hospitalId}::uuid
+        FROM incidents i JOIN physicians p ON p.id=i.target_physician_id
+        WHERE ((i.status='open' AND i.polarity='negative') OR i.polarity='positive') AND i.hospital_id=${hospitalId}::uuid
         ORDER BY i.created_at DESC LIMIT 12`) as Array<InboxRow>
     : (await sql`
         SELECT i.id::text AS id, i.polarity, i.category, i.commendation_category, i.severity, i.created_at, p.full_name AS physician_name
-        FROM incidents i JOIN physicians p ON p.id = i.target_physician_id
-        WHERE ((i.status = 'open' AND i.polarity = 'negative') OR i.polarity = 'positive')
+        FROM incidents i JOIN physicians p ON p.id=i.target_physician_id
+        WHERE ((i.status='open' AND i.polarity='negative') OR i.polarity='positive')
         ORDER BY i.created_at DESC LIMIT 12`) as Array<InboxRow>;
 
-  const byHospital = hospitalId
-    ? (await sql`
+  const hospTotals = (hospitalId
+    ? await sql`
         WITH base AS (SELECT pe.hospital_id, pe.physician_id, bool_or(pe.category='visiting_consultant') AS is_vc
           FROM physician_engagements pe JOIN physicians p ON p.id=pe.physician_id
           WHERE pe.status='active' AND p.current_status='active' AND pe.hospital_id=${hospitalId}::uuid GROUP BY pe.hospital_id, pe.physician_id)
         SELECT h.code, h.name, count(*) FILTER (WHERE base.is_vc)::int AS vc, count(*) FILTER (WHERE NOT base.is_vc)::int AS staff, count(*)::int AS total
-        FROM base JOIN hospitals h ON h.id=base.hospital_id GROUP BY h.code, h.name ORDER BY h.name`) as Array<HospCensus>
-    : (await sql`
+        FROM base JOIN hospitals h ON h.id=base.hospital_id GROUP BY h.code, h.name ORDER BY h.name`
+    : await sql`
         WITH base AS (SELECT pe.hospital_id, pe.physician_id, bool_or(pe.category='visiting_consultant') AS is_vc
           FROM physician_engagements pe JOIN physicians p ON p.id=pe.physician_id
           WHERE pe.status='active' AND p.current_status='active' GROUP BY pe.hospital_id, pe.physician_id)
         SELECT h.code, h.name, count(*) FILTER (WHERE base.is_vc)::int AS vc, count(*) FILTER (WHERE NOT base.is_vc)::int AS staff, count(*)::int AS total
-        FROM base JOIN hospitals h ON h.id=base.hospital_id GROUP BY h.code, h.name ORDER BY h.name`) as Array<HospCensus>;
+        FROM base JOIN hospitals h ON h.id=base.hospital_id GROUP BY h.code, h.name ORDER BY h.name`) as Array<Omit<Hosp, "specialties">>;
 
-  const bySpecialty = hospitalId
-    ? (await sql`
+  const specRows = (hospitalId
+    ? await sql`
         WITH base AS (SELECT pe.hospital_id, pe.physician_id, bool_or(pe.category='visiting_consultant') AS is_vc,
             max(COALESCE(NULLIF(trim(p.primary_specialty),''),'Unspecified')) AS specialty
           FROM physician_engagements pe JOIN physicians p ON p.id=pe.physician_id
           WHERE pe.status='active' AND p.current_status='active' AND pe.hospital_id=${hospitalId}::uuid GROUP BY pe.hospital_id, pe.physician_id)
-        SELECT specialty, count(*) FILTER (WHERE is_vc)::int AS vc, count(*) FILTER (WHERE NOT is_vc)::int AS staff, count(*)::int AS total
-        FROM base GROUP BY specialty ORDER BY total DESC, specialty`) as Array<SpecCensus>
-    : (await sql`
+        SELECT h.code, base.specialty, count(*) FILTER (WHERE is_vc)::int AS vc, count(*) FILTER (WHERE NOT is_vc)::int AS staff, count(*)::int AS total
+        FROM base JOIN hospitals h ON h.id=base.hospital_id GROUP BY h.code, base.specialty ORDER BY total DESC, base.specialty`
+    : await sql`
         WITH base AS (SELECT pe.hospital_id, pe.physician_id, bool_or(pe.category='visiting_consultant') AS is_vc,
             max(COALESCE(NULLIF(trim(p.primary_specialty),''),'Unspecified')) AS specialty
           FROM physician_engagements pe JOIN physicians p ON p.id=pe.physician_id
           WHERE pe.status='active' AND p.current_status='active' GROUP BY pe.hospital_id, pe.physician_id)
-        SELECT specialty, count(*) FILTER (WHERE is_vc)::int AS vc, count(*) FILTER (WHERE NOT is_vc)::int AS staff, count(*)::int AS total
-        FROM base GROUP BY specialty ORDER BY total DESC, specialty`) as Array<SpecCensus>;
+        SELECT h.code, base.specialty, count(*) FILTER (WHERE is_vc)::int AS vc, count(*) FILTER (WHERE NOT is_vc)::int AS staff, count(*)::int AS total
+        FROM base JOIN hospitals h ON h.id=base.hospital_id GROUP BY h.code, base.specialty ORDER BY total DESC, base.specialty`) as Array<{ code: string; specialty: string; vc: number; staff: number; total: number }>;
+
+  const byCode = new Map<string, Spec[]>();
+  for (const r of specRows) { if (!byCode.has(r.code)) byCode.set(r.code, []); byCode.get(r.code)!.push({ specialty: r.specialty, vc: r.vc, staff: r.staff, total: r.total }); }
+  const byHospital: Hosp[] = hospTotals.map((h) => ({ ...h, specialties: byCode.get(h.code) ?? [] }));
+  const specialtiesCount = new Set(specRows.map((r) => r.specialty)).size;
 
   const aRows = (await sql`
     SELECT a.id, a.action, a.entity_type, a.entity_id, a.created_at, p.email AS actor_email, pos.position_name AS actor_position
-    FROM audit_log_v2 a LEFT JOIN profiles p ON p.id = a.actor_user_id LEFT JOIN positions pos ON pos.id = p.position_id
+    FROM audit_log_v2 a LEFT JOIN profiles p ON p.id=a.actor_user_id LEFT JOIN positions pos ON pos.id=p.position_id
     ORDER BY a.created_at DESC LIMIT 20`) as Array<AuditRow>;
 
-  return { counts: cRows[0], inbox: iRows, byHospital, bySpecialty, audit: aRows };
+  return { counts: cRows[0], inbox: iRows, byHospital, hospitalsCount: byHospital.length, specialtiesCount, audit: aRows };
 }
 
 function timeAgo(iso: string): string {
@@ -102,7 +107,6 @@ function actionColor(a: string) {
 export default async function HomePage() {
   const user = await getCurrentUser();
   if (!user) return null;
-
   const filterCode = await getHospitalFilter();
   const filterId = await getHospitalFilterId();
   const data = await fetchData(filterId);
@@ -110,68 +114,62 @@ export default async function HomePage() {
   const counts = data?.counts ?? { active_physicians: 0, open_incidents: 0, positive_feedback: 0 };
   const inbox = data?.inbox ?? [];
   const byHospital = data?.byHospital ?? [];
-  const bySpecialty = data?.bySpecialty ?? [];
+  const hospitalsCount = data?.hospitalsCount ?? 0;
+  const specialtiesCount = data?.specialtiesCount ?? 0;
   const audit = data?.audit ?? [];
 
   const today = new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
   const HONORIFICS = new Set(["dr.", "dr", "prof.", "prof", "mr.", "mr", "ms.", "ms", "mrs.", "mrs"]);
-  function firstNameFrom(fn: string): string {
-    const toks = fn.trim().split(/\s+/); let i = 0;
-    while (i < toks.length - 1 && HONORIFICS.has(toks[i].toLowerCase())) i++;
-    return toks[i] ?? fn;
-  }
+  function firstNameFrom(fn: string): string { const toks = fn.trim().split(/\s+/); let i = 0; while (i < toks.length - 1 && HONORIFICS.has(toks[i].toLowerCase())) i++; return toks[i] ?? fn; }
   const firstName = firstNameFrom(user.full_name);
+
+  const Kpi = ({ label, value, sub }: { label: string; value: React.ReactNode; sub: React.ReactNode }) => (
+    <div className="bg-white border border-stone-200 rounded-xl p-4">
+      <div className="text-[11px] font-medium text-stone-500 tracking-wider uppercase">{label}</div>
+      <div className="text-3xl font-semibold num mt-1.5">{value}</div>
+      <div className="text-[11px] text-stone-500 mt-0.5">{sub}</div>
+    </div>
+  );
 
   return (
     <>
       <TopNav />
       <main className="max-w-[1400px] mx-auto px-8 py-8">
-        <div className="flex items-end justify-between mb-6">
-          <div>
-            <h1 className="text-[22px] font-semibold tracking-tight">Good morning, {firstName}</h1>
-            <div className="text-sm text-stone-500 mt-1">
-              {today}{user.is_super_admin ? " · Super Admin" : ""}
-              {user.position_label && user.position_label !== "Hospital PM" ? ` · ${user.position_label}` : (!user.is_super_admin ? ` · ${user.position_label}` : "")}
-              {" · viewing "}{filterCode === "all" ? "all hospitals" : filterCode}
-            </div>
+        <div className="mb-6">
+          <h1 className="text-[22px] font-semibold tracking-tight">Good morning, {firstName}</h1>
+          <div className="text-sm text-stone-500 mt-1">
+            {today}{user.is_super_admin ? " · Super Admin" : ""}
+            {user.position_label && user.position_label !== "Hospital PM" ? ` · ${user.position_label}` : (!user.is_super_admin ? ` · ${user.position_label}` : "")}
+            {" · viewing "}{filterCode === "all" ? "all hospitals" : filterCode}
           </div>
         </div>
 
-        {/* KPI strip */}
-        <div className="grid grid-cols-2 gap-3 mb-6 max-w-2xl">
-          <div className="bg-white border border-stone-200 rounded-xl p-4">
-            <div className="text-[11px] font-medium text-stone-500 tracking-wider uppercase">Active physicians</div>
-            <div className="text-3xl font-semibold num mt-1.5">{counts.active_physicians}</div>
-            <div className="text-[11px] text-stone-500 mt-0.5">in network</div>
-          </div>
-          <div className="bg-white border border-stone-200 rounded-xl p-4">
-            <div className="text-[11px] font-medium text-stone-500 tracking-wider uppercase">Open concerns</div>
-            <div className="text-3xl font-semibold num mt-1.5">{counts.open_incidents}</div>
-            <div className="text-[11px] text-stone-500 mt-0.5">
-              <span className="text-emerald-700 font-medium">{counts.positive_feedback} positive</span>{" · "}
-              <Link href="/incidents" className="text-brand hover:underline">Feedback inbox →</Link>
-            </div>
-          </div>
+        {/* KPI strip — 4 even cards */}
+        <div className="grid grid-cols-4 gap-3 mb-4">
+          <Kpi label="Active physicians" value={counts.active_physicians} sub="in network" />
+          <Kpi label="Open concerns" value={counts.open_incidents} sub={<><span className="text-emerald-700 font-medium">{counts.positive_feedback} positive</span>{" · "}<Link href="/incidents" className="text-brand hover:underline">Feedback inbox →</Link></>} />
+          <Kpi label="Hospitals" value={hospitalsCount} sub="with active doctors" />
+          <Kpi label="Specialties" value={specialtiesCount} sub={filterCode === "all" ? "across network" : filterCode} />
         </div>
 
-        {/* Row 1 — Physician DB (½) + Census (½) */}
+        {/* Row 1 — Physician DB + Census (equal) */}
         <div className="grid grid-cols-2 gap-4 mb-4">
           <MiniPhysicianDB />
-          <CensusCards byHospital={byHospital} bySpecialty={bySpecialty} />
+          <CensusCards byHospital={byHospital} />
         </div>
 
-        {/* Row 2 — Inbox + Watchlist (⅔) + Audit feed (⅓) */}
-        <div className="grid grid-cols-3 gap-4">
-          <div className="col-span-2 space-y-4">
-            <section className="bg-white border border-stone-200 rounded-xl">
-              <div className="flex items-center justify-between px-5 py-3.5 border-b border-stone-100">
-                <div className="flex items-center gap-2">
-                  <h2 className="text-sm font-semibold">Inbox</h2>
-                  <span className="text-[11px] bg-stone-100 text-stone-600 rounded-full px-2 py-0.5 font-medium">{counts.open_incidents}</span>
-                  {counts.positive_feedback > 0 && <span className="text-[11px] text-emerald-600 font-medium">+{counts.positive_feedback} positive</span>}
-                </div>
-                <Link href="/incidents" className="text-[12px] text-brand font-medium">Open inbox →</Link>
+        {/* Row 2 — Inbox + Audit (equal halves) */}
+        <div className="grid grid-cols-2 gap-4 mb-4">
+          <section className="bg-white border border-stone-200 rounded-xl flex flex-col h-[300px]">
+            <div className="flex items-center justify-between px-5 py-3.5 border-b border-stone-100 shrink-0">
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm font-semibold">Inbox</h2>
+                <span className="text-[11px] bg-stone-100 text-stone-600 rounded-full px-2 py-0.5 font-medium">{counts.open_incidents}</span>
+                {counts.positive_feedback > 0 && <span className="text-[11px] text-emerald-600 font-medium">+{counts.positive_feedback} positive</span>}
               </div>
+              <Link href="/incidents" className="text-[12px] text-brand font-medium">Open inbox →</Link>
+            </div>
+            <div className="flex-1 overflow-y-auto">
               {inbox.length === 0 ? (
                 <div className="px-5 py-10 text-center text-sm text-stone-500">No open concerns or recent feedback.</div>
               ) : (
@@ -194,26 +192,15 @@ export default async function HomePage() {
                   })}
                 </div>
               )}
-            </section>
+            </div>
+          </section>
 
-            <section className="bg-white border border-stone-200 rounded-xl">
-              <div className="flex items-center justify-between px-5 py-3.5 border-b border-stone-100">
-                <div className="flex items-center gap-2">
-                  <h2 className="text-sm font-semibold">Watchlist</h2>
-                  <span className="text-[11px] bg-stone-100 text-stone-600 rounded-full px-2 py-0.5 font-medium">0</span>
-                </div>
-                <Link href="/surgical-elo" className="text-[12px] text-brand font-medium">Open Even ELO →</Link>
-              </div>
-              <div className="px-5 py-10 text-center text-sm text-stone-500">No tier moves yet — surgeons will appear here when ELO data lands.</div>
-            </section>
-          </div>
-
-          <div className="space-y-4">
-            <section className="bg-white border border-stone-200 rounded-xl">
-              <div className="flex items-center justify-between px-5 py-3.5 border-b border-stone-100">
-                <h2 className="text-sm font-semibold">Audit feed</h2>
-                <span className="text-[11px] bg-stone-100 text-stone-600 rounded-full px-2 py-0.5 font-medium">{audit.length}</span>
-              </div>
+          <section className="bg-white border border-stone-200 rounded-xl flex flex-col h-[300px]">
+            <div className="flex items-center justify-between px-5 py-3.5 border-b border-stone-100 shrink-0">
+              <h2 className="text-sm font-semibold">Audit feed</h2>
+              <span className="text-[11px] bg-stone-100 text-stone-600 rounded-full px-2 py-0.5 font-medium">{audit.length}</span>
+            </div>
+            <div className="flex-1 overflow-y-auto">
               {audit.length === 0 ? (
                 <div className="px-5 py-8 text-center text-sm text-stone-500">No audit entries yet.</div>
               ) : (
@@ -227,9 +214,19 @@ export default async function HomePage() {
                   ))}
                 </div>
               )}
-            </section>
-          </div>
+            </div>
+          </section>
         </div>
+
+        {/* Slim Watchlist strip */}
+        <section className="bg-white border border-stone-200 rounded-xl px-5 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-2 min-w-0">
+            <h2 className="text-sm font-semibold">Watchlist</h2>
+            <span className="text-[11px] bg-stone-100 text-stone-600 rounded-full px-2 py-0.5 font-medium">0</span>
+            <span className="text-[12px] text-stone-400 truncate">No tier moves yet — surgeons appear here when ELO data lands.</span>
+          </div>
+          <Link href="/surgical-elo" className="text-[12px] text-brand font-medium shrink-0 ml-3">Open Even ELO →</Link>
+        </section>
       </main>
     </>
   );

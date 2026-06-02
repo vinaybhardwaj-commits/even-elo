@@ -47,7 +47,17 @@ export async function GET(req: NextRequest) {
   } else if (group === "specialty") {
     const specialty = (sp.get("specialty") ?? "").trim();
     if (!specialty) return NextResponse.json({ ok: false, error: "specialty required" }, { status: 400, headers: NO_STORE });
-    const hid = await getHospitalFilterId(); // scope to match the card (Q-D)
+    // Scope: an explicit hospital_code (accordion drill within one hospital) wins;
+    // else fall back to the global hospital filter (Q-D).
+    const code = (sp.get("hospital_code") ?? "").trim();
+    let hid: string | null = null;
+    if (code) {
+      const h = (await sql`SELECT id::text AS id FROM hospitals WHERE code = ${code} LIMIT 1`) as Array<{ id: string }>;
+      if (h.length === 0) return NextResponse.json({ ok: true, members: [] }, { headers: NO_STORE });
+      hid = h[0].id;
+    } else {
+      hid = await getHospitalFilterId();
+    }
     members = (await sql`
       WITH base AS (
         SELECT pe.physician_id, bool_or(pe.category = 'visiting_consultant') AS is_vc
