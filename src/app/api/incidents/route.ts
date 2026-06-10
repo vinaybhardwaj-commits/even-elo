@@ -117,6 +117,8 @@ export async function GET(req: NextRequest) {
         i.severity,
         i.polarity,
         i.source,
+        i.reporter_name,
+        i.reporter_email,
         i.commendation_category,
         i.patient_rating,
         i.narrative,
@@ -152,7 +154,9 @@ export async function GET(req: NextRequest) {
 
   const out: IncidentListRow[] = rows.map((r) => {
     // Admins always see the reporter (Feedback PRD #6). Physician authors resolve to their name.
-    const reporterName = r.submitter_physician_name
+    const reporterName = r.source === "external_public"
+      ? `${(r.reporter_name as string) || "External reporter"} · external (unverified)${r.reporter_email ? ` · ${r.reporter_email}` : ""}`
+      : r.submitter_physician_name
       ? `${r.submitter_physician_name as string} (peer)`
       : `${(r.submitter_position_at_time as string) ?? ""}${r.submitter_email ? ` · ${r.submitter_email}` : ""}`;
     return {

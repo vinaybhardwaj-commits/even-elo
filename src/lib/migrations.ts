@@ -1014,5 +1014,54 @@ export const MIGRATIONS: Migration[] = [
       WHERE id = 'feb51691-b376-4552-954d-0dcff78ff814';
     `,
   },
+  {
+    id: "024_external_public_incidents",
+    description: "Public external incident intake. Adds incidents.reporter_name + reporter_email; widens the source CHECK to include 'external_public'; swaps incidents_one_author_chk so an authorless external row is valid (source='external_public' with a reporter_email and NO profile/physician author), while preserving the one-author invariant for internal rows. Bundled with the /report public form + /api/public/* endpoints.",
+    sql: `
+      ALTER TABLE incidents ADD COLUMN IF NOT EXISTS reporter_name  text;
+      ALTER TABLE incidents ADD COLUMN IF NOT EXISTS reporter_email text;
+
+      -- Widen the source CHECK to admit external public reports (name-agnostic drop).
+      DO $$
+      DECLARE r record;
+      BEGIN
+        FOR r IN
+          SELECT conname FROM pg_constraint
+          WHERE conrelid = 'incidents'::regclass AND contype = 'c'
+            AND pg_get_constraintdef(oid) ILIKE '%source%'
+            AND pg_get_constraintdef(oid) ILIKE '%peer%'
+            AND pg_get_constraintdef(oid) NOT ILIKE '%external_public%'
+        LOOP
+          EXECUTE format('ALTER TABLE incidents DROP CONSTRAINT %I', r.conname);
+        END LOOP;
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conrelid = 'incidents'::regclass AND conname = 'incidents_source_check'
+        ) THEN
+          ALTER TABLE incidents ADD CONSTRAINT incidents_source_check
+            CHECK (source IN ('patient','peer','governance','external_public'));
+        END IF;
+      END $$;
+
+      -- Allow an authorless external row; keep the internal one-author invariant otherwise.
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conrelid = 'incidents'::regclass AND conname = 'incidents_one_author_chk'
+        ) THEN
+          ALTER TABLE incidents DROP CONSTRAINT incidents_one_author_chk;
+        END IF;
+        ALTER TABLE incidents ADD CONSTRAINT incidents_one_author_chk CHECK (
+          (source = 'external_public'
+             AND submitter_user_id IS NULL
+             AND submitter_physician_id IS NULL
+             AND reporter_email IS NOT NULL)
+          OR
+          ((submitter_user_id IS NOT NULL)::int + (submitter_physician_id IS NOT NULL)::int = 1)
+        );
+      END $$;
+    `,
+  },
 ];
 

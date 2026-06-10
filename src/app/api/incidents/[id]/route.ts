@@ -47,6 +47,8 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
       i.severity,
       i.polarity,
       i.source,
+      i.reporter_name,
+      i.reporter_email,
       i.commendation_category,
       i.patient_rating,
       i.patient_ref,
@@ -90,7 +92,9 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
     return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403, headers: NO_STORE });
   }
 
-  const reporterName = i.submitter_physician_name
+  const reporterName = i.source === "external_public"
+    ? `${(i.reporter_name as string) || "External reporter"} · external (unverified)${i.reporter_email ? ` · ${i.reporter_email}` : ""}`
+    : i.submitter_physician_name
     ? `${i.submitter_physician_name as string} (peer)`
     : `${(i.submitter_position_at_time as string) ?? ""}${i.submitter_email ? ` · ${i.submitter_email}` : ""}`;
   const submitter_label = (reporterName.trim() || "Unknown") + (i.anonymous_flag ? " · anon to peers" : "");

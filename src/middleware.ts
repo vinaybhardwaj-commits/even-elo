@@ -4,13 +4,16 @@ import { jwtVerify } from "jose";
 const COOKIE_NAME = "epi_session";
 
 // Public routes — no auth required
-const PUBLIC_ROUTES = ["/auth/login", "/auth/signup", "/auth/pending"];
+const PUBLIC_ROUTES = ["/auth/login", "/auth/signup", "/auth/pending", "/report"];
 const PUBLIC_API_ROUTES = [
   "/api/auth/login",
   "/api/auth/signup",
   "/api/auth/logout",
   "/api/hospitals-public",
   "/api/positions",
+  // Public external incident intake (/report page) — no auth by design.
+  "/api/public/physicians",
+  "/api/public/incidents",
 ];
 
 // Admin-bootstrap routes — URL-gated like v1 (no auth required so we can run
