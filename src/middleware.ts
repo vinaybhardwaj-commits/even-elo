@@ -14,6 +14,8 @@ const PUBLIC_API_ROUTES = [
   // Public external incident intake (/report page) — no auth by design.
   "/api/public/physicians",
   "/api/public/incidents",
+  // Governance MCP server — does its own bearer-token auth.
+  "/api/mcp",
 ];
 
 // Admin-bootstrap routes — URL-gated like v1 (no auth required so we can run
