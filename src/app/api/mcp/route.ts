@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { neon } from "@neondatabase/serverless";
+import { verifyAccess } from "@/lib/mcp-oauth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -40,11 +41,12 @@ const POLARITIES = new Set(["positive","negative"]);
 const COMMENDATIONS = new Set(["Clinical Excellence","Patient Experience","Teamwork & Collaboration","Teaching & Mentorship","Going Above & Beyond"]);
 const ENG_CATEGORIES = new Set(["provisional","active","visiting_consultant","locum_tenens","affiliate"]);
 
-function bearerOk(req: NextRequest): boolean {
-  const want = process.env.MCP_BEARER_TOKEN;
-  if (!want) return false;
+async function authOk(req: NextRequest): Promise<boolean> {
   const got = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "").trim();
-  return got.length > 0 && got === want;
+  if (!got) return false;
+  const want = process.env.MCP_BEARER_TOKEN;
+  if (want && got === want) return true;          // static secret (curl / fallback)
+  return (await verifyAccess(got)) !== null;       // OAuth access token
 }
 
 function getSql(): Sql {
@@ -319,8 +321,9 @@ async function handleMessage(msg: RpcMsg, sql: Sql): Promise<Json | null> {
 }
 
 export async function POST(req: NextRequest) {
-  if (!bearerOk(req)) {
-    return new NextResponse(JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32001, message: "Unauthorized" } }), { status: 401, headers: { "Content-Type": "application/json", "WWW-Authenticate": "Bearer", ...NO_STORE } });
+  if (!(await authOk(req))) {
+    const rm = `https://${req.headers.get("host")}/.well-known/oauth-protected-resource`;
+    return new NextResponse(JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32001, message: "Unauthorized" } }), { status: 401, headers: { "Content-Type": "application/json", "WWW-Authenticate": `Bearer resource_metadata="${rm}"`, ...NO_STORE } });
   }
   let body: unknown;
   try { body = await req.json(); }

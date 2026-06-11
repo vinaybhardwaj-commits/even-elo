@@ -16,6 +16,10 @@ const PUBLIC_API_ROUTES = [
   "/api/public/incidents",
   // Governance MCP server — does its own bearer-token auth.
   "/api/mcp",
+  // OAuth endpoints for the MCP connector.
+  "/api/oauth/register",
+  "/api/oauth/authorize",
+  "/api/oauth/token",
 ];
 
 // Admin-bootstrap routes — URL-gated like v1 (no auth required so we can run
@@ -50,6 +54,11 @@ interface MiddlewarePayload {
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+
+  // OAuth discovery metadata — always public (RFC 9728 / 8414).
+  if (request.nextUrl.pathname.startsWith("/.well-known/")) {
+    return NextResponse.next();
+  }
 
   // Static assets
   if (
