@@ -75,6 +75,8 @@ export default function IncidentsInbox() {
     if (status) u.searchParams.set("status", status);
     if (severity) u.searchParams.set("severity", severity);
     if (category) u.searchParams.set("category", category);
+    if (polarity) u.searchParams.set("polarity", polarity);
+    if (src) u.searchParams.set("source", src);
     fetch(u.toString())
       .then((r) => r.json())
       .then((j) => {
@@ -85,7 +87,7 @@ export default function IncidentsInbox() {
       })
       .finally(() => setLoading(false));
   }
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [status, severity, category]);
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [status, severity, category, polarity, src]);
 
   // Totals across visible scope (sum of counts regardless of current filter)
   const totalByStatus: Record<string, number> = {};

@@ -87,6 +87,8 @@ export async function GET(req: NextRequest) {
   const status = (params.get("status") ?? "").trim();
   const severity = (params.get("severity") ?? "").trim();
   const category = (params.get("category") ?? "").trim();
+  const polarity = (params.get("polarity") ?? "").trim();
+  const fb_source = (params.get("source") ?? "").trim();
   const physician_id = (params.get("physician_id") ?? "").trim();
   const limit = Math.min(500, Math.max(1, parseInt(params.get("limit") ?? "100", 10) || 100));
   let hospital_id_filter = (params.get("hospital_id") ?? "").trim();
@@ -141,6 +143,8 @@ export async function GET(req: NextRequest) {
         AND (${status} = '' OR i.status = ${status})
         AND (${severity} = '' OR i.severity = ${severity})
         AND (${category} = '' OR i.category = ${category})
+        AND (${polarity} = '' OR i.polarity = ${polarity})
+        AND (${fb_source} = '' OR i.source = ${fb_source})
         AND (${physician_id} = '' OR i.target_physician_id = ${physician_id || '00000000-0000-0000-0000-000000000000'}::uuid)
         AND (${hospital_id_filter} = '' OR i.hospital_id = ${hospital_id_filter || '00000000-0000-0000-0000-000000000000'}::uuid)
         AND (${only_unviewed ? 'true' : 'false'}::boolean = false OR NOT EXISTS (
