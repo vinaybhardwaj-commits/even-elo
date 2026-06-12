@@ -16,6 +16,8 @@ const PUBLIC_API_ROUTES = [
   "/api/public/incidents",
   // Governance MCP server — does its own bearer-token auth.
   "/api/mcp",
+  // Daily Dash GV service intake — does its own bearer-token auth.
+  "/api/service/observations",
   // OAuth endpoints for the MCP connector.
   "/api/oauth/register",
   "/api/oauth/authorize",
