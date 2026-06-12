@@ -18,10 +18,6 @@ interface NavItem {
  */
 export function TopNav({ nav }: { nav?: NavItem[] } = {}) {
   const [user, setUser] = useState<UserSummary | null>(null);
-  const [pendingCount, setPendingCount] = useState<number>(0);
-  const [openIncidentsCount, setOpenIncidentsCount] = useState<number>(0);
-  const [openVcCount, setOpenVcCount] = useState<number>(0);
-
   useEffect(() => {
     fetch("/api/auth/me")
       .then((r) => r.json())
@@ -31,40 +27,9 @@ export function TopNav({ nav }: { nav?: NavItem[] } = {}) {
       .catch(() => undefined);
   }, []);
 
-  useEffect(() => {
-    if (!user?.is_super_admin) return;
-    fetch("/api/admin/profiles?status=pending_approval")
-      .then((r) => r.json())
-      .then((j) => j.ok && setPendingCount((j.rows ?? []).length))
-      .catch(() => undefined);
-  }, [user?.is_super_admin]);
-
-  useEffect(() => {
-    if (!user) return;
-    fetch("/api/incidents?unviewed=true&limit=500")
-      .then((r) => r.json())
-      .then((j) => j.ok && setOpenIncidentsCount((j.rows ?? []).length))
-      .catch(() => undefined);
-  }, [user]);
-
-  useEffect(() => {
-    if (!user || !(user.is_super_admin || user.is_sgc_member)) {
-      // VC pipeline is super_admin/sgc/hr/site_med_head only — coarse gate ok
-    }
-    fetch("/api/vc-onboarding/prescreens")
-      .then((r) => r.json())
-      .then((j) => {
-        if (!j.ok) return;
-        const active = (j.rows ?? []).filter((r: { stage: string }) =>
-          ["prescreen","observation","decision"].includes(r.stage)).length;
-        setOpenVcCount(active);
-      })
-      .catch(() => undefined);
-  }, [user]);
-
   const showElo = !!user && user.is_super_admin; // Surgical Governance is super_admin-only (Users PRD #18)
   const showAdmin = !!user && user.is_super_admin;
-  const navItems: NavItem[] = nav ?? defaultNav(showElo, showAdmin, pendingCount, openIncidentsCount, openVcCount);
+  const navItems: NavItem[] = nav ?? defaultNav(showElo, showAdmin);
 
   return (
     <header className="bg-white border-b border-stone-200 sticky top-0 z-40">
@@ -107,14 +72,14 @@ export function TopNav({ nav }: { nav?: NavItem[] } = {}) {
   );
 }
 
-function defaultNav(showElo: boolean, showAdmin: boolean, pending: number, openIncidents: number, openVc: number): NavItem[] {
+function defaultNav(showElo: boolean, showAdmin: boolean): NavItem[] {
   const items: NavItem[] = [
     { label: "Home", href: "/home" },
     { label: "Physician DB", href: "/physicians" },
-    { label: "Credentialing", href: "/onboarding", badge: openVc || undefined },
-    { label: "Feedback", href: "/incidents", badge: openIncidents || undefined },
+    { label: "Credentialing", href: "/onboarding" },
+    { label: "Feedback", href: "/incidents" },
   ];
   if (showElo) items.push({ label: "Surgical Governance", href: "/surgical-governance" });
-  if (showAdmin) items.push({ label: "Admin", href: "/admin", badge: pending || undefined });
+  if (showAdmin) items.push({ label: "Admin", href: "/admin" });
   return items;
 }

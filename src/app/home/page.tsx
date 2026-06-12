@@ -5,6 +5,7 @@ import { getHospitalFilter, getHospitalFilterId } from "@/lib/hospital-filter";
 import { TopNav } from "@/components/TopNav";
 import MiniPhysicianDB from "@/components/MiniPhysicianDB";
 import CensusCards from "@/components/CensusCards";
+import InboxCard from "@/components/InboxCard";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -112,7 +113,6 @@ export default async function HomePage() {
   const data = await fetchData(filterId);
 
   const counts = data?.counts ?? { active_physicians: 0, open_incidents: 0, positive_feedback: 0 };
-  const inbox = data?.inbox ?? [];
   const byHospital = data?.byHospital ?? [];
   const hospitalsCount = data?.hospitalsCount ?? 0;
   const specialtiesCount = data?.specialtiesCount ?? 0;
@@ -160,40 +160,7 @@ export default async function HomePage() {
 
         {/* Row 2 — Inbox + Audit (equal halves) */}
         <div className="grid grid-cols-2 gap-4 mb-4">
-          <section className="bg-white border border-stone-200 rounded-xl flex flex-col h-[300px]">
-            <div className="flex items-center justify-between px-5 py-3.5 border-b border-stone-100 shrink-0">
-              <div className="flex items-center gap-2">
-                <h2 className="text-sm font-semibold">Inbox</h2>
-                <span className="text-[11px] bg-stone-100 text-stone-600 rounded-full px-2 py-0.5 font-medium">{counts.open_incidents}</span>
-                {counts.positive_feedback > 0 && <span className="text-[11px] text-emerald-600 font-medium">+{counts.positive_feedback} positive</span>}
-              </div>
-              <Link href="/incidents" className="text-[12px] text-brand font-medium">Open inbox →</Link>
-            </div>
-            <div className="flex-1 overflow-y-auto">
-              {inbox.length === 0 ? (
-                <div className="px-5 py-10 text-center text-sm text-stone-500">No open concerns or recent feedback.</div>
-              ) : (
-                <div className="divide-y divide-stone-50">
-                  {inbox.map((r) => {
-                    const isPos = r.polarity === "positive";
-                    const label = isPos ? (r.commendation_category ?? "Positive feedback") : (r.category ?? "Concern");
-                    return (
-                      <Link key={r.id} href={`/incidents/${r.id}`} className="flex items-center justify-between px-5 py-3 hover:bg-stone-50 transition">
-                        <div className="flex items-center gap-3 min-w-0">
-                          <span className={`inline-flex shrink-0 items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${isPos ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"}`}>{isPos ? "Positive" : "Concern"}</span>
-                          <div className="min-w-0">
-                            <div className="text-sm font-medium text-stone-800 truncate">{r.physician_name}</div>
-                            <div className="text-[12px] text-stone-500 truncate">{label}{!isPos && r.severity ? ` · ${r.severity}` : ""}</div>
-                          </div>
-                        </div>
-                        <span className="text-[11px] text-stone-400 shrink-0 ml-3">{timeAgo(r.created_at)}</span>
-                      </Link>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </section>
+          <InboxCard openCount={counts.open_incidents} positiveCount={counts.positive_feedback} />
 
           <section className="bg-white border border-stone-200 rounded-xl flex flex-col h-[300px]">
             <div className="flex items-center justify-between px-5 py-3.5 border-b border-stone-100 shrink-0">
