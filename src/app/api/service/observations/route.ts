@@ -71,6 +71,20 @@ export async function POST(req: NextRequest) {
     const sql = db();
     const target = s(body.physician_id);
     if (!UUID_RE.test(target)) return NextResponse.json({ ok: false, error: "valid physician_id required" }, { status: 400 });
+
+    // kind:'note' — append a dated digest line to the physician's notes
+    // (used by the Daily Dash nightly per-physician digest; no incident row)
+    if (s(body.kind) === "note") {
+      const line = s(body.narrative);
+      if (!line) return NextResponse.json({ ok: false, error: "narrative required" }, { status: 400 });
+      const ph = (await sql`SELECT full_name FROM physicians WHERE id=${target}::uuid`) as Row[];
+      if (ph.length === 0) return NextResponse.json({ ok: false, error: "physician not found" }, { status: 404 });
+      await sql`UPDATE physicians SET notes = COALESCE(notes, '') || ${"\n" + line}, updated_at = now() WHERE id=${target}::uuid`;
+      const actor = await ensureDailyDashActor(sql);
+      await audit(sql, actor.id, "update", "physician", target, { via: "daily_dash_gv", note_appended: line.slice(0, 200) });
+      return NextResponse.json({ ok: true, kind: "note" });
+    }
+
     const polarity = POLARITIES.has(s(body.polarity)) ? s(body.polarity) : "negative";
     const narrative = s(body.narrative);
     if (!narrative) return NextResponse.json({ ok: false, error: "narrative required" }, { status: 400 });
