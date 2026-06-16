@@ -81,5 +81,6 @@ function defaultNav(showElo: boolean, showAdmin: boolean): NavItem[] {
   ];
   if (showElo) items.push({ label: "Surgical Governance", href: "/surgical-governance" });
   if (showAdmin) items.push({ label: "Admin", href: "/admin" });
+  items.push({ label: "Guide", href: "/guide" });
   return items;
 }

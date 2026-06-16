@@ -91,6 +91,7 @@ export function OppeReviewModal({ oppeId, onClose, onSaved }: { oppeId: string; 
         <div className="px-6 py-4 border-b border-stone-100 flex items-center justify-between">
           <div>
             <h2 className="text-base font-semibold tracking-tight">OPPE review</h2>
+            <div className="text-[11px] text-stone-500 mt-0.5">Ongoing Professional Practice Evaluation · <a href="/guide#oppe" target="_blank" rel="noopener noreferrer" className="text-brand hover:underline">what is OPPE?</a></div>
             {data && (
               <div className="text-xs text-stone-500 mt-0.5">
                 {data.physician_name} · {data.hospital_code} · {data.period_start} → {data.period_end}

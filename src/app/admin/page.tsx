@@ -73,7 +73,7 @@ export default async function AdminIndex() {
           <div className="card bg-white border border-stone-200 rounded-xl p-5">
             <div className="text-[11px] font-medium text-stone-500 tracking-wider uppercase">OPPE due (≤7d)</div>
             <div className={`num text-3xl font-semibold mt-2 ${c.oppe_due > 0 ? "text-amber-700" : "text-stone-400"}`}>{c.oppe_due}</div>
-            <div className="text-[11px] text-stone-500 mt-1">{c.oppe_open} open in total · per credentialing PRD §C.6</div>
+            <div className="text-[11px] text-stone-500 mt-1">{c.oppe_open} open · Ongoing Professional Practice Evaluation</div>
           </div>
           <Link href="/admin/metrics" className="card bg-white border border-stone-200 rounded-xl p-5 hover:border-stone-300">
             <div className="text-[11px] font-medium text-stone-500 tracking-wider uppercase">Clinical metrics</div>

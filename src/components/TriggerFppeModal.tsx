@@ -70,7 +70,8 @@ export function TriggerFppeModal({
         <div className="px-6 py-4 border-b border-stone-100 flex items-center justify-between">
           <div>
             <h2 className="text-base font-semibold tracking-tight">Trigger FPPE</h2>
-            <div className="text-xs text-stone-500 mt-0.5">{physicianName}</div>
+            <div className="text-xs text-stone-500 mt-0.5">Focused Professional Practice Evaluation · {physicianName}</div>
+            <a href="/guide#fppe" target="_blank" rel="noopener noreferrer" className="text-[11px] text-brand hover:underline">What is FPPE? →</a>
           </div>
           <button onClick={onClose} className="text-stone-400 hover:text-stone-700 text-lg">×</button>
         </div>

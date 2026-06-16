@@ -471,7 +471,7 @@ export default function PhysicianProfilePage() {
             </div>
             <div className="flex gap-2">
               {physician.current_status === "active" && (me?.is_super_admin || me?.is_site_medical_head || me?.is_hr) && (
-                <button onClick={() => setTriggerFppe(true)} className="px-3 py-2 rounded-lg text-sm font-medium text-amber-800 bg-amber-50 hover:bg-amber-100">
+                <button onClick={() => setTriggerFppe(true)} title="Focused Professional Practice Evaluation" className="px-3 py-2 rounded-lg text-sm font-medium text-amber-800 bg-amber-50 hover:bg-amber-100">
                   Trigger FPPE
                 </button>
               )}
@@ -853,10 +853,13 @@ export default function PhysicianProfilePage() {
             <div className="space-y-4">
               <section className="bg-white border border-stone-200 rounded-xl">
                 <div className="px-5 py-3.5 border-b border-stone-100 flex items-center justify-between">
-                  <h2 className="text-sm font-semibold">
-                    OPPE reviews <span className="text-[11px] bg-stone-100 text-stone-600 rounded-full px-2 py-0.5 font-medium ml-1">{oppeRows.length}</span>
-                  </h2>
-                  <div className="text-[11px] text-stone-500">Auto-aggregated 6-month review packets per engagement.</div>
+                  <div>
+                    <h2 className="text-sm font-semibold">
+                      OPPE reviews <span className="text-[11px] bg-stone-100 text-stone-600 rounded-full px-2 py-0.5 font-medium ml-1">{oppeRows.length}</span>
+                    </h2>
+                    <div className="text-[11px] text-stone-500 mt-0.5">Ongoing Professional Practice Evaluation · auto-aggregated 6-month packets</div>
+                  </div>
+                  <a href="/guide#oppe" className="text-[11px] text-brand font-medium hover:underline shrink-0 ml-3">What is this? →</a>
                 </div>
                 {oppeRows.length === 0 ? (
                   <div className="px-5 py-12 text-center text-sm text-stone-500">
