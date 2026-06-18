@@ -1063,5 +1063,83 @@ export const MIGRATIONS: Migration[] = [
       END $$;
     `,
   },
+  {
+    id: "025_doctor_perf_weekly",
+    description: "Doctor portal 'My Performance': physicians.metabase_doctor_email mapping (populated for the 38 matched physicians) + doctor_perf_weekly snapshot table — a weekly copy of Metabase mv_doctor_weekly_performance (keyed doctor_email+week). Snapshot is loaded via connectors and refreshed weekly; no live DB credential lives in the app.",
+    sql: `
+      ALTER TABLE physicians ADD COLUMN IF NOT EXISTS metabase_doctor_email text;
+      CREATE INDEX IF NOT EXISTS idx_physicians_mb_email ON physicians (lower(metabase_doctor_email));
+
+      CREATE TABLE IF NOT EXISTS doctor_perf_weekly (
+        doctor_email                       text NOT NULL,
+        week                               date NOT NULL,
+        doctor_specialty                   text,
+        doctor_channel_type                text,
+        total_consults                     integer,
+        csat_pct                           numeric,
+        csat_responses                     integer,
+        positive_csat_count                integer,
+        doctor_noshow_tc_rate              numeric,
+        patient_noshow_rate                numeric,
+        cancellation_rate                  numeric,
+        doctor_cancellation_rate           numeric,
+        missing_prescription_rate          numeric,
+        presc_under_30_pct                 numeric,
+        inperson_consult_count             integer,
+        tc_active_event_count              integer,
+        tc_events_missing_recording_count  integer,
+        unwritten_count                    integer,
+        completed_presc_count              integer,
+        cancelled_count                    integer,
+        patient_noshow_count               integer,
+        snapshot_at                        timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY (doctor_email, week)
+      );
+      CREATE INDEX IF NOT EXISTS idx_dpw_email ON doctor_perf_weekly (lower(doctor_email));
+
+      UPDATE physicians p SET metabase_doctor_email = v.email
+      FROM (VALUES
+        ('162799b0-2517-40ad-8b8b-d5b34d6ace42','animeshbanerjee@even.in'),
+        ('b90c393d-153d-434c-86b1-2027be2ca7a4','sharil.hegde@even.in'),
+        ('e497eb20-3fd8-4ce9-842d-6829faeff7cf','nishita.das@even.in'),
+        ('00f83381-8039-4b15-a699-d72f6cc065d9','sunil.kumar@even.in'),
+        ('1bbebd13-da59-4bee-96b3-ca54dc89615e','ankitbhojani@even.in'),
+        ('f3cae8c2-b09b-4624-94e1-b66953ce6f63','prashanth.nagaraj@even.in'),
+        ('bfa157cc-514c-4bac-a31b-ca438d3e68fa','poornima.parasuraman@even.in'),
+        ('3926b406-51c8-4172-8e3d-bb265ccff853','puneeth.bs@even.in'),
+        ('d60f594e-8b71-4cd8-afff-afd6b057edaf','sanjeev.mn@even.in'),
+        ('30df4231-d46e-4b2e-887f-1fdc4c9f5be9','rahul.p@even.in'),
+        ('e3b62af4-d37c-417b-8e12-9bb5e871a33f','sriharee.kulkarni@even.in'),
+        ('cd098b4c-458a-4935-a0e2-8d7284285079','nivedita.jha@even.in'),
+        ('8a425578-6b5d-4506-b09b-bc3fe875ac7a','vishal.naik@even.in'),
+        ('95ff5d32-64b6-417b-837e-9084e36f2578','yashika.s@even.in'),
+        ('1a6bf4f6-01e6-4069-87b0-8f627cb9eeff','kiran.joshy@even.in'),
+        ('d45d245a-0a8f-47ff-aa49-985ef706e236','anusha.s@even.in'),
+        ('ef8e8f91-0d1e-4fdf-b2fe-b2221e8570ef','prabhudev@even.in'),
+        ('4c547f18-079a-492a-b1aa-b62574715845','shishirakumar@even.in'),
+        ('64a7566f-7b02-4db4-90ea-e8fb754a1176','manoj.s@even.in'),
+        ('53b6ada9-5156-4a57-b323-124eb53d1399','nayar.sajeet@even.in'),
+        ('cd93300a-6d98-4eb3-9907-0ad65f9ec6d2','harish.puranik@even.in'),
+        ('8b9f5597-8aeb-4a81-af75-823c0eb4bad3','basavaraj.utagi@even.in'),
+        ('dc46fa05-67ac-4fcf-94d7-57d018f56c47','abrar@even.in'),
+        ('b7d78e87-c15c-41cf-924f-e463981963af','avinash.parthasarathy@even.in'),
+        ('e8904cbb-82dd-468d-8603-b58687f5e8e4','srinivasan@even.in'),
+        ('aab2bc16-9dc4-452d-8068-17808df5ef9c','megha.chouhan@even.in'),
+        ('d29db5e7-81e6-43ea-988c-fb61bfa8f539','vineela@even.in'),
+        ('92c7afd5-bc24-4470-aba0-6eff326f0c3b','girish.namagondlu@even.in'),
+        ('d6be1968-7a5a-42e4-bb55-84d2dc8754c8','mala@even.in'),
+        ('f544b3e6-88f6-4b4d-8915-3647c0b4dfb6','soujanya@even.in'),
+        ('e971b54d-4c9c-4ee2-94b8-dc9bd19dceb6','gautham.shankar@even.in'),
+        ('f637c74d-b136-4364-a1f0-f7c3a79d9809','rebecca.susan@even.in'),
+        ('a5896c3d-f9c4-4276-a9d5-6e0386701de8','manukumar.h@even.in'),
+        ('5f58b7db-801b-45ff-9ea9-74010f1c403c','vikas.chavan@even.in'),
+        ('8da340f2-3e08-4dc7-a7ba-8fe8a28aefb1','sujay.br@even.in'),
+        ('15e8e709-5ccd-4e53-b13c-f1ad91474526','abhinandhan.v@even.in'),
+        ('cede9c4f-8f8e-4d0c-b0ee-38fbe028ec9b','anthony@even.in'),
+        ('d1c0f961-70d9-4061-9c9c-8f309ceaf732','amresh@even.in')
+      ) AS v(pid, email)
+      WHERE p.id = v.pid::uuid;
+    `,
+  },
 ];
 

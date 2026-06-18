@@ -9,6 +9,7 @@ interface Priv { id: string; procedure_or_specialty: string; is_core: boolean; g
 interface Reply { id: string; text: string; at: string; author: string }
 interface About { id: string; polarity: string; source: string; category: string | null; severity: string | null; commendation_category: string | null; patient_rating: number | null; narrative: string; status: string; anonymous_flag: boolean; submitted_at: string; hospital_code: string | null; reporter_display: string; replies: Reply[] }
 interface ResignReq { id: string; reason: string; intended_last_date: string | null; status: string; requested_at: string; hospital_code: string | null }
+interface PerfRow { week: string; doctor_specialty: string | null; doctor_channel_type: string | null; total_consults: number | null; csat_pct: number | null; csat_responses: number | null; positive_csat_count: number | null; doctor_noshow_tc_rate: number | null; patient_noshow_rate: number | null; cancellation_rate: number | null; doctor_cancellation_rate: number | null; missing_prescription_rate: number | null; presc_under_30_pct: number | null; inperson_consult_count: number | null; tc_active_event_count: number | null; tc_events_missing_recording_count: number | null; unwritten_count: number | null; completed_presc_count: number | null; cancelled_count: number | null; patient_noshow_count: number | null }
 
 const CAT_LABEL: Record<string, string> = { provisional: "Provisional", active: "Active", visiting_consultant: "Visiting Consultant", locum_tenens: "Locum", affiliate: "Affiliate" };
 const FB_CATEGORIES: { v: string; label: string }[] = [
@@ -34,8 +35,19 @@ export default function PortalHome() {
   const [engs, setEngs] = useState<Eng[]>([]);
   const [quals, setQuals] = useState<Qual[]>([]);
   const [privs, setPrivs] = useState<Priv[]>([]);
-  const [tab, setTab] = useState<"overview" | "qualifications" | "privileges" | "report" | "aboutme" | "resign">("overview");
+  const [tab, setTab] = useState<"overview" | "performance" | "qualifications" | "privileges" | "report" | "aboutme" | "resign">("overview");
   const [loading, setLoading] = useState(true);
+  const [perf, setPerf] = useState<PerfRow[]>([]);
+  const [perfMapped, setPerfMapped] = useState(true);
+  const [perfSnap, setPerfSnap] = useState<string | null>(null);
+  const [perfLoading, setPerfLoading] = useState(false);
+  useEffect(() => {
+    if (tab !== "performance" || perf.length > 0 || perfLoading) return;
+    setPerfLoading(true);
+    fetch("/api/portal/performance").then((r) => r.json()).then((j) => {
+      if (j.ok) { setPerf(j.rows ?? []); setPerfMapped(j.mapped !== false); setPerfSnap(j.snapshot_at ?? null); }
+    }).catch(() => undefined).finally(() => setPerfLoading(false));
+  }, [tab, perf.length, perfLoading]);
 
   // add-qual form
   const [showAdd, setShowAdd] = useState(false);
@@ -153,7 +165,7 @@ export default function PortalHome() {
 
   // NOTE: "Resign" tab intentionally hidden for all doctors (stakeholder decision — portal-initiated
 // resignations withdrawn). The resign panel + submitResign handler remain in the code, just unreachable.
-const TABS: Array<[typeof tab, string]> = [["overview", "Overview"], ["qualifications", "Qualifications"], ["privileges", "Current Privileges"], ["report", "Report feedback"], ["aboutme", "About me"]];
+const TABS: Array<[typeof tab, string]> = [["overview", "Overview"], ["performance", "My Performance"], ["qualifications", "Qualifications"], ["privileges", "Current Privileges"], ["report", "Report feedback"], ["aboutme", "About me"]];
   const SOON: string[] = [];
 
   return (
@@ -211,6 +223,80 @@ const TABS: Array<[typeof tab, string]> = [["overview", "Overview"], ["qualifica
                 )}
               </section>
             </div>
+          )}
+
+          {tab === "performance" && (
+            perfLoading ? <div className="text-sm text-stone-500">Loading…</div> :
+            !perfMapped ? (
+              <section className="bg-white border border-stone-200 rounded-xl p-6 text-sm text-stone-600">Your clinical-metrics account is not linked yet. Once governance links your profile to the performance system, your weekly metrics will appear here.</section>
+            ) : perf.length === 0 ? (
+              <section className="bg-white border border-stone-200 rounded-xl p-6 text-sm text-stone-600">No performance data available yet.</section>
+            ) : (() => {
+              const latest = perf[perf.length - 1];
+              const p = (v: number | null) => (v == null ? "\u2014" : `${v}%`);
+              const num = (v: number | null) => (v == null ? "\u2014" : String(v));
+              const tiles: Array<[string, string, string]> = [
+                ["Consults", num(latest.total_consults), latest.doctor_channel_type ?? ""],
+                ["CSAT", p(latest.csat_pct), `${latest.csat_responses ?? 0} responses`],
+                ["Patient no-show", p(latest.patient_noshow_rate), ""],
+                ["Doctor no-show", p(latest.doctor_noshow_tc_rate), ""],
+                ["Cancellation", p(latest.cancellation_rate), ""],
+                ["Missing prescription", p(latest.missing_prescription_rate), ""],
+              ];
+              return (
+                <div className="space-y-4">
+                  <section className="bg-white border border-stone-200 rounded-xl p-5">
+                    <div className="flex items-center justify-between mb-3">
+                      <h2 className="text-sm font-semibold">This week <span className="text-[11px] text-stone-400 font-normal">· week of {fmt(latest.week)}</span></h2>
+                      <span className="text-[11px] text-stone-400">{latest.doctor_specialty ?? ""}</span>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                      {tiles.map(([label, value, sub]) => (
+                        <div key={label} className="border border-stone-100 rounded-lg p-3">
+                          <div className="text-[10px] font-medium text-stone-500 tracking-wider uppercase">{label}</div>
+                          <div className="text-2xl font-semibold num mt-1">{value}</div>
+                          {sub ? <div className="text-[11px] text-stone-400 mt-0.5">{sub}</div> : null}
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                  <section className="bg-white border border-stone-200 rounded-xl overflow-hidden">
+                    <div className="px-5 py-3.5 border-b border-stone-100 flex items-center justify-between">
+                      <h2 className="text-sm font-semibold">Weekly trend</h2>
+                      {perfSnap ? <span className="text-[11px] text-stone-400">data as of {fmt(perfSnap)}</span> : null}
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-[13px]">
+                        <thead className="bg-stone-50 text-stone-500 text-[11px] uppercase tracking-wider">
+                          <tr>
+                            <th className="text-left px-4 py-2 font-medium">Week</th>
+                            <th className="text-right px-3 py-2 font-medium">Consults</th>
+                            <th className="text-right px-3 py-2 font-medium">CSAT</th>
+                            <th className="text-right px-3 py-2 font-medium">Pt no-show</th>
+                            <th className="text-right px-3 py-2 font-medium">Cancel</th>
+                            <th className="text-right px-3 py-2 font-medium">Missing Rx</th>
+                            <th className="text-right px-3 py-2 font-medium">Rx &lt;30m</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-stone-50">
+                          {[...perf].reverse().map((w) => (
+                            <tr key={w.week} className="hover:bg-stone-50">
+                              <td className="px-4 py-2 font-medium text-stone-800">{fmt(w.week)}</td>
+                              <td className="px-3 py-2 text-right num">{num(w.total_consults)}</td>
+                              <td className="px-3 py-2 text-right num">{p(w.csat_pct)}</td>
+                              <td className="px-3 py-2 text-right num">{p(w.patient_noshow_rate)}</td>
+                              <td className="px-3 py-2 text-right num">{p(w.cancellation_rate)}</td>
+                              <td className="px-3 py-2 text-right num">{p(w.missing_prescription_rate)}</td>
+                              <td className="px-3 py-2 text-right num">{p(w.presc_under_30_pct)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </section>
+                </div>
+              );
+            })()
           )}
 
           {tab === "qualifications" && (
