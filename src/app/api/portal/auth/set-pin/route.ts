@@ -11,6 +11,8 @@ export async function POST(req: NextRequest) {
   if (!me) return NextResponse.json({ ok: false, error: "Unauthenticated" }, { status: 401, headers: NO_STORE });
   const { new_pin } = (await req.json().catch(() => ({}))) as { new_pin?: string };
   if (!new_pin || !isValidPin(new_pin)) return NextResponse.json({ ok: false, error: "PIN must be exactly 4 digits" }, { status: 400, headers: NO_STORE });
+  // Forced first-login change must move OFF the issued default; don't let it be re-set to 0000.
+  if (new_pin === "0000") return NextResponse.json({ ok: false, error: "Please choose a PIN other than the default 0000." }, { status: 400, headers: NO_STORE });
 
   const url = process.env.DATABASE_URL;
   if (!url) return NextResponse.json({ ok: false, error: "DATABASE_URL not configured" }, { status: 500, headers: NO_STORE });
