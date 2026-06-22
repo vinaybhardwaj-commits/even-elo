@@ -175,14 +175,14 @@ const TABS: Array<[typeof tab, string]> = [["overview", "Overview"], ["performan
   return (
     <main className="min-h-screen bg-stone-50">
       <header className="bg-white border-b border-stone-200 sticky top-0 z-10">
-        <div className="max-w-[900px] mx-auto px-6 h-14 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-teal-600 text-white text-[11px] font-bold">EPI</span>
-            <span className="font-semibold text-sm">Even Physician Portal</span>
+        <div className="max-w-[900px] mx-auto px-4 sm:px-6 min-h-14 py-2 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-teal-600 text-white text-[11px] font-bold shrink-0">EPI</span>
+            <span className="font-semibold text-sm whitespace-nowrap">Even Physician Portal</span>
           </div>
-          <div className="flex items-center gap-3 text-sm text-stone-500">
-            <span>{me?.full_name ?? ""}</span>
-            <button onClick={logout} className="text-stone-500 hover:text-stone-900">Sign out</button>
+          <div className="flex items-center gap-3 text-sm text-stone-500 min-w-0">
+            <span className="truncate">{me?.full_name ?? ""}</span>
+            <button onClick={logout} className="text-stone-500 hover:text-stone-900 shrink-0 whitespace-nowrap">Sign out</button>
           </div>
         </div>
       </header>
@@ -202,13 +202,13 @@ const TABS: Array<[typeof tab, string]> = [["overview", "Overview"], ["performan
             <div className="space-y-4">
               <section className="bg-white border border-stone-200 rounded-xl p-5">
                 <h2 className="text-sm font-semibold mb-3">Your profile</h2>
-                <div className="grid grid-cols-2 gap-y-2 gap-x-6 text-sm">
-                  <div><span className="text-stone-500">Name</span><div className="font-medium">{me.full_name}</div></div>
-                  <div><span className="text-stone-500">Specialty</span><div className="font-medium">{me.primary_specialty ?? "—"}</div></div>
-                  <div><span className="text-stone-500">Email</span><div className="font-medium">{me.email ?? "—"}</div></div>
-                  <div><span className="text-stone-500">Phone</span><div className="font-medium">{me.phone ?? "—"}</div></div>
-                  <div><span className="text-stone-500">Registration</span><div className="font-medium">{me.registration_number ?? "—"} {me.registration_council ? `· ${me.registration_council}` : ""}</div></div>
-                  <div><span className="text-stone-500">License expires</span><div className="font-medium">{fmt(me.registration_expiry)}</div></div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-2 gap-x-6 text-sm">
+                  <div className="min-w-0"><span className="text-stone-500">Name</span><div className="font-medium break-words">{me.full_name}</div></div>
+                  <div className="min-w-0"><span className="text-stone-500">Specialty</span><div className="font-medium break-words">{me.primary_specialty ?? "—"}</div></div>
+                  <div className="min-w-0"><span className="text-stone-500">Email</span><div className="font-medium break-words">{me.email ?? "—"}</div></div>
+                  <div className="min-w-0"><span className="text-stone-500">Phone</span><div className="font-medium break-words">{me.phone ?? "—"}</div></div>
+                  <div className="min-w-0"><span className="text-stone-500">Registration</span><div className="font-medium break-words">{me.registration_number ?? "—"} {me.registration_council ? `· ${me.registration_council}` : ""}</div></div>
+                  <div className="min-w-0"><span className="text-stone-500">License expires</span><div className="font-medium break-words">{fmt(me.registration_expiry)}</div></div>
                 </div>
               </section>
               <section className="bg-white border border-stone-200 rounded-xl p-5">
