@@ -41,13 +41,17 @@ export default function PortalHome() {
   const [perfMapped, setPerfMapped] = useState(true);
   const [perfSnap, setPerfSnap] = useState<string | null>(null);
   const [perfLoading, setPerfLoading] = useState(false);
+  const [perfLoaded, setPerfLoaded] = useState(false);
   useEffect(() => {
-    if (tab !== "performance" || perf.length > 0 || perfLoading) return;
+    // Guard on perfLoaded (a one-time "have we fetched" flag) rather than perf.length:
+    // a zero-row result (unmapped doctor, or mapped with no data) leaves perf empty, and
+    // using perf.length > 0 as the guard caused an infinite refetch loop → perpetual "Loading…".
+    if (tab !== "performance" || perfLoaded || perfLoading) return;
     setPerfLoading(true);
     fetch("/api/portal/performance").then((r) => r.json()).then((j) => {
       if (j.ok) { setPerf(j.rows ?? []); setPerfMapped(j.mapped !== false); setPerfSnap(j.snapshot_at ?? null); }
-    }).catch(() => undefined).finally(() => setPerfLoading(false));
-  }, [tab, perf.length, perfLoading]);
+    }).catch(() => undefined).finally(() => { setPerfLoaded(true); setPerfLoading(false); });
+  }, [tab, perfLoaded, perfLoading]);
 
   // add-qual form
   const [showAdd, setShowAdd] = useState(false);
