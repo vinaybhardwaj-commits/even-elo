@@ -26,6 +26,15 @@ function timeAgo(iso: string): string {
   return `${Math.floor(s / 86400)}d ago`;
 }
 
+// Broadcast the authoritative live count so the home "Pending credentials" KPI
+// (a separate component) stays in sync — on first load and after every verify —
+// instead of showing the stale server-rendered count.
+function broadcastCount(count: number) {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("epi:pending-count", { detail: { count } }));
+  }
+}
+
 export default function PendingVerificationsCard({ canVerify }: { canVerify: boolean }) {
   const [rows, setRows] = useState<PendingQual[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -35,7 +44,7 @@ export default function PendingVerificationsCard({ canVerify }: { canVerify: boo
   useEffect(() => {
     fetch("/api/admin/qualifications/pending")
       .then((r) => r.json())
-      .then((j) => { if (j.ok) setRows(j.rows ?? []); })
+      .then((j) => { if (j.ok) { const list = (j.rows ?? []) as PendingQual[]; setRows(list); broadcastCount(list.length); } })
       .catch(() => undefined)
       .finally(() => setLoaded(true));
   }, []);
@@ -51,7 +60,7 @@ export default function PendingVerificationsCard({ canVerify }: { canVerify: boo
       });
       const j = await r.json();
       if (!r.ok || !j.ok) { setErr(j.error || "Verify failed."); setBusy(null); return; }
-      setRows((prev) => prev.filter((x) => x.id !== q.id));
+      setRows((prev) => { const next = prev.filter((x) => x.id !== q.id); broadcastCount(next.length); return next; });
       setBusy(null);
     } catch { setErr("Network error."); setBusy(null); }
   }

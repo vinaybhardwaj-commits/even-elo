@@ -7,6 +7,7 @@ import MiniPhysicianDB from "@/components/MiniPhysicianDB";
 import CensusCards from "@/components/CensusCards";
 import InboxCard from "@/components/InboxCard";
 import PendingVerificationsCard from "@/components/PendingVerificationsCard";
+import PendingCredentialsKpi from "@/components/PendingCredentialsKpi";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -152,7 +153,7 @@ export default async function HomePage() {
         <div className="grid grid-cols-5 gap-3 mb-4">
           <Kpi label="Active physicians" value={counts.active_physicians} sub="in network" />
           <Kpi label="Open concerns" value={counts.open_incidents} sub={<><span className="text-emerald-700 font-medium">{counts.positive_feedback} positive</span>{" · "}<Link href="/incidents" className="text-brand hover:underline">Feedback inbox →</Link></>} />
-          <Kpi label="Pending credentials" value={counts.pending_credentials} sub={counts.pending_credentials > 0 ? <span className="text-amber-800 font-medium">awaiting verification</span> : "all verified · network"} />
+          <PendingCredentialsKpi initial={counts.pending_credentials} />
           <Kpi label="Hospitals" value={hospitalsCount} sub="with active doctors" />
           <Kpi label="Specialties" value={specialtiesCount} sub={filterCode === "all" ? "across network" : filterCode} />
         </div>
