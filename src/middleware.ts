@@ -28,6 +28,7 @@ const PUBLIC_API_ROUTES = [
 // migrate + seed during deploys). Keep this list short and explicit.
 const ADMIN_BOOTSTRAP_ROUTES = [
   "/api/admin/migrate",
+  "/api/admin/portal-welcome",
   "/api/admin/seed-epi-base",
   "/api/admin/db-snapshot",
   "/api/admin/db-fresh",
