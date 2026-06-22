@@ -60,7 +60,7 @@ export async function POST(req: NextRequest) {
               VALUES ('portal_pin_self_issued', 'physician', ${ph.id},
               ${JSON.stringify({ email: ph.email, portal_access: true, must_change_pin: false })}::jsonb)`;
 
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://even-elo.vercel.app";
+    const appUrl = process.env.NEXT_PUBLIC_PORTAL_URL || "https://doctors.evenos.app";
     void sendEmail({
       to: ph.email,
       subject: "Your Even Physician Portal PIN",

@@ -81,7 +81,7 @@ export async function POST(req: NextRequest) {
   // N.3 — invite email to the new user: their login (email) + temporary PIN
   // (force-changed on first sign-in via must_change_pin). Gated by EMAIL_SENDING_ENABLED.
   {
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://even-elo.vercel.app";
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://governance.evenos.app";
     void sendEmail({
       to: lowerEmail,
       subject: "You've been added to the Even Physician Index",
