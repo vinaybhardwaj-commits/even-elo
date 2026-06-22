@@ -6,13 +6,14 @@ import { TopNav } from "@/components/TopNav";
 import MiniPhysicianDB from "@/components/MiniPhysicianDB";
 import CensusCards from "@/components/CensusCards";
 import InboxCard from "@/components/InboxCard";
+import PendingVerificationsCard from "@/components/PendingVerificationsCard";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 export const fetchCache = "force-no-store";
 export const runtime = "nodejs";
 
-type Counts = { active_physicians: number; open_incidents: number; positive_feedback: number };
+type Counts = { active_physicians: number; open_incidents: number; positive_feedback: number; pending_credentials: number };
 type InboxRow = { id: string; polarity: string; category: string | null; commendation_category: string | null; severity: string | null; created_at: string; physician_name: string };
 type AuditRow = { id: number; action: string; entity_type: string; entity_id: string | null; created_at: string; actor_email: string | null; actor_position: string | null };
 type Spec = { specialty: string; vc: number; staff: number; total: number };
@@ -29,12 +30,14 @@ async function fetchData(hospitalId: string | null) {
           (SELECT count(DISTINCT pe.physician_id)::int FROM physician_engagements pe JOIN physicians p ON p.id=pe.physician_id
              WHERE pe.hospital_id=${hospitalId}::uuid AND pe.status='active' AND p.current_status='active') AS active_physicians,
           (SELECT count(*)::int FROM incidents WHERE status='open' AND polarity='negative' AND hospital_id=${hospitalId}::uuid) AS open_incidents,
-          (SELECT count(*)::int FROM incidents WHERE polarity='positive' AND hospital_id=${hospitalId}::uuid) AS positive_feedback`) as Array<Counts>
+          (SELECT count(*)::int FROM incidents WHERE polarity='positive' AND hospital_id=${hospitalId}::uuid) AS positive_feedback,
+          (SELECT count(*)::int FROM qualifications WHERE verified=false) AS pending_credentials`) as Array<Counts>
     : (await sql`
         SELECT
           (SELECT count(*)::int FROM physicians WHERE current_status='active') AS active_physicians,
           (SELECT count(*)::int FROM incidents WHERE status='open' AND polarity='negative') AS open_incidents,
-          (SELECT count(*)::int FROM incidents WHERE polarity='positive') AS positive_feedback`) as Array<Counts>;
+          (SELECT count(*)::int FROM incidents WHERE polarity='positive') AS positive_feedback,
+          (SELECT count(*)::int FROM qualifications WHERE verified=false) AS pending_credentials`) as Array<Counts>;
 
   const iRows = hospitalId
     ? (await sql`
@@ -112,11 +115,12 @@ export default async function HomePage() {
   const filterId = await getHospitalFilterId();
   const data = await fetchData(filterId);
 
-  const counts = data?.counts ?? { active_physicians: 0, open_incidents: 0, positive_feedback: 0 };
+  const counts = data?.counts ?? { active_physicians: 0, open_incidents: 0, positive_feedback: 0, pending_credentials: 0 };
   const byHospital = data?.byHospital ?? [];
   const hospitalsCount = data?.hospitalsCount ?? 0;
   const specialtiesCount = data?.specialtiesCount ?? 0;
   const audit = data?.audit ?? [];
+  const canVerify = !!(user.is_super_admin || user.is_hr || user.is_site_medical_head);
 
   const today = new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
   const HONORIFICS = new Set(["dr.", "dr", "prof.", "prof", "mr.", "mr", "ms.", "ms", "mrs.", "mrs"]);
@@ -144,10 +148,11 @@ export default async function HomePage() {
           </div>
         </div>
 
-        {/* KPI strip — 4 even cards */}
-        <div className="grid grid-cols-4 gap-3 mb-4">
+        {/* KPI strip — 5 even cards */}
+        <div className="grid grid-cols-5 gap-3 mb-4">
           <Kpi label="Active physicians" value={counts.active_physicians} sub="in network" />
           <Kpi label="Open concerns" value={counts.open_incidents} sub={<><span className="text-emerald-700 font-medium">{counts.positive_feedback} positive</span>{" · "}<Link href="/incidents" className="text-brand hover:underline">Feedback inbox →</Link></>} />
+          <Kpi label="Pending credentials" value={counts.pending_credentials} sub={counts.pending_credentials > 0 ? <span className="text-amber-800 font-medium">awaiting verification</span> : "all verified · network"} />
           <Kpi label="Hospitals" value={hospitalsCount} sub="with active doctors" />
           <Kpi label="Specialties" value={specialtiesCount} sub={filterCode === "all" ? "across network" : filterCode} />
         </div>
@@ -183,6 +188,11 @@ export default async function HomePage() {
               )}
             </div>
           </section>
+        </div>
+
+        {/* Credentials pending verification — surfaces portal-uploaded docs awaiting review */}
+        <div className="mb-4">
+          <PendingVerificationsCard canVerify={canVerify} />
         </div>
 
         {/* Slim Watchlist strip */}
