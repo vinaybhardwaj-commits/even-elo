@@ -57,7 +57,7 @@ export default function Routes() {
     <main style={S.wrap}>
       <div style={S.head}>
         <div><div style={S.kicker}>EHRC Incident — Safety Office</div><h1 style={S.h1}>Notification routing</h1></div>
-        <div style={S.nav}><a href="/safety" style={S.link}>Queue</a><a href="/safety/dashboard" style={S.link}>Dashboard</a><button style={S.test} onClick={testAll}>Send test</button></div>
+        <div style={S.nav}><a href="/safety" style={S.link}>Queue</a><a href="/safety#dashboard" style={S.link}>Dashboard</a><button style={S.test} onClick={testAll}>Send test</button></div>
       </div>
       <p style={S.intro}>Each rule fans an alert out to its recipients when an incident matches. A recipient is a phone number (E.164, e.g. +9163…) or a WhatsApp group id (…@g.us). Rules combine — an incident notifies everyone in every matching rule. Inactive rules are ignored.</p>
       {note && <div style={S.note}>{note}</div>}
