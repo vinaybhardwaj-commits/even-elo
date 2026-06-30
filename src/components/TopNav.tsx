@@ -29,7 +29,8 @@ export function TopNav({ nav }: { nav?: NavItem[] } = {}) {
 
   const showElo = !!user && user.is_super_admin; // Surgical Governance is super_admin-only (Users PRD #18)
   const showAdmin = !!user && user.is_super_admin;
-  const navItems: NavItem[] = nav ?? defaultNav(showElo, showAdmin);
+  const showSafety = !!user && (user.is_super_admin || user.is_sgc_member);
+  const navItems: NavItem[] = nav ?? defaultNav(showElo, showAdmin, showSafety);
 
   return (
     <header className="bg-white border-b border-stone-200 sticky top-0 z-40">
@@ -72,13 +73,14 @@ export function TopNav({ nav }: { nav?: NavItem[] } = {}) {
   );
 }
 
-function defaultNav(showElo: boolean, showAdmin: boolean): NavItem[] {
+function defaultNav(showElo: boolean, showAdmin: boolean, showSafety: boolean): NavItem[] {
   const items: NavItem[] = [
     { label: "Home", href: "/home" },
     { label: "Physician DB", href: "/physicians" },
     { label: "Credentialing", href: "/onboarding" },
     { label: "Feedback", href: "/incidents" },
   ];
+  if (showSafety) items.push({ label: "Safety", href: "/safety" });
   if (showElo) items.push({ label: "Surgical Governance", href: "/surgical-governance" });
   if (showAdmin) items.push({ label: "Admin", href: "/admin" });
   items.push({ label: "Guide", href: "/guide" });
