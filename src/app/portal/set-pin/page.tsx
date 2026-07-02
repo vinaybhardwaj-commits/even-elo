@@ -29,14 +29,14 @@ export default function PortalSetPin() {
         <div className="space-y-3">
           <div>
             <label className="block text-xs font-medium text-stone-500 mb-1">New PIN</label>
-            <input type="password" inputMode="numeric" value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 4))} className="w-full px-3 py-3 border border-stone-200 rounded-lg text-[15px] num outline-none focus:border-teal-600" placeholder="****" autoFocus />
+            <input type="password" inputMode="numeric" value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 4))} className="w-full px-3 py-3 border border-stone-200 rounded-lg text-[16px] num outline-none focus:border-teal-600" placeholder="****" autoFocus />
           </div>
           <div>
             <label className="block text-xs font-medium text-stone-500 mb-1">Confirm PIN</label>
-            <input type="password" inputMode="numeric" value={confirm} onChange={(e) => setConfirm(e.target.value.replace(/\D/g, "").slice(0, 4))} className="w-full px-3 py-3 border border-stone-200 rounded-lg text-[15px] num outline-none focus:border-teal-600" placeholder="****" />
+            <input type="password" inputMode="numeric" value={confirm} onChange={(e) => setConfirm(e.target.value.replace(/\D/g, "").slice(0, 4))} className="w-full px-3 py-3 border border-stone-200 rounded-lg text-[16px] num outline-none focus:border-teal-600" placeholder="****" />
           </div>
           {error && <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</div>}
-          <button type="submit" disabled={submitting} className="w-full bg-teal-600 text-white px-4 py-3 rounded-lg text-[15px] font-semibold hover:bg-teal-700 disabled:opacity-50">{submitting ? "Saving..." : "Set PIN & continue"}</button>
+          <button type="submit" disabled={submitting} className="w-full bg-teal-600 text-white px-4 py-3 rounded-lg text-[16px] font-semibold hover:bg-teal-700 disabled:opacity-50">{submitting ? "Saving..." : "Set PIN & continue"}</button>
         </div>
       </form>
     </main>

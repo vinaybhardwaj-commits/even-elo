@@ -28,7 +28,7 @@ const STATUS_LABEL: Record<string, string> = {
   open: "Open", under_investigation: "Under investigation", capa_assigned: "CAPA assigned", closed: "Closed", verified: "Verified",
 };
 
-const inputCls = "w-full rounded-lg border border-stone-200 px-3 py-2.5 text-[15px] bg-white";
+const inputCls = "w-full rounded-lg border border-stone-200 px-3 py-2.5 text-[16px] bg-white";
 const labelCls = "block text-[12px] font-semibold text-stone-500 mb-1";
 
 export function IncidentReporting({ doctorName }: { doctorName: string }) {

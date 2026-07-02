@@ -19,7 +19,8 @@ const ITEMS: Array<{ d: Dest; label: string; short: string; icon: JSX.Element }>
 export function PortalNav({ dest, onChange }: { dest: Dest; onChange: (d: Dest) => void }) {
   return (
     <>
-      {/* Desktop pill row */}
+      {/* Desktop pill row (mobile uses <MobileTabBar> — an IN-FLOW bar at the bottom of the
+          app frame; position:fixed detaches during iOS Safari URL-bar collapse, found live 2 Jul) */}
       <div className="hidden lg:flex flex-wrap gap-1.5 mb-5">
         {ITEMS.map((it) => (
           <button
@@ -34,39 +35,49 @@ export function PortalNav({ dest, onChange }: { dest: Dest; onChange: (d: Dest) 
         ))}
       </div>
 
-      {/* Mobile bottom bar */}
-      <nav
-        className="lg:hidden fixed inset-x-0 bottom-0 z-40 border-t border-stone-200 bg-white"
-        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
-      >
-        <div className="mx-auto flex max-w-[560px] items-stretch justify-between px-2">
-          {ITEMS.map((it) => {
-            const active = dest === it.d;
-            const isReport = it.d === "report";
-            return (
-              <button
-                key={it.d}
-                onClick={() => onChange(it.d)}
-                aria-label={it.label}
-                className="flex min-h-[56px] min-w-[56px] flex-1 flex-col items-center justify-center gap-0.5 py-1.5"
-              >
-                <span
-                  className={`flex items-center justify-center rounded-full transition ${
-                    isReport
-                      ? "h-9 w-9 -mt-3 shadow-md " + (active ? "bg-brand-hover text-white" : "bg-brand text-white")
-                      : "h-6 w-6 " + (active ? "text-brand" : "text-stone-400")
-                  }`}
-                >
-                  <svg width={isReport ? 20 : 22} height={isReport ? 20 : 22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                    {it.icon}
-                  </svg>
-                </span>
-                <span className={`text-[10px] font-semibold ${active ? "text-brand" : "text-stone-400"}`}>{it.short}</span>
-              </button>
-            );
-          })}
-        </div>
-      </nav>
     </>
+  );
+}
+
+/**
+ * Mobile tab bar — rendered as the LAST FLEX CHILD of the viewport-height app
+ * frame in portal/page.tsx (NOT position:fixed; iOS Safari detaches fixed
+ * elements while the URL bar collapses during scroll). Always visible because
+ * the frame is 100dvh and only the content area scrolls.
+ */
+export function MobileTabBar({ dest, onChange }: { dest: Dest; onChange: (d: Dest) => void }) {
+  return (
+    <nav
+      className="lg:hidden shrink-0 border-t border-stone-200 bg-white"
+      style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+    >
+      <div className="mx-auto flex max-w-[560px] items-stretch justify-between px-2">
+        {ITEMS.map((it) => {
+          const active = dest === it.d;
+          const isReport = it.d === "report";
+          return (
+            <button
+              key={it.d}
+              onClick={() => onChange(it.d)}
+              aria-label={it.label}
+              className="flex min-h-[56px] min-w-[56px] flex-1 flex-col items-center justify-center gap-0.5 py-1.5"
+            >
+              <span
+                className={`flex items-center justify-center rounded-full transition ${
+                  isReport
+                    ? "h-9 w-9 -mt-3 shadow-md " + (active ? "bg-brand-hover text-white" : "bg-brand text-white")
+                    : "h-6 w-6 " + (active ? "text-brand" : "text-stone-400")
+                }`}
+              >
+                <svg width={isReport ? 20 : 22} height={isReport ? 20 : 22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  {it.icon}
+                </svg>
+              </span>
+              <span className={`text-[10px] font-semibold ${active ? "text-brand" : "text-stone-400"}`}>{it.short}</span>
+            </button>
+          );
+        })}
+      </div>
+    </nav>
   );
 }
