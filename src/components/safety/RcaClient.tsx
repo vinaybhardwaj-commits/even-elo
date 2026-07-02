@@ -37,7 +37,10 @@ export default function RcaWorkspace() {
   async function analyze() {
     setBusy(true); setAiNote("Analysing the incident…"); setError(null);
     try {
-      const j = await fetch(`/api/safety/office/incidents/${id}/rca/suggest`, { method: "POST" }).then((r) => r.json());
+      const r = await fetch(`/api/safety/office/incidents/${id}/rca/suggest`, { method: "POST" });
+      let j: Record<string, any> = {};
+      try { j = await r.json(); } catch { throw new Error(`suggest ${r.status}`); }
+      if (!r.ok) { setAiNote(`AI analysis failed (${r.status}${j.error ? `: ${j.error}` : ""}) — try again or fill in manually.`); return; }
       if (j.available && j.suggestion) {
         const s = j.suggestion;
         setFactors(s.contributoryFactors?.length ? s.contributoryFactors : factors);

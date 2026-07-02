@@ -3,6 +3,9 @@ import { getCurrentUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+// The AI RCA suggest (Gemini, 15-40s) flows through this proxy — the default
+// fn timeout 504'd it (bug found by V, 2 Jul). Match even-incident's budget.
+export const maxDuration = 60;
 
 const BASE = process.env.INCIDENT_API_BASE;
 const APITOK = process.env.INCIDENT_API_TOKEN;

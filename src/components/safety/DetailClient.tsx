@@ -18,6 +18,8 @@ export default function IncidentDetail() {
   const [err, setErr] = useState<string | null>(null);
   const [owner, setOwner] = useState("");
   const [saving, setSaving] = useState<string | null>(null);
+  const [saveNote, setSaveNote] = useState<string | null>(null);
+  const [saveErr, setSaveErr] = useState<string | null>(null);
 
   function load() {
     fetch(`/api/safety/office/incidents/${id}`).then((r) => r.json()).then((j) => {
@@ -28,9 +30,21 @@ export default function IncidentDetail() {
   useEffect(load, [id]);
 
   async function patch(body: Record<string, unknown>, tag: string) {
-    setSaving(tag);
-    try { await fetch(`/api/safety/office/incidents/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); load(); }
-    finally { setSaving(null); }
+    setSaving(tag); setSaveErr(null); setSaveNote(null);
+    try {
+      const r = await fetch(`/api/safety/office/incidents/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      let j: { ok?: boolean; error?: string } = {};
+      try { j = await r.json(); } catch { /* non-JSON (e.g. gateway error page) */ }
+      if (r.ok && j.ok !== false) {
+        setSaveNote(tag === "owner" ? "Owner saved ✓" : "Status saved ✓");
+        setTimeout(() => setSaveNote(null), 2500);
+        load();
+      } else {
+        setSaveErr(j.error || `Save failed (${r.status})`);
+      }
+    } catch {
+      setSaveErr("Network error — not saved.");
+    } finally { setSaving(null); }
   }
 
   async function patchRca(rcaId: string, action: string) {
@@ -115,8 +129,10 @@ export default function IncidentDetail() {
             {STATUS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </select>
           <input style={S.owner} placeholder="Assign owner" value={owner} onChange={(e) => setOwner(e.target.value)} />
-          <button style={S.btnSm} onClick={() => patch({ owner_name: owner }, "owner")} disabled={saving === "owner"}>Save owner</button>
+          <button style={S.btnSm} onClick={() => patch({ owner_name: owner }, "owner")} disabled={saving === "owner"}>{saving === "owner" ? "Saving…" : "Save owner"}</button>
         </div>
+        {saveNote && <div style={{ marginTop: 8, fontSize: 13, color: "#15803d", fontWeight: 600 }}>{saveNote}</div>}
+        {saveErr && <div style={{ marginTop: 8, fontSize: 13, color: "#b91c1c", fontWeight: 600 }}>{saveErr}</div>}
       </section>
 
       <section style={S.card}>
