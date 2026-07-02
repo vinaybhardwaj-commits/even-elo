@@ -350,7 +350,7 @@ export default async function OverviewPage({
           {/* Open work */}
           <section className="min-w-0 rounded-xl border border-stone-200 bg-white p-5">
             <h2 className="mb-3 text-[11px] font-bold uppercase tracking-[0.08em] text-stone-400">
-              My open work — {user.position_label || "Governance"}
+              Open work — governance queue
             </h2>
             <div className="divide-y divide-stone-100">
               {canVerify &&
@@ -388,7 +388,7 @@ export default async function OverviewPage({
                 </Link>
               ))}
               {!canVerify && pendingQuals.length === 0 && expiries.length === 0 && negIncidents.length === 0 && (
-                <p className="py-6 text-center text-sm text-stone-400">Nothing waiting on you. ✓</p>
+                <p className="py-6 text-center text-sm text-stone-400">Queue is clear. ✓</p>
               )}
             </div>
           </section>

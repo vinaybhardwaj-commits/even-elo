@@ -99,16 +99,21 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
     : `${(i.submitter_position_at_time as string) ?? ""}${i.submitter_email ? ` · ${i.submitter_email}` : ""}`;
   const submitter_label = (reporterName.trim() || "Unknown") + (i.anonymous_flag ? " · anon to peers" : "");
 
+  // Replies have TWO author kinds: governance staff (replied_by_profile_id) and
+  // the target physician replying from the Doctor Portal (replied_by_physician_id,
+  // exactly-one enforced by CHECK). The old INNER JOIN on profiles silently
+  // dropped every portal-authored right-of-reply (bug found by V, 2 Jul 2026).
   const replies = (await sql`
     SELECT
       r.id::text   AS id,
       r.reply_text,
       r.replied_at,
-      p.email      AS replied_by_email,
-      ph2.full_name AS replied_by_name
+      COALESCE(p.email, ph3.email)                        AS replied_by_email,
+      COALESCE(ph3.full_name, ph2.full_name, p.email)     AS replied_by_name
     FROM incident_replies r
-    JOIN profiles p ON p.id = r.replied_by_profile_id
+    LEFT JOIN profiles p ON p.id = r.replied_by_profile_id
     LEFT JOIN physicians ph2 ON lower(ph2.email) = lower(p.email)
+    LEFT JOIN physicians ph3 ON ph3.id = r.replied_by_physician_id
     WHERE r.incident_id = ${id}::uuid
     ORDER BY r.replied_at ASC
   `) as Array<Record<string, unknown>>;
