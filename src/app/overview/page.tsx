@@ -270,7 +270,7 @@ export default async function OverviewPage({
 
         <div className="grid gap-4 lg:grid-cols-[1.5fr_1fr]">
           {/* Active signals */}
-          <section className="rounded-xl border border-stone-200 bg-white p-5">
+          <section className="min-w-0 rounded-xl border border-stone-200 bg-white p-5">
             <h2 className="mb-1 text-[11px] font-bold uppercase tracking-[0.08em] text-stone-400">
               Active signals — ranked by severity × persistence
             </h2>
@@ -346,7 +346,7 @@ export default async function OverviewPage({
           </section>
 
           {/* Open work */}
-          <section className="rounded-xl border border-stone-200 bg-white p-5">
+          <section className="min-w-0 rounded-xl border border-stone-200 bg-white p-5">
             <h2 className="mb-3 text-[11px] font-bold uppercase tracking-[0.08em] text-stone-400">
               My open work — {user.position_label || "Governance"}
             </h2>
