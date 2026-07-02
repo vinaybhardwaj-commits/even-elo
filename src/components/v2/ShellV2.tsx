@@ -62,13 +62,13 @@ export function ShellV2() {
   const showIncidents = !!user && (user.is_super_admin || user.is_sgc_member);
 
   const groups: NavGroup[] = [
-    { items: [{ label: "Overview", href: "/home" }] },
+    { items: [{ label: "Overview", href: "/overview" }] },
     {
       label: "Physicians",
       items: [
         { label: "Roster", href: "/physicians" },
         { label: "Credentialing", href: "/onboarding" },
-        { label: "Watchlist", href: "/home#watchlist" },
+        { label: "Watchlist", href: "/overview#watchlist" },
       ],
     },
     {
@@ -90,7 +90,7 @@ export function ShellV2() {
   const isActive = (href?: string) => {
     if (!href) return false;
     const base = href.split("#")[0];
-    if (base === "/home") return pathname === "/home" && !href.includes("#");
+    if (base === "/overview") return (pathname === "/overview" || pathname === "/home") && !href.includes("#");
     return pathname === base || pathname.startsWith(base + "/");
   };
 

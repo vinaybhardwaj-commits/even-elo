@@ -1141,5 +1141,23 @@ export const MIGRATIONS: Migration[] = [
       WHERE p.id = v.pid::uuid;
     `,
   },
+  {
+    id: "026_gov_signal_snapshots",
+    description:
+      "R2 (EPI Redesign PRD v1.4 \u00a74.2): gov_signal_snapshots \u2014 daily CDMSS governance-signal snapshot store powering Overview trends/aging/lifecycle/movers.",
+    sql: `
+      CREATE TABLE IF NOT EXISTS gov_signal_snapshots (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        source text NOT NULL DEFAULT 'cdmss_opd',
+        day date NOT NULL,
+        period text NOT NULL DEFAULT 'day',
+        generator text,
+        payload jsonb NOT NULL,
+        fetched_at timestamptz NOT NULL DEFAULT now(),
+        UNIQUE (source, day, period)
+      );
+      CREATE INDEX IF NOT EXISTS idx_gss_source_day ON gov_signal_snapshots(source, day DESC);
+    `,
+  },
 ];
 

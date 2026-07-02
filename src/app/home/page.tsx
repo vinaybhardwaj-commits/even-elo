@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { neon } from "@neondatabase/serverless";
 import { getCurrentUser } from "@/lib/auth";
 import { getHospitalFilter, getHospitalFilterId } from "@/lib/hospital-filter";
@@ -110,6 +111,9 @@ function actionColor(a: string) {
 }
 
 export default async function HomePage() {
+  // R2 (PRD v1.4 §4.2): with the v2 shell on, the governance home is the Overview signal board.
+  if (process.env.NEXT_PUBLIC_UI_V2 === "1") redirect("/overview");
+
   const user = await getCurrentUser();
   if (!user) return null;
   const filterCode = await getHospitalFilter();
