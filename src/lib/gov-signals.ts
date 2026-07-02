@@ -22,10 +22,14 @@ export interface OpdAffectedDoctor {
 }
 
 export interface OpdSignal {
-  attr: string;
+  kind?: "pdqi" | "domain"; // absent = pdqi (v1.0); "domain" signals carry metric/value/unit (CDMSS v1.1)
+  attr?: string;
+  metric?: string;
+  value?: number;
+  unit?: string;
   label: string;
   definition?: string;
-  mean: number;
+  mean?: number;
   n: number;
   severity: "act_now" | "watch";
   trend: "improving" | "worsening" | "flat" | "no_baseline";
@@ -108,8 +112,31 @@ export async function getSeries(days = 90): Promise<SnapshotRow[]> {
   return rows;
 }
 
+/** Stable identity across pdqi (attr) and domain (metric) signals. */
+export function signalKey(s: OpdSignal): string {
+  return s.attr ?? s.metric ?? "unknown";
+}
+
+/**
+ * A snapshot with 0 assessed notes is an empty window (e.g. today before the
+ * audit cron) — NOT evidence that signals resolved. Skip such rows everywhere.
+ */
+export function hasData(row: SnapshotRow): boolean {
+  const p = row.payload;
+  return (
+    (p.notes_assessed ?? 0) > 0 ||
+    (p.report?.signals?.length ?? 0) > 0 ||
+    (p.report?.healthy?.length ?? 0) > 0
+  );
+}
+
+function dataRows(series: SnapshotRow[]): SnapshotRow[] {
+  return series.filter(hasData);
+}
+
 export function latestSnapshot(series: SnapshotRow[]): SnapshotRow | null {
-  return series.length ? series[series.length - 1] : null;
+  const rows = dataRows(series);
+  return rows.length ? rows[rows.length - 1] : null;
 }
 
 export interface SignalAge {
@@ -121,21 +148,22 @@ export interface SignalAge {
 /** Per-attr aging for attrs active on the latest day. Presence = attr appears in that day's signals[]. */
 export function computeAges(series: SnapshotRow[]): Record<string, SignalAge> {
   const out: Record<string, SignalAge> = {};
+  const rows = dataRows(series);
   const latest = latestSnapshot(series);
   if (!latest) return out;
-  const activeAttrs = (latest.payload.report?.signals ?? []).map((s) => s.attr);
-  for (const attr of activeAttrs) {
+  const activeKeys = (latest.payload.report?.signals ?? []).map(signalKey);
+  for (const attr of activeKeys) {
     let firstSeen = latest.day;
     let regressed = false;
-    // walk back over the stored series (consecutive snapshots, not calendar-strict)
-    for (let i = series.length - 1; i >= 0; i--) {
-      const present = (series[i].payload.report?.signals ?? []).some((s) => s.attr === attr);
+    // walk back over data-bearing snapshots (consecutive, not calendar-strict)
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const present = (rows[i].payload.report?.signals ?? []).some((s) => signalKey(s) === attr);
       if (present) {
-        firstSeen = series[i].day;
+        firstSeen = rows[i].day;
       } else {
         // gap: if the attr appears again even earlier, this is a regression
         for (let j = i; j >= 0; j--) {
-          if ((series[j].payload.report?.signals ?? []).some((s) => s.attr === attr)) {
+          if ((rows[j].payload.report?.signals ?? []).some((s) => signalKey(s) === attr)) {
             regressed = true;
             break;
           }
@@ -162,13 +190,14 @@ export interface ResolvedSignal {
 export function computeResolved(series: SnapshotRow[], lookbackDays = 14): ResolvedSignal[] {
   const latest = latestSnapshot(series);
   if (!latest) return [];
-  const activeNow = new Set((latest.payload.report?.signals ?? []).map((s) => s.attr));
+  const activeNow = new Set((latest.payload.report?.signals ?? []).map(signalKey));
   const seen = new Map<string, ResolvedSignal>();
   const cutoff = new Date(latest.day).getTime() - lookbackDays * 86400000;
-  for (const row of series) {
+  for (const row of dataRows(series)) {
     if (new Date(row.day).getTime() < cutoff) continue;
     for (const s of row.payload.report?.signals ?? []) {
-      if (!activeNow.has(s.attr)) seen.set(s.attr, { attr: s.attr, label: s.label, lastSeen: row.day });
+      const k = signalKey(s);
+      if (!activeNow.has(k)) seen.set(k, { attr: k, label: s.label, lastSeen: row.day });
     }
   }
   return Array.from(seen.values());
@@ -177,7 +206,9 @@ export function computeResolved(series: SnapshotRow[], lookbackDays = 14): Resol
 /** All attr means on a given snapshot (signals + healthy cover the full PDQI-9 set). */
 export function attrMeans(row: SnapshotRow): Record<string, { label: string; mean: number }> {
   const out: Record<string, { label: string; mean: number }> = {};
-  for (const s of row.payload.report?.signals ?? []) out[s.attr] = { label: s.label, mean: s.mean };
+  for (const s of row.payload.report?.signals ?? []) {
+    if (typeof s.mean === "number") out[signalKey(s)] = { label: s.label, mean: s.mean };
+  }
   for (const h of row.payload.report?.healthy ?? []) out[h.attr] = { label: h.label, mean: h.mean };
   return out;
 }
@@ -192,15 +223,16 @@ export interface Mover {
 
 /** Biggest attr-mean moves between the latest snapshot and one ~windowDays earlier. */
 export function computeMovers(series: SnapshotRow[], windowDays = 30): { improving: Mover[]; worsening: Mover[] } {
+  const rows = dataRows(series);
   const latest = latestSnapshot(series);
-  if (!latest || series.length < 2) return { improving: [], worsening: [] };
+  if (!latest || rows.length < 2) return { improving: [], worsening: [] };
   const targetTime = new Date(latest.day).getTime() - windowDays * 86400000;
-  let baseRow = series[0];
-  for (const row of series) {
+  let baseRow = rows[0];
+  for (const row of rows) {
     if (new Date(row.day).getTime() <= targetTime) baseRow = row;
     else break;
   }
-  if (baseRow.day === latest.day) baseRow = series[Math.max(0, series.length - 2)];
+  if (baseRow.day === latest.day) baseRow = rows[Math.max(0, rows.length - 2)];
   const base = attrMeans(baseRow);
   const now = attrMeans(latest);
   const movers: Mover[] = [];
@@ -218,7 +250,7 @@ export function computeMovers(series: SnapshotRow[], windowDays = 30): { improvi
 
 /** Daily overall documentation-quality index (mean of all attr means) for sparklines. */
 export function qualitySeries(series: SnapshotRow[]): Array<{ day: string; value: number }> {
-  return series.map((row) => {
+  return dataRows(series).map((row) => {
     const means = Object.values(attrMeans(row)).map((m) => m.mean);
     const avg = means.length ? means.reduce((a, b) => a + b, 0) / means.length : 0;
     return { day: row.day, value: Math.round(avg * 100) / 100 };

@@ -10,6 +10,7 @@ import {
   computeResolved,
   computeMovers,
   qualitySeries,
+  signalKey,
   type SnapshotRow,
 } from "@/lib/gov-signals";
 
@@ -281,11 +282,18 @@ export default async function OverviewPage({
             {latest ? (
               <div className="divide-y divide-stone-100">
                 {signals.map((s) => (
-                  <div key={s.attr} className="flex items-start gap-3 py-3">
+                  <div key={signalKey(s)} className="flex items-start gap-3 py-3">
                     <span className={"mt-1.5 h-2 w-2 shrink-0 rounded-full " + (s.severity === "act_now" ? "bg-rose-600" : "bg-amber-500")} />
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2 text-[13.5px] font-semibold">
-                        Documentation · {s.label} <span className="num">{s.mean.toFixed(1)}</span>
+                        {s.kind === "domain" ? "OPD domain" : "Documentation"} · {s.label}{" "}
+                        <span className="num">
+                          {typeof s.mean === "number"
+                            ? s.mean.toFixed(1)
+                            : typeof s.value === "number"
+                              ? `${s.value}${s.unit === "per_100_notes" ? "/100 notes" : ""}`
+                              : ""}
+                        </span>
                         <span className={"text-[12px] font-bold " + (s.trend === "worsening" ? "text-rose-600" : s.trend === "improving" ? "text-emerald-600" : "text-stone-400")}>
                           {s.trend === "worsening" ? `▼${Math.abs(s.delta ?? 0).toFixed(1)}` : s.trend === "improving" ? `▲${Math.abs(s.delta ?? 0).toFixed(1)}` : "—"}
                         </span>
@@ -298,7 +306,7 @@ export default async function OverviewPage({
                         </div>
                       ) : null}
                     </div>
-                    {ages[s.attr] && ageBadge(ages[s.attr].ageDays, ages[s.attr].regressed)}
+                    {ages[signalKey(s)] && ageBadge(ages[signalKey(s)].ageDays, ages[signalKey(s)].regressed)}
                   </div>
                 ))}
                 {expiries.slice(0, 2).map((e) => (
