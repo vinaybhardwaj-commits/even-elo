@@ -106,6 +106,12 @@ const TOOLS = [
     inputSchema: { type: "object", properties: { incident_id: { type: "string" }, reply_text: { type: "string" } }, required: ["incident_id","reply_text"] } },
   { name: "retract_incident", description: "Retract an incident with a reason.",
     inputSchema: { type: "object", properties: { incident_id: { type: "string" }, reason: { type: "string" } }, required: ["incident_id","reason"] } },
+  { name: "list_portal_announcements", description: "List Doctor-Portal What's-new / Coming-soon announcements (portal_announcements). Shows active + inactive with ids.",
+    inputSchema: { type: "object", properties: { include_inactive: { type: "boolean" } } } },
+  { name: "add_portal_announcement", description: "Publish an announcement to the Doctor Portal home. kind 'whats_new' or 'coming_soon'; active defaults true; optional starts_on/ends_on (YYYY-MM-DD) and sort.",
+    inputSchema: { type: "object", properties: { kind: { type: "string" }, title: { type: "string" }, body: { type: "string" }, active: { type: "boolean" }, starts_on: { type: "string" }, ends_on: { type: "string" }, sort: { type: "number" } }, required: ["kind","title"] } },
+  { name: "retire_portal_announcement", description: "Deactivate (retire) a portal announcement by id, or reactivate with active=true.",
+    inputSchema: { type: "object", properties: { id: { type: "string" }, active: { type: "boolean" } }, required: ["id"] } },
   { name: "sql_query", description: "Run a read-only SELECT/WITH query against the governance DB. Auto-capped to 500 rows. Use for any read the typed tools don't cover.",
     inputSchema: { type: "object", properties: { sql: { type: "string" } }, required: ["sql"] } },
   { name: "sql_execute", description: "FULL POWER: run an arbitrary write/DDL SQL statement (INSERT/UPDATE/DELETE/ALTER/...). Requires confirm=true. Logged to audit_log_v2. Use with care — this bypasses app validation.",
@@ -254,6 +260,45 @@ async function runTool(name: string, args: Json, sql: Sql): Promise<unknown> {
       if (r.length === 0) throw new Error("incident not found");
       await audit(sql, actor.id, "retract", "incident", iid, { via: "mcp", reason });
       return { ok: true, incident_id: iid, status: "retracted" };
+    }
+
+    case "list_portal_announcements": {
+      const inactive = args.include_inactive === true;
+      const rows = (await sql`
+        SELECT id::text AS id, kind, title, body, active, starts_on::text AS starts_on, ends_on::text AS ends_on, sort, created_by, created_at
+        FROM portal_announcements
+        WHERE (${inactive} OR active = true)
+        ORDER BY kind, sort ASC, created_at DESC LIMIT 100`) as Row[];
+      return { ok: true, announcements: rows };
+    }
+
+    case "add_portal_announcement": {
+      const kind = s(args.kind);
+      if (kind !== "whats_new" && kind !== "coming_soon") throw new Error("kind must be 'whats_new' or 'coming_soon'");
+      const title = s(args.title);
+      if (!title) throw new Error("title required");
+      const body = s(args.body) || null;
+      const active = args.active !== false;
+      const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+      const startsOn = DATE_RE.test(s(args.starts_on)) ? s(args.starts_on) : null;
+      const endsOn = DATE_RE.test(s(args.ends_on)) ? s(args.ends_on) : null;
+      const sort = Number.isFinite(Number(args.sort)) ? Number(args.sort) : 0;
+      const ins = (await sql`
+        INSERT INTO portal_announcements (kind, title, body, active, starts_on, ends_on, sort, created_by)
+        VALUES (${kind}, ${title}, ${body}, ${active}, ${startsOn}::date, ${endsOn}::date, ${sort}, 'claude-mcp@even.in')
+        RETURNING id::text AS id`) as Row[];
+      await audit(sql, actor.id, "create", "portal_announcement", ins[0].id as string, { via: "mcp", kind, title, active });
+      return { ok: true, id: ins[0].id, kind, title, active };
+    }
+
+    case "retire_portal_announcement": {
+      const id = s(args.id);
+      if (!UUID_RE.test(id)) throw new Error("valid id required (from list_portal_announcements)");
+      const active = args.active === true;
+      const r = (await sql`UPDATE portal_announcements SET active=${active} WHERE id=${id}::uuid RETURNING id::text AS id, title, active`) as Row[];
+      if (r.length === 0) throw new Error("announcement not found");
+      await audit(sql, actor.id, "update", "portal_announcement", id, { via: "mcp", active });
+      return { ok: true, ...r[0] };
     }
 
     case "sql_query": {

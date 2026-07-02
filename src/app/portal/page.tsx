@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { PortalNav, type Dest } from "@/components/portal/PortalNav";
+import { HomeExtras, type AnnData } from "@/components/portal/HomeExtras";
+import { IncidentReporting } from "@/components/portal/IncidentReporting";
 
 interface Phys { id: string; full_name: string; preferred_name: string | null; primary_specialty: string | null; registration_number: string | null; registration_council: string | null; registration_expiry: string | null; email: string | null; phone: string | null; date_joined_network: string | null; current_status: string }
 interface Eng { id: string; hospital_id: string; category: string; status: string; start_date: string | null; hospital_code: string; hospital_name: string }
@@ -36,6 +39,23 @@ export default function PortalHome() {
   const [quals, setQuals] = useState<Qual[]>([]);
   const [privs, setPrivs] = useState<Priv[]>([]);
   const [tab, setTab] = useState<"overview" | "performance" | "qualifications" | "privileges" | "report" | "aboutme" | "resign">("overview");
+  const [ann, setAnn] = useState<AnnData | null>(null);
+  const [features, setFeatures] = useState<{ incidents: boolean }>({ incidents: false });
+  const [reportMode, setReportMode] = useState<"chooser" | "incident" | "feedback">("chooser");
+  useEffect(() => {
+    fetch("/api/portal/announcements").then((r) => r.json()).then((j) => {
+      if (j.ok) { setAnn({ whats_new: j.whats_new ?? [], coming_soon: j.coming_soon ?? [] }); setFeatures(j.features ?? { incidents: false }); }
+    }).catch(() => undefined);
+  }, []);
+  // Five-destination nav (R5): map destinations onto the existing tab keys.
+  const dest: Dest = tab === "overview" ? "home" : tab === "performance" ? "performance" : tab === "report" ? "report" : tab === "qualifications" || tab === "privileges" ? "credentials" : "me";
+  const goDest = (d: Dest) => {
+    if (d === "home") setTab("overview");
+    else if (d === "performance") setTab("performance");
+    else if (d === "report") { setTab("report"); setReportMode("chooser"); }
+    else if (d === "credentials") setTab("qualifications");
+    else setTab("aboutme");
+  };
   const [loading, setLoading] = useState(true);
   const [perf, setPerf] = useState<PerfRow[]>([]);
   const [perfMapped, setPerfMapped] = useState(true);
@@ -169,15 +189,13 @@ export default function PortalHome() {
 
   // NOTE: "Resign" tab intentionally hidden for all doctors (stakeholder decision — portal-initiated
 // resignations withdrawn). The resign panel + submitResign handler remain in the code, just unreachable.
-const TABS: Array<[typeof tab, string]> = [["overview", "Overview"], ["performance", "My Performance"], ["qualifications", "Qualifications"], ["privileges", "Current Privileges"], ["report", "Report feedback"], ["aboutme", "About me"]];
-  const SOON: string[] = [];
 
   return (
     <main className="min-h-screen bg-stone-50">
       <header className="bg-white border-b border-stone-200 sticky top-0 z-10">
         <div className="max-w-[900px] mx-auto px-4 sm:px-6 min-h-14 py-2 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 shrink-0">
-            <span className="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-teal-600 text-white text-[11px] font-bold shrink-0">EPI</span>
+            <span className="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-brand text-white text-[11px] font-bold shrink-0">EPI</span>
             <span className="font-semibold text-sm whitespace-nowrap">Even Physician Portal</span>
           </div>
           <div className="flex items-center gap-3 text-sm text-stone-500 min-w-0">
@@ -187,19 +205,15 @@ const TABS: Array<[typeof tab, string]> = [["overview", "Overview"], ["performan
         </div>
       </header>
 
-      <div className="max-w-[900px] mx-auto px-6 py-6">
-        {/* tab bar */}
-        <div className="flex flex-wrap gap-1.5 mb-5">
-          {TABS.map(([k, label]) => (
-            <button key={k} onClick={() => setTab(k)} className={`px-3 py-1.5 rounded-lg text-[13px] font-medium ${tab === k ? "bg-teal-600 text-white" : "bg-white border border-stone-200 text-stone-700 hover:bg-stone-50"}`}>{label}</button>
-          ))}
-          {SOON.map((s) => (<span key={s} className="px-3 py-1.5 rounded-lg text-[13px] font-medium bg-stone-100 text-stone-400" title="Coming soon">{s}</span>))}
-        </div>
+      <div className="max-w-[900px] mx-auto px-4 sm:px-6 py-5 pb-28 lg:pb-8">
+        {/* R5 nav: bottom bar on phones, pills on desktop */}
+        <PortalNav dest={dest} onChange={goDest} />
 
         {loading ? <div className="text-sm text-stone-500">Loading…</div> : (
         <>
           {tab === "overview" && me && (
             <div className="space-y-4">
+              <HomeExtras ann={ann} />
               <section className="bg-white border border-stone-200 rounded-xl p-5">
                 <h2 className="text-sm font-semibold mb-3">Your profile</h2>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-2 gap-x-6 text-sm">
@@ -304,6 +318,14 @@ const TABS: Array<[typeof tab, string]> = [["overview", "Overview"], ["performan
           )}
 
           {tab === "qualifications" && (
+            <div className="space-y-3">
+              <div className="flex gap-1.5 mb-1">
+                <button onClick={() => setTab("qualifications")} className={`px-3.5 py-1.5 rounded-lg text-[13px] font-medium ${(tab as string) === "qualifications" ? "bg-brand-softer text-brand border border-teal-200" : "bg-white border border-stone-200 text-stone-600"}`}>Qualifications</button>
+                <button onClick={() => setTab("privileges")} className={`px-3.5 py-1.5 rounded-lg text-[13px] font-medium ${(tab as string) === "privileges" ? "bg-brand-softer text-brand border border-teal-200" : "bg-white border border-stone-200 text-stone-600"}`}>Privileges</button>
+              </div>
+            </div>
+          )}
+          {tab === "qualifications" && (
             <section className="bg-white border border-stone-200 rounded-xl">
               <div className="px-5 py-3.5 border-b border-stone-100 flex items-center justify-between">
                 <h2 className="text-sm font-semibold">Qualifications</h2>
@@ -353,6 +375,14 @@ const TABS: Array<[typeof tab, string]> = [["overview", "Overview"], ["performan
             </section>
           )}
 
+          {tab === "privileges" && (
+            <div className="space-y-3">
+              <div className="flex gap-1.5 mb-1">
+                <button onClick={() => setTab("qualifications")} className={`px-3.5 py-1.5 rounded-lg text-[13px] font-medium ${(tab as string) === "qualifications" ? "bg-brand-softer text-brand border border-teal-200" : "bg-white border border-stone-200 text-stone-600"}`}>Qualifications</button>
+                <button onClick={() => setTab("privileges")} className={`px-3.5 py-1.5 rounded-lg text-[13px] font-medium ${(tab as string) === "privileges" ? "bg-brand-softer text-brand border border-teal-200" : "bg-white border border-stone-200 text-stone-600"}`}>Privileges</button>
+              </div>
+            </div>
+          )}
           {tab === "privileges" && (
             <section className="bg-white border border-stone-200 rounded-xl">
               <div className="px-5 py-3.5 border-b border-stone-100"><h2 className="text-sm font-semibold">Current Privileges <span className="text-[11px] text-stone-400 font-normal">· read-only</span></h2></div>
@@ -449,8 +479,39 @@ const TABS: Array<[typeof tab, string]> = [["overview", "Overview"], ["performan
             </section>
           )}
 
-          {tab === "report" && (
+          {tab === "report" && reportMode === "chooser" && (
+            <div className="space-y-3">
+              {features.incidents && (
+                <button onClick={() => setReportMode("incident")} className="w-full rounded-xl border border-stone-200 bg-white p-5 text-left hover:border-brand">
+                  <div className="flex items-center gap-3">
+                    <span className="flex h-10 w-10 items-center justify-center rounded-full bg-rose-50 text-rose-600 text-lg">⚑</span>
+                    <span className="min-w-0">
+                      <span className="block text-[15px] font-semibold">Report an incident</span>
+                      <span className="block text-[12.5px] text-stone-500">Patient safety, staff, facility or service — named, confidential or anonymous. Goes to the RCA/CAPA pipeline.</span>
+                    </span>
+                  </div>
+                </button>
+              )}
+              <button onClick={() => setReportMode("feedback")} className="w-full rounded-xl border border-stone-200 bg-white p-5 text-left hover:border-brand">
+                <div className="flex items-center gap-3">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-full bg-sky-50 text-sky-600 text-lg">✉</span>
+                  <span className="min-w-0">
+                    <span className="block text-[15px] font-semibold">Feedback about a colleague</span>
+                    <span className="block text-[12.5px] text-stone-500">Commendations or concerns about another doctor&apos;s practice — goes to physician governance.</span>
+                  </span>
+                </div>
+              </button>
+            </div>
+          )}
+          {tab === "report" && reportMode === "incident" && features.incidents && me && (
+            <div className="space-y-3">
+              <button onClick={() => setReportMode("chooser")} className="text-[13px] font-medium text-stone-500">← Back</button>
+              <IncidentReporting doctorName={me.full_name} />
+            </div>
+          )}
+          {tab === "report" && reportMode === "feedback" && (
             <section className="bg-white border border-stone-200 rounded-xl p-5">
+              <button onClick={() => setReportMode("chooser")} className="mb-2 text-[13px] font-medium text-stone-500">← Back</button>
               <h2 className="text-sm font-semibold mb-1">Report feedback on another doctor</h2>
               <p className="text-[11px] text-stone-400 mb-4">Positive feedback is shared with your name. Negative reports can be anonymous to the doctor and peers — administrators always see who filed it.</p>
               {rDone && (

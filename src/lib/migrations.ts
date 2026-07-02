@@ -1200,5 +1200,34 @@ export const MIGRATIONS: Migration[] = [
       ON CONFLICT (title) DO NOTHING;
     `,
   },
+  {
+    id: "028_portal_announcements",
+    description:
+      "R5.1 (EPI R5 Portal PRD v1.1 \u00a74): portal_announcements \u2014 What's new / Coming soon content on the Doctor Portal home, managed via governance MCP tools (no admin UI by V ruling). Seeded incl. an INACTIVE incident-reporting row activated when PORTAL_INCIDENTS flips.",
+    sql: `
+      CREATE TABLE IF NOT EXISTS portal_announcements (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        kind text NOT NULL CHECK (kind IN ('whats_new','coming_soon')),
+        title text NOT NULL,
+        body text,
+        active boolean NOT NULL DEFAULT true,
+        starts_on date,
+        ends_on date,
+        sort int NOT NULL DEFAULT 0,
+        created_by text,
+        created_at timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_portal_announcements_active ON portal_announcements(active, kind, sort);
+
+      INSERT INTO portal_announcements (kind, title, body, active, sort, created_by)
+      SELECT * FROM (VALUES
+        ('whats_new', 'A faster, phone-first portal', 'The portal has been redesigned for your phone \u2014 new navigation at the bottom of the screen, everything one thumb-tap away.', true, 1, 'r5-seed'),
+        ('whats_new', 'Report incidents from your phone', 'You can now report any incident \u2014 patient safety, staff, facility or service \u2014 straight from the Report tab, named, confidential or anonymous.', false, 2, 'r5-seed'),
+        ('coming_soon', 'Medical Councils', 'Even is forming clinical governance councils. Many physicians will be invited to council positions \u2014 invitations, agendas and council business will live here in your portal.', true, 1, 'r5-seed'),
+        ('coming_soon', 'IPD Governance', 'Case-level quality and outcome measures for inpatient work, with transparent scoring.', true, 2, 'r5-seed')
+      ) AS v(kind, title, body, active, sort, created_by)
+      WHERE NOT EXISTS (SELECT 1 FROM portal_announcements WHERE created_by = 'r5-seed');
+    `,
+  },
 ];
 
