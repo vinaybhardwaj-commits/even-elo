@@ -9,7 +9,7 @@ export default async function Page() {
   const u = await getCurrentUser();
   if (!u || u.status !== "active" || !(u.is_super_admin || u.is_sgc_member)) redirect("/home");
   return (
-    <AdminShell breadcrumbs={[{ label: "Governance", href: "/home" }, { label: "Safety incidents" }]} title="Safety incidents">
+    <AdminShell breadcrumbs={[{ label: "Governance", href: "/overview" }, { label: "Incidents" }]} title="Incident Management" subtitle="Reporting, RCA & CAPA — all departments, all incident types. Patient safety is the first lens, not the whole container.">
       <SafetyNav />
       <SafetyHub />
     </AdminShell>

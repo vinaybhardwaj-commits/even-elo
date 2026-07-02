@@ -81,28 +81,30 @@ function ageBadge(days: number, regressed: boolean) {
   );
 }
 
-async function incidentStats(): Promise<{ open: number | null; total: number | null }> {
+async function incidentStats(): Promise<{
+  open: number | null;
+  total: number | null;
+  highSev: number | null;
+}> {
   const base = process.env.INCIDENT_API_BASE;
   const tok = process.env.INCIDENT_API_TOKEN;
-  if (!base || !tok) return { open: null, total: null };
+  if (!base || !tok) return { open: null, total: null, highSev: null };
   try {
     const res = await fetch(`${base}/api/office/stats`, {
       headers: { Authorization: `Bearer ${tok}` },
       cache: "no-store",
       signal: AbortSignal.timeout(4000),
     });
-    if (!res.ok) return { open: null, total: null };
-    const j = (await res.json()) as Record<string, unknown>;
-    const pick = (...keys: string[]): number | null => {
-      for (const k of keys) {
-        const v = (j as Record<string, unknown>)[k] ?? (j.stats as Record<string, unknown> | undefined)?.[k];
-        if (typeof v === "number") return v;
-      }
-      return null;
+    if (!res.ok) return { open: null, total: null, highSev: null };
+    // Shape verified live 2 Jul: { ok, totals: { total, open, near_miss, high_sev, with_rca }, ... }
+    const j = (await res.json()) as { totals?: { total?: number; open?: number; high_sev?: number } };
+    return {
+      open: typeof j.totals?.open === "number" ? j.totals.open : null,
+      total: typeof j.totals?.total === "number" ? j.totals.total : null,
+      highSev: typeof j.totals?.high_sev === "number" ? j.totals.high_sev : null,
     };
-    return { open: pick("open", "open_count", "openIncidents"), total: pick("total", "count", "incidents_total") };
   } catch {
-    return { open: null, total: null };
+    return { open: null, total: null, highSev: null };
   }
 }
 
@@ -240,12 +242,12 @@ export default async function OverviewPage({
           <Link href="/safety" className="rounded-xl border border-stone-200 bg-white px-4 py-3 hover:border-brand">
             <div className="text-[12.5px] font-semibold">Incidents</div>
             <div className="mt-1.5">
-              <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[10.5px] font-bold text-sky-700">
-                {inc.open !== null ? `${inc.open} open` : "open module"}
+              <span className={"rounded-full px-2 py-0.5 text-[10.5px] font-bold " + ((inc.highSev ?? 0) > 0 ? "bg-rose-50 text-rose-700" : (inc.open ?? 0) > 0 ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700")}>
+                {inc.open !== null ? `${inc.open} open${(inc.highSev ?? 0) > 0 ? ` · ${inc.highSev} major+` : ""}` : "open module"}
               </span>
             </div>
             <div className="mt-1.5 text-[11.5px] text-stone-500">
-              {inc.total !== null ? `${inc.total} total · all departments` : "reporting · RCA · CAPA"}
+              {inc.total !== null ? `${inc.total} total · all departments · RCA/CAPA` : "reporting · RCA · CAPA"}
             </div>
           </Link>
           <Link href="/onboarding" className="rounded-xl border border-stone-200 bg-white px-4 py-3 hover:border-brand">

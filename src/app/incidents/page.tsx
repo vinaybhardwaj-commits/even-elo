@@ -100,6 +100,7 @@ export default function IncidentsInbox() {
       <main className="max-w-[1400px] mx-auto px-8 py-8">
         <div className="flex items-end justify-between mb-6">
           <div>
+            <div className="flex items-center gap-2 text-xs text-stone-500 mb-2"><span>Governance</span><span>/</span><span className="text-stone-900 font-medium">Feedback</span></div>
             <h1 className="text-[22px] font-semibold tracking-tight">Feedback</h1>
             <div className="text-sm text-stone-500 mt-1">
               {Object.entries(totalByStatus).map(([s, n]) => `${s.replace("_", " ")}: ${n}`).join(" · ") || "—"}

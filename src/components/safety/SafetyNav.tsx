@@ -15,7 +15,7 @@ export default function SafetyNav() {
   return (
     <div className="sticky top-[56px] z-30 -mx-8 mb-6 border-b border-stone-200 bg-white/85 px-8 backdrop-blur">
       <nav className="flex items-center gap-1 overflow-x-auto py-2.5">
-        <span className="mr-2 text-[11px] font-semibold uppercase tracking-wide text-stone-400">Safety</span>
+        <span className="mr-2 text-[11px] font-semibold uppercase tracking-wide text-stone-400">Incidents</span>
         {items.map((i) => {
           const active = i.href === "/safety/notifications" && path === "/safety/notifications";
           return (
