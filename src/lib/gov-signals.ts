@@ -297,9 +297,18 @@ export interface IncidentCluster {
   rca_count: number;
 }
 
+export interface RcaPattern {
+  id: string;
+  label: string;
+  member_count: number;
+  last_seen: string | null;
+}
+
 export interface IncidentSnapshotPayload {
   stats?: Record<string, unknown>;
   clusters?: IncidentCluster[];
+  rca_patterns?: RcaPattern[];
+  capa_mix?: Array<Record<string, unknown>>;
 }
 
 async function incidentFetch(path: string): Promise<Record<string, unknown>> {
@@ -321,9 +330,20 @@ export async function storeIncidentSnapshot(): Promise<{ day: string; clusters: 
     incidentFetch("/api/office/stats"),
     incidentFetch("/api/office/clusters"),
   ]);
+  let rcaPatterns: RcaPattern[] = [];
+  let capaMix: Array<Record<string, unknown>> = [];
+  try {
+    const rp = await incidentFetch("/api/office/rca-patterns");
+    rcaPatterns = (rp.patterns as RcaPattern[]) ?? [];
+    capaMix = (rp.capa_mix_by_department as Array<Record<string, unknown>>) ?? [];
+  } catch {
+    /* endpoint pre-dates snapshot or transient — clusters/stats still land */
+  }
   const payload: IncidentSnapshotPayload = {
     stats: stats as Record<string, unknown>,
     clusters: (clusters.clusters as IncidentCluster[]) ?? [],
+    rca_patterns: rcaPatterns,
+    capa_mix: capaMix,
   };
   const day = new Date().toISOString().slice(0, 10);
   await sql`

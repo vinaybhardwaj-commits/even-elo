@@ -116,6 +116,12 @@ const TOOLS = [
     inputSchema: { type: "object", properties: {} } },
   { name: "update_incident_report", description: "Update an incident report's lifecycle status and/or owner. Audited. status one of open|under_investigation|capa_assigned|closed|verified.",
     inputSchema: { type: "object", properties: { id: { type: "string" }, status: { type: "string" }, owner_name: { type: "string" } }, required: ["id"] } },
+  { name: "list_rca_patterns", description: "Recurring ROOT-CAUSE patterns mined across RCA outputs (incident system) + the weak-CAPA signature (training/PPE-only share by department). The structural-governance signal layer: patterns that must be fixed structurally, not per-incident.",
+    inputSchema: { type: "object", properties: {} } },
+  { name: "scan_rca_patterns", description: "Run the RCA pattern miner now (embeds un-patterned RCAs, clusters into patterns). Safe to re-run; processes up to 200.",
+    inputSchema: { type: "object", properties: {} } },
+  { name: "delete_incident_report", description: "PERMANENTLY delete an incident report (EHRC-INC-YYYY-NNNN) with full cascade: RCAs, CAPAs, audit rows, cluster repair. For test/smoke rows — deliberately has NO UI. Requires confirm=true. Irreversible; audited on both sides.",
+    inputSchema: { type: "object", properties: { id: { type: "string" }, confirm: { type: "boolean" } }, required: ["id","confirm"] } },
   { name: "list_portal_announcements", description: "List Doctor-Portal What's-new / Coming-soon announcements (portal_announcements). Shows active + inactive with ids.",
     inputSchema: { type: "object", properties: { include_inactive: { type: "boolean" } } } },
   { name: "add_portal_announcement", description: "Publish an announcement to the Doctor Portal home. kind 'whats_new' or 'coming_soon'; active defaults true; optional starts_on/ends_on (YYYY-MM-DD) and sort.",
@@ -276,7 +282,10 @@ async function runTool(name: string, args: Json, sql: Sql): Promise<unknown> {
     case "get_incident_report":
     case "incident_report_stats":
     case "list_incident_clusters":
-    case "update_incident_report": {
+    case "update_incident_report":
+    case "list_rca_patterns":
+    case "scan_rca_patterns":
+    case "delete_incident_report": {
       // Incident system lives in its OWN Neon DB (even-incident) — all access via
       // its API with the cross-app service token (never via this DB).
       const IBASE = process.env.INCIDENT_API_BASE;
@@ -295,6 +304,16 @@ async function runTool(name: string, args: Json, sql: Sql): Promise<unknown> {
       };
 
       if (name === "incident_report_stats") return await ifetch("/api/office/stats");
+      if (name === "list_rca_patterns") return await ifetch("/api/office/rca-patterns");
+      if (name === "scan_rca_patterns") return await ifetch("/api/office/rca-patterns/scan", { method: "POST" });
+      if (name === "delete_incident_report") {
+        const id = s(args.id).toUpperCase();
+        if (!/^EHRC-INC-\d{4}-\d{1,6}$/.test(id)) throw new Error("id must look like EHRC-INC-2026-0001");
+        if (args.confirm !== true) throw new Error("Refusing: irreversible delete requires confirm=true");
+        const r = await ifetch(`/api/office/incidents/${encodeURIComponent(id)}`, { method: "DELETE" });
+        await audit(sql, actor.id, "delete", "incident_report", id, { via: "mcp", cascade: r });
+        return r;
+      }
       if (name === "list_incident_clusters") return await ifetch("/api/office/clusters");
       if (name === "get_incident_report") {
         const id = s(args.id).toUpperCase();
