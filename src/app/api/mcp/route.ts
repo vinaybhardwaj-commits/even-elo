@@ -106,6 +106,16 @@ const TOOLS = [
     inputSchema: { type: "object", properties: { incident_id: { type: "string" }, reply_text: { type: "string" } }, required: ["incident_id","reply_text"] } },
   { name: "retract_incident", description: "Retract an incident with a reason.",
     inputSchema: { type: "object", properties: { incident_id: { type: "string" }, reason: { type: "string" } }, required: ["incident_id","reason"] } },
+  { name: "list_incident_reports", description: "EHRC Incident Reporting system (incident.evenos.app — RCA/CAPA pipeline, ALL departments/staff; NOT the physician-feedback 'incidents' domain). List recent incident reports, newest first, with optional filters applied server-side in this tool.",
+    inputSchema: { type: "object", properties: { status: { type: "string", description: "open|under_investigation|capa_assigned|closed|verified" }, severity: { type: "string", description: "negligible|minor|moderate|major|catastrophic" }, department: { type: "string", description: "substring match on department name" }, type: { type: "string", description: "substring match on incident type name" }, near_miss: { type: "boolean" }, limit: { type: "number" } } } },
+  { name: "get_incident_report", description: "Full record for one incident report (EHRC-INC-YYYY-NNNN): narrative, classification, lifecycle, RCA/CAPA, recurrence cluster context.",
+    inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } },
+  { name: "incident_report_stats", description: "Incident-system dashboard stats: totals (open/near-miss/high-sev/with-RCA), CAPA counts, breakdowns by severity/status/type/department/impact, weekly series.",
+    inputSchema: { type: "object", properties: {} } },
+  { name: "list_incident_clusters", description: "Recurrence clusters (embedding-detected repeat incidents) — the 'keeps happening' leaderboard, highest recurrence first.",
+    inputSchema: { type: "object", properties: {} } },
+  { name: "update_incident_report", description: "Update an incident report's lifecycle status and/or owner. Audited. status one of open|under_investigation|capa_assigned|closed|verified.",
+    inputSchema: { type: "object", properties: { id: { type: "string" }, status: { type: "string" }, owner_name: { type: "string" } }, required: ["id"] } },
   { name: "list_portal_announcements", description: "List Doctor-Portal What's-new / Coming-soon announcements (portal_announcements). Shows active + inactive with ids.",
     inputSchema: { type: "object", properties: { include_inactive: { type: "boolean" } } } },
   { name: "add_portal_announcement", description: "Publish an announcement to the Doctor Portal home. kind 'whats_new' or 'coming_soon'; active defaults true; optional starts_on/ends_on (YYYY-MM-DD) and sort.",
@@ -260,6 +270,60 @@ async function runTool(name: string, args: Json, sql: Sql): Promise<unknown> {
       if (r.length === 0) throw new Error("incident not found");
       await audit(sql, actor.id, "retract", "incident", iid, { via: "mcp", reason });
       return { ok: true, incident_id: iid, status: "retracted" };
+    }
+
+    case "list_incident_reports":
+    case "get_incident_report":
+    case "incident_report_stats":
+    case "list_incident_clusters":
+    case "update_incident_report": {
+      // Incident system lives in its OWN Neon DB (even-incident) — all access via
+      // its API with the cross-app service token (never via this DB).
+      const IBASE = process.env.INCIDENT_API_BASE;
+      const ITOK = process.env.INCIDENT_API_TOKEN;
+      if (!IBASE || !ITOK) throw new Error("Incident API not configured (INCIDENT_API_BASE/TOKEN)");
+      const ifetch = async (path: string, init?: RequestInit) => {
+        const res = await fetch(`${IBASE}${path}`, {
+          ...init,
+          headers: { Authorization: `Bearer ${ITOK}`, "Content-Type": "application/json", ...(init?.headers ?? {}) },
+          cache: "no-store",
+          signal: AbortSignal.timeout(10000),
+        });
+        const j = (await res.json()) as Record<string, unknown>;
+        if (!res.ok || j.ok === false) throw new Error(`incident API ${res.status}: ${String(j.error ?? "")}`.trim());
+        return j;
+      };
+
+      if (name === "incident_report_stats") return await ifetch("/api/office/stats");
+      if (name === "list_incident_clusters") return await ifetch("/api/office/clusters");
+      if (name === "get_incident_report") {
+        const id = s(args.id).toUpperCase();
+        if (!/^EHRC-INC-\d{4}-\d{1,6}$/.test(id)) throw new Error("id must look like EHRC-INC-2026-0001");
+        return await ifetch(`/api/office/incidents/${encodeURIComponent(id)}`);
+      }
+      if (name === "update_incident_report") {
+        const id = s(args.id).toUpperCase();
+        if (!/^EHRC-INC-\d{4}-\d{1,6}$/.test(id)) throw new Error("id must look like EHRC-INC-2026-0001");
+        const body: Record<string, unknown> = {};
+        if (s(args.status)) body.status = s(args.status);
+        if (args.owner_name !== undefined) body.owner_name = s(args.owner_name) || null;
+        if (Object.keys(body).length === 0) throw new Error("provide status and/or owner_name");
+        const r = await ifetch(`/api/office/incidents/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(body) });
+        await audit(sql, actor.id, "update", "incident_report", id, { via: "mcp", ...body });
+        return r;
+      }
+      // list_incident_reports — upstream returns newest 300; filter here
+      const j = await ifetch("/api/office/incidents");
+      let rows = (j.incidents as Array<Record<string, unknown>>) ?? [];
+      const fStatus = s(args.status); const fSev = s(args.severity);
+      const fDept = s(args.department).toLowerCase(); const fType = s(args.type).toLowerCase();
+      if (fStatus) rows = rows.filter((r) => r.status === fStatus);
+      if (fSev) rows = rows.filter((r) => r.severity === fSev);
+      if (fDept) rows = rows.filter((r) => String(r.dept_name ?? "").toLowerCase().includes(fDept));
+      if (fType) rows = rows.filter((r) => String(r.type_name ?? "").toLowerCase().includes(fType));
+      if (typeof args.near_miss === "boolean") rows = rows.filter((r) => r.near_miss === args.near_miss);
+      const limit = Math.min(100, Math.max(1, Number(args.limit) || 50));
+      return { ok: true, count: rows.length, incidents: rows.slice(0, limit) };
     }
 
     case "list_portal_announcements": {

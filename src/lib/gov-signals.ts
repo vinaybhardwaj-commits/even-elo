@@ -278,3 +278,103 @@ export function qualitySeries(series: SnapshotRow[]): Array<{ day: string; value
     return { day: row.day, value: Math.round(avg * 100) / 100 };
   });
 }
+
+/* ───────────────────────── Incident source (Gap 2, 2 Jul) ─────────────────────────
+   The incident system (even-incident) lives in its own Neon DB — the governance
+   side integrates via its API only. Daily snapshots of stats + recurrence
+   clusters land in gov_signal_snapshots as source='incident', giving incident
+   recurrence the same trend/aging treatment as OPD signals. */
+
+const INCIDENT_SOURCE = "incident";
+
+export interface IncidentCluster {
+  id: string;
+  label: string;
+  recurrence_count: number;
+  risk_score: number | null;
+  last_seen: string | null;
+  member_count: number;
+  rca_count: number;
+}
+
+export interface IncidentSnapshotPayload {
+  stats?: Record<string, unknown>;
+  clusters?: IncidentCluster[];
+}
+
+async function incidentFetch(path: string): Promise<Record<string, unknown>> {
+  const base = process.env.INCIDENT_API_BASE;
+  const tok = process.env.INCIDENT_API_TOKEN;
+  if (!base || !tok) throw new Error("Incident API not configured");
+  const res = await fetch(`${base}${path}`, {
+    headers: { Authorization: `Bearer ${tok}` },
+    cache: "no-store",
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) throw new Error(`incident API ${res.status}`);
+  return (await res.json()) as Record<string, unknown>;
+}
+
+/** Store today's incident stats+clusters snapshot (idempotent per day). */
+export async function storeIncidentSnapshot(): Promise<{ day: string; clusters: number }> {
+  const [stats, clusters] = await Promise.all([
+    incidentFetch("/api/office/stats"),
+    incidentFetch("/api/office/clusters"),
+  ]);
+  const payload: IncidentSnapshotPayload = {
+    stats: stats as Record<string, unknown>,
+    clusters: (clusters.clusters as IncidentCluster[]) ?? [],
+  };
+  const day = new Date().toISOString().slice(0, 10);
+  await sql`
+    INSERT INTO gov_signal_snapshots (source, day, period, generator, payload)
+    VALUES (${INCIDENT_SOURCE}, ${day}::date, 'day', 'incident-office-api', ${JSON.stringify(payload)}::jsonb)
+    ON CONFLICT (source, day, period)
+    DO UPDATE SET payload = EXCLUDED.payload, fetched_at = now()`;
+  return { day, clusters: payload.clusters?.length ?? 0 };
+}
+
+export interface IncidentSnapshotRow {
+  day: string;
+  payload: IncidentSnapshotPayload;
+}
+
+export async function getIncidentSeries(days = 90): Promise<IncidentSnapshotRow[]> {
+  const rows = (await sql`
+    SELECT day::text AS day, payload
+    FROM gov_signal_snapshots
+    WHERE source = ${INCIDENT_SOURCE} AND period = 'day' AND day >= current_date - ${days}::int
+    ORDER BY day ASC`) as unknown as IncidentSnapshotRow[];
+  return rows;
+}
+
+export interface ClusterSignal extends IncidentCluster {
+  firstSeenDay: string | null; // first snapshot day this cluster appeared in
+  countDelta30d: number | null; // recurrence growth vs ~30d ago (null until history)
+}
+
+/** Recurring clusters as governance signals, with snapshot-derived aging/growth. */
+export function computeClusterSignals(series: IncidentSnapshotRow[], minRecurrence = 2): ClusterSignal[] {
+  const latest = series.length ? series[series.length - 1] : null;
+  if (!latest) return [];
+  const clusters = (latest.payload.clusters ?? []).filter((c) => c.recurrence_count >= minRecurrence);
+  const targetTime = new Date(latest.day).getTime() - 30 * 86400000;
+  let baseRow: IncidentSnapshotRow | null = null;
+  for (const row of series) {
+    if (new Date(row.day).getTime() <= targetTime) baseRow = row;
+    else break;
+  }
+  return clusters
+    .map((c) => {
+      let firstSeenDay: string | null = null;
+      for (const row of series) {
+        if ((row.payload.clusters ?? []).some((x) => x.id === c.id)) {
+          firstSeenDay = row.day;
+          break;
+        }
+      }
+      const baseCount = baseRow ? (baseRow.payload.clusters ?? []).find((x) => x.id === c.id)?.recurrence_count ?? null : null;
+      return { ...c, firstSeenDay, countDelta30d: baseCount !== null ? c.recurrence_count - baseCount : null };
+    })
+    .sort((a, b) => (b.risk_score ?? 0) - (a.risk_score ?? 0) || b.recurrence_count - a.recurrence_count);
+}

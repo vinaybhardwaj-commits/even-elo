@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
-import { storeSnapshot } from "@/lib/gov-signals";
+import { storeSnapshot, storeIncidentSnapshot } from "@/lib/gov-signals";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -57,7 +57,14 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: true, mode: "backfill", results });
     }
     const r = await storeSnapshot();
-    return NextResponse.json({ ok: true, mode: "daily", stored: r });
+    // Gap 2 (2 Jul): incidents join the signal spine — same daily cadence.
+    let incident: { day: string; clusters: number } | { error: string };
+    try {
+      incident = await storeIncidentSnapshot();
+    } catch (e) {
+      incident = { error: e instanceof Error ? e.message : "failed" }; // OPD snapshot still counts
+    }
+    return NextResponse.json({ ok: true, mode: "daily", stored: r, incident });
   } catch (e) {
     return NextResponse.json(
       { ok: false, error: e instanceof Error ? e.message : "snapshot failed" },

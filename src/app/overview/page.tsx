@@ -11,6 +11,8 @@ import {
   computeMovers,
   qualitySeries,
   signalKey,
+  getIncidentSeries,
+  computeClusterSignals,
   type SnapshotRow,
 } from "@/lib/gov-signals";
 
@@ -132,6 +134,12 @@ export default async function OverviewPage({
   const ages = computeAges(series);
   const resolved = computeResolved(series);
   const movers = computeMovers(series, windowDays);
+  let clusterSignals: ReturnType<typeof computeClusterSignals> = [];
+  try {
+    clusterSignals = computeClusterSignals(await getIncidentSeries(90)).slice(0, 4);
+  } catch {
+    clusterSignals = [];
+  }
   const qseries = qualitySeries(series).slice(-Math.min(windowDays, series.length));
 
   const counts = (
@@ -311,6 +319,23 @@ export default async function OverviewPage({
                     {ages[signalKey(s)] && ageBadge(ages[signalKey(s)].ageDays, ages[signalKey(s)].regressed)}
                   </div>
                 ))}
+                {clusterSignals.map((c) => (
+                  <Link key={c.id} href="/safety" className="flex items-start gap-3 py-3 hover:bg-brand-softer">
+                    <span className={"mt-1.5 h-2 w-2 shrink-0 rounded-full " + ((c.risk_score ?? 0) >= 10 ? "bg-rose-600" : "bg-amber-500")} />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[13.5px] font-semibold">
+                        Incident · {c.label} — recurring
+                        {typeof c.countDelta30d === "number" && c.countDelta30d > 0 ? (
+                          <span className="ml-1.5 text-[12px] font-bold text-rose-600">▲ +{c.countDelta30d} in 30d</span>
+                        ) : null}
+                      </div>
+                      <div className="mt-0.5 text-[12.5px] text-stone-500">
+                        risk {c.risk_score ?? "—"} · {c.rca_count}/{c.member_count} with RCA · last {c.last_seen ? String(c.last_seen).slice(0, 10) : "—"}
+                      </div>
+                    </div>
+                    <span className="shrink-0 rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[10.5px] font-bold text-rose-700">×{c.recurrence_count}</span>
+                  </Link>
+                ))}
                 {expiries.slice(0, 2).map((e) => (
                   <div key={`${e.id}-${e.kind}`} className="flex items-start gap-3 py-3">
                     <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-amber-500" />
@@ -322,7 +347,7 @@ export default async function OverviewPage({
                     </div>
                   </div>
                 ))}
-                {signals.length === 0 && expiries.length === 0 && (
+                {signals.length === 0 && clusterSignals.length === 0 && expiries.length === 0 && (
                   <p className="py-6 text-center text-sm text-stone-400">No active signals — a good stretch. ✓</p>
                 )}
               </div>
