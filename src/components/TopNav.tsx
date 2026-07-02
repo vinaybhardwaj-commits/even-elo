@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { UserMenu, type UserSummary } from "./UserMenu";
+import { ShellV2 } from "./v2/ShellV2";
 import { HospitalFilter } from "./HospitalFilter";
 
 interface NavItem {
@@ -16,7 +17,18 @@ interface NavItem {
  * Top nav — EPI shell, client component.
  * Fetches /api/auth/me on mount + (if super_admin) polls pending-approval count.
  */
-export function TopNav({ nav }: { nav?: NavItem[] } = {}) {
+/**
+ * Flag switch (EPI Redesign PRD v1.4-LOCKED, R1): NEXT_PUBLIC_UI_V2=1 renders the
+ * redesigned sidebar shell; unset/anything else keeps the legacy top nav.
+ * Kill switch = unset the env + redeploy. Wrapper (not an early return inside the
+ * old component) so hook order is unconditional in both branches.
+ */
+export function TopNav(props: { nav?: NavItem[] } = {}) {
+  if (process.env.NEXT_PUBLIC_UI_V2 === "1") return <ShellV2 />;
+  return <TopNavV1 {...props} />;
+}
+
+function TopNavV1({ nav }: { nav?: NavItem[] } = {}) {
   const [user, setUser] = useState<UserSummary | null>(null);
   useEffect(() => {
     fetch("/api/auth/me")

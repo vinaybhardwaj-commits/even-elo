@@ -197,7 +197,7 @@ export default async function HomePage() {
         </div>
 
         {/* Slim Watchlist strip */}
-        <section className="bg-white border border-stone-200 rounded-xl px-5 py-3 flex items-center justify-between">
+        <section id="watchlist" className="bg-white border border-stone-200 rounded-xl px-5 py-3 flex items-center justify-between scroll-mt-20">
           <div className="flex items-center gap-2 min-w-0">
             <h2 className="text-sm font-semibold">Watchlist</h2>
             <span className="text-[11px] bg-stone-100 text-stone-600 rounded-full px-2 py-0.5 font-medium">0</span>
