@@ -17,7 +17,8 @@ const BASE = process.env.GOV_API_BASE || "https://even-cdmss.vercel.app";
 export interface OpdAffectedDoctor {
   uid: string;
   name: string;
-  mean: number;
+  mean?: number; // pdqi signals
+  value?: number; // domain signals
   n: number;
 }
 
@@ -39,6 +40,7 @@ export interface OpdSignal {
   affected_share?: number | null;
   affected?: OpdAffectedDoctor[];
   action?: string;
+  confidence?: "estimate"; // held/uncalibrated metrics via ?includeEstimates=1
 }
 
 export interface OpdHealthy {
@@ -59,16 +61,33 @@ export interface OpdSignalsPayload {
   notes_total?: number;
   notes_assessed?: number;
   doctors_seen?: number;
+  speciality?: string; // echoed when ?speciality= was passed (v1.1)
   report?: {
     signals: OpdSignal[];
     healthy: OpdHealthy[];
     thresholds?: Record<string, number>;
+    domain_healthy?: Array<{ metric: string; label: string; value: number; unit: string; n: number }>;
+    domain_thresholds?: Record<string, unknown>;
   };
+  by_speciality?: Array<{
+    speciality: string;
+    notes_assessed: number;
+    doctors_seen: number;
+    signals: OpdSignal[];
+    healthy: OpdHealthy[];
+  }>;
   advisory?: string;
 }
 
 export async function fetchOpdSignals(
-  params: { day?: string; period?: string; baselineDays?: number } = {},
+  params: {
+    day?: string;
+    period?: string;
+    baselineDays?: number;
+    speciality?: string;
+    groupBy?: "speciality";
+    includeEstimates?: boolean;
+  } = {},
 ): Promise<OpdSignalsPayload> {
   const key = process.env.GOV_API_KEY;
   if (!key) throw new Error("GOV_API_KEY not configured");
@@ -76,6 +95,9 @@ export async function fetchOpdSignals(
   if (params.day) qs.set("day", params.day);
   if (params.period) qs.set("period", params.period);
   if (params.baselineDays) qs.set("baselineDays", String(params.baselineDays));
+  if (params.speciality) qs.set("speciality", params.speciality);
+  if (params.groupBy) qs.set("groupBy", params.groupBy);
+  if (params.includeEstimates) qs.set("includeEstimates", "1");
   const url = `${BASE}/api/governance/opd-signals${qs.toString() ? `?${qs.toString()}` : ""}`;
   const res = await fetch(url, { headers: { "x-api-key": key }, cache: "no-store" });
   if (!res.ok) {

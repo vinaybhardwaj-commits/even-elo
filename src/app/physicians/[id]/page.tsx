@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { OpdSignalsSection } from "@/components/v2/OpdSignalsSection";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { TopNav } from "@/components/TopNav";
@@ -552,6 +553,8 @@ export default function PhysicianProfilePage() {
                   </div>
                 )}
               </section>
+
+              <OpdSignalsSection physicianId={id as string} />
 
               <section className="bg-white border border-stone-200 rounded-xl">
                 <div className="px-5 py-3.5 border-b border-stone-100 flex items-center justify-between">

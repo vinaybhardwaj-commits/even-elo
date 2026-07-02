@@ -1159,5 +1159,46 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_gss_source_day ON gov_signal_snapshots(source, day DESC);
     `,
   },
+  {
+    id: "027_opd_governance_workflow",
+    description:
+      "R3b (EPI Redesign PRD v1.4 \u00a76.4-6.6): gov_interventions (did-it-work loop), gov_capture_gaps (EMR asks, seeded from the 2-Jul design report), physicians.cdmss_doctor_uid (CDMSS affected[] join key).",
+    sql: `
+      ALTER TABLE physicians ADD COLUMN IF NOT EXISTS cdmss_doctor_uid text;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_physicians_cdmss_uid
+        ON physicians(cdmss_doctor_uid) WHERE cdmss_doctor_uid IS NOT NULL;
+
+      CREATE TABLE IF NOT EXISTS gov_interventions (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        signal_key text NOT NULL,
+        signal_label text,
+        kind text NOT NULL CHECK (kind IN ('huddle_briefing','supportive_1to1','spot_audit','emr_ask','other')),
+        note text,
+        physician_id uuid REFERENCES physicians(id),
+        actor_email text,
+        done_on date NOT NULL DEFAULT current_date,
+        created_at timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_gov_interventions_key ON gov_interventions(signal_key, done_on DESC);
+
+      CREATE TABLE IF NOT EXISTS gov_capture_gaps (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        title text UNIQUE NOT NULL,
+        attr text NOT NULL,
+        source_doc text,
+        status text NOT NULL DEFAULT 'open' CHECK (status IN ('open','with_design','shipped')),
+        baseline_mean numeric,
+        shipped_at date,
+        note text,
+        created_at timestamptz NOT NULL DEFAULT now()
+      );
+      INSERT INTO gov_capture_gaps (title, attr, source_doc, baseline_mean) VALUES
+        ('Assessment/impression field', 'synthesized', 'EHRC-OPD-EMR-CAPTURE-GAP-DESIGN-REPORT-2-JUL-2026', 1.8),
+        ('Prompted plan block (working dx / plan / safety-net / follow-up)', 'useful', 'EHRC-OPD-EMR-CAPTURE-GAP-DESIGN-REPORT-2-JUL-2026', 2.1),
+        ('Structured HPI prompts (comorbidities + pertinent negatives)', 'thorough', 'EHRC-OPD-EMR-CAPTURE-GAP-DESIGN-REPORT-2-JUL-2026', 1.7),
+        ('Med-list + latest-labs auto-pull with copy-forward flagging', 'up_to_date', 'EHRC-OPD-EMR-CAPTURE-GAP-DESIGN-REPORT-2-JUL-2026', 3.1)
+      ON CONFLICT (title) DO NOTHING;
+    `,
+  },
 ];
 

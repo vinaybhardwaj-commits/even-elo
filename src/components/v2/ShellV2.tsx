@@ -74,7 +74,7 @@ export function ShellV2() {
     {
       label: "Governance",
       items: [
-        { label: "OPD Governance", tag: "soon" },
+        { label: "OPD Governance", href: "/opd-governance" },
         { label: "IPD Governance", tag: "soon" },
         { label: "Surgical Governance", href: "/surgical-governance", show: isSuper },
         { label: "Feedback", href: "/incidents" },
