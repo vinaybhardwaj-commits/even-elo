@@ -93,6 +93,7 @@ function defaultNav(showElo: boolean, showAdmin: boolean, showSafety: boolean): 
     { label: "Feedback", href: "/incidents" },
   ];
   if (showSafety) items.push({ label: "Incidents", href: "/safety" });
+  if (showSafety) items.push({ label: "M&M", href: "/mm" }); // same SGC/super predicate (M&M PRD decision 13)
   if (showElo) items.push({ label: "Surgical Governance", href: "/surgical-governance" });
   if (showAdmin) items.push({ label: "Admin", href: "/admin" });
   items.push({ label: "Guide", href: "/guide" });

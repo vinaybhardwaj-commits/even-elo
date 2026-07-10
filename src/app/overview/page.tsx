@@ -110,6 +110,52 @@ async function incidentStats(): Promise<{
   }
 }
 
+/**
+ * M&M aggregates for the tile + queue. Copies incidentStats() exactly: explicit
+ * 4s timeout, no-store, every error swallowed to nulls so an unreachable module
+ * degrades the tile rather than the board. Carries no patient identifiers (A3).
+ */
+async function mmStats(): Promise<{
+  open: number | null;
+  inReview: number | null;
+  gapsOpen: number | null;
+  queue: Array<{ id: string; title: string; updated_at: string }>;
+}> {
+  const base = process.env.INCIDENT_API_BASE;
+  const tok = process.env.INCIDENT_API_TOKEN;
+  const none = { open: null, inReview: null, gapsOpen: null, queue: [] };
+  if (!base || !tok) return none;
+  try {
+    const res = await fetch(`${base}/api/mm/stats`, {
+      headers: { Authorization: `Bearer ${tok}` },
+      cache: "no-store",
+      signal: AbortSignal.timeout(4000),
+    });
+    if (!res.ok) return none;
+    const j = (await res.json()) as {
+      ok?: boolean;
+      totals?: { open?: number; in_review?: number; gaps_open?: number };
+      in_review?: Array<{ id: string; title: string; updated_at: string }>;
+    };
+    if (j.ok === false) return none;
+    return {
+      open: typeof j.totals?.open === "number" ? j.totals.open : null,
+      inReview: typeof j.totals?.in_review === "number" ? j.totals.in_review : null,
+      gapsOpen: typeof j.totals?.gaps_open === "number" ? j.totals.gaps_open : null,
+      queue: Array.isArray(j.in_review) ? j.in_review.slice(0, 3) : [],
+    };
+  } catch {
+    return none;
+  }
+}
+
+function ageDays(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return "—";
+  const d = Math.floor(ms / 86400000);
+  return d < 1 ? "today" : `${d}d`;
+}
+
 export default async function OverviewPage({
   searchParams,
 }: {
@@ -182,6 +228,11 @@ export default async function OverviewPage({
 
   const inc = await incidentStats();
 
+  // M&M is SGC/super-only (decision 13) — don't surface its counts, or fetch
+  // them, for users who cannot open the module.
+  const showMm = user.is_super_admin || user.is_sgc_member;
+  const mm = showMm ? await mmStats() : { open: null, inReview: null, gapsOpen: null, queue: [] };
+
   const canVerify = user.is_super_admin || user.is_hr || user.is_site_medical_head;
   const actNow = signals.filter((s) => s.severity === "act_now").length;
   const feedbackTrend =
@@ -217,7 +268,7 @@ export default async function OverviewPage({
         </div>
 
         {/* Category tiles */}
-        <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-5">
+        <div className={"mb-5 grid grid-cols-2 gap-3 " + (showMm ? "lg:grid-cols-6" : "lg:grid-cols-5")}>
           <div className="rounded-xl border border-stone-200 bg-white px-4 py-3">
             <div className="text-[12.5px] font-semibold">Documentation quality</div>
             <div className="mt-1.5 flex items-center justify-between gap-2">
@@ -258,6 +309,24 @@ export default async function OverviewPage({
               {inc.total !== null ? `${inc.total} total · all departments · RCA/CAPA` : "reporting · RCA · CAPA"}
             </div>
           </Link>
+          {showMm && (
+            <Link href="/mm" className="rounded-xl border border-stone-200 bg-white px-4 py-3 hover:border-brand">
+              <div className="text-[12.5px] font-semibold">M&amp;M</div>
+              <div className="mt-1.5">
+                <span
+                  className={
+                    "rounded-full px-2 py-0.5 text-[10.5px] font-bold " +
+                    ((mm.inReview ?? 0) > 0 ? "bg-amber-50 text-amber-700" : (mm.open ?? 0) > 0 ? "bg-sky-50 text-sky-700" : "bg-emerald-50 text-emerald-700")
+                  }
+                >
+                  {mm.open !== null ? `${mm.open} open${(mm.inReview ?? 0) > 0 ? ` · ${mm.inReview} in review` : ""}` : "open module"}
+                </span>
+              </div>
+              <div className="mt-1.5 text-[11.5px] text-stone-500">
+                {mm.gapsOpen !== null ? `${mm.gapsOpen} protocol gap${mm.gapsOpen === 1 ? "" : "s"} open` : "clinical-layer review"}
+              </div>
+            </Link>
+          )}
           <Link href="/onboarding" className="rounded-xl border border-stone-200 bg-white px-4 py-3 hover:border-brand">
             <div className="text-[12.5px] font-semibold">Credentialing hygiene</div>
             <div className="mt-1.5">
@@ -412,7 +481,19 @@ export default async function OverviewPage({
                   </div>
                 </Link>
               ))}
-              {!canVerify && pendingQuals.length === 0 && expiries.length === 0 && negIncidents.length === 0 && (
+              {/* M&M rows show status only — never findings or patient identifiers. */}
+              {mm.queue.map((m) => (
+                <Link key={m.id} href={`/mm/cases/${m.id}`} className="flex items-center gap-3 py-2.5 hover:bg-brand-softer">
+                  <span className="h-2 w-2 shrink-0 rounded-full bg-violet-500" />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[13px] font-semibold">
+                      Case {m.id} awaiting reviewer disposition
+                    </div>
+                    <div className="text-[11.5px] text-stone-400">M&amp;M · presenting clinician · {ageDays(m.updated_at)}</div>
+                  </div>
+                </Link>
+              ))}
+              {!canVerify && pendingQuals.length === 0 && expiries.length === 0 && negIncidents.length === 0 && mm.queue.length === 0 && (
                 <p className="py-6 text-center text-sm text-stone-400">Queue is clear. ✓</p>
               )}
             </div>

@@ -82,6 +82,14 @@ export function ShellV2() {
       ],
     },
     {
+      // M&M Analyzer (PRD decision 13) — same SGC/super predicate as Incidents.
+      label: "M&M",
+      items: [
+        { label: "M&M Cases", href: "/mm", show: showIncidents },
+        { label: "Protocol-gap register", tag: "soon", show: showIncidents },
+      ],
+    },
+    {
       label: "Councils",
       items: [{ label: "Meetings & Actions", tag: "soon" }],
     },
