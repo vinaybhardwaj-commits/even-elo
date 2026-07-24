@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 /* ---------- types ---------- */
 type KN = { k: string; n: number; cat?: string };
@@ -73,17 +73,47 @@ export default function SafetyHub() {
   const [clusters, setClusters] = useState<Cluster[]>([]);
   const [scanning, setScanning] = useState(false);
   const [q, setQ] = useState(""); const [status, setStatus] = useState(""); const [sev, setSev] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
+  const [loadedAt, setLoadedAt] = useState<Date | null>(null);
 
-  function loadClusters() { fetch("/api/safety/office/clusters").then((r) => r.json()).then((j) => { if (j.ok) setClusters(j.clusters); }); }
-  useEffect(() => {
-    fetch("/api/safety/office/stats").then((r) => r.json()).then((j) => { if (j.ok) setStats(j); });
-    fetch("/api/safety/office/incidents").then((r) => r.json()).then((j) => { if (j.ok) setIncidents(j.incidents); });
-    loadClusters();
+  // A safety queue that silently shows stale data is worse than one that shows
+  // nothing: an incident reported minutes ago must never be invisible here.
+  // (a) never let the browser HTTP cache serve these reads; (b) this component
+  // used to fetch on mount ONLY, so a tab left open before a report was filed
+  // never re-fetched — refresh on focus/visibility and on an explicit control.
+  const jget = (path: string) => fetch(path, { cache: "no-store" }).then((r) => r.json());
+
+  const loadClusters = useCallback(() => {
+    jget("/api/safety/office/clusters").then((j) => { if (j.ok) setClusters(j.clusters); });
   }, []);
+
+  const loadAll = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const [st, inc] = await Promise.all([
+        jget("/api/safety/office/stats"),
+        jget("/api/safety/office/incidents"),
+      ]);
+      if (st.ok) setStats(st);
+      if (inc.ok) setIncidents(inc.incidents);
+      loadClusters();
+      setLoadedAt(new Date());
+    } finally { setRefreshing(false); }
+  }, [loadClusters]);
+
+  useEffect(() => { loadAll(); }, [loadAll]);
+
+  useEffect(() => {
+    const onFocus = () => loadAll();
+    const onVis = () => { if (document.visibilityState === "visible") loadAll(); };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVis);
+    return () => { window.removeEventListener("focus", onFocus); document.removeEventListener("visibilitychange", onVis); };
+  }, [loadAll]);
 
   async function scan() {
     setScanning(true);
-    try { await fetch("/api/safety/office/recurrence/scan", { method: "POST" }); loadClusters(); fetch("/api/safety/office/incidents").then((r) => r.json()).then((j) => { if (j.ok) setIncidents(j.incidents); }); }
+    try { await fetch("/api/safety/office/recurrence/scan", { method: "POST", cache: "no-store" }); await loadAll(); }
     finally { setScanning(false); }
   }
 
@@ -215,7 +245,14 @@ export default function SafetyHub() {
       <section id="queue" className="scroll-mt-32 pt-10">
         <div className="mb-4 flex items-end justify-between">
           <h2 className="text-lg font-semibold">Incident queue</h2>
-          <div className="text-[13px] font-medium text-stone-500">{incidents ? `${incidents.filter((r) => r.status !== "closed" && r.status !== "verified").length} open` : ""}</div>
+          <div className="flex items-center gap-3">
+            <div className="text-[13px] font-medium text-stone-500">{incidents ? `${incidents.filter((r) => r.status !== "closed" && r.status !== "verified").length} open` : ""}</div>
+            {loadedAt && <span className="text-[12px] text-stone-400">updated {loadedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>}
+            <button onClick={() => loadAll()} disabled={refreshing}
+              className="rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-[13px] font-medium text-stone-700 hover:bg-stone-50 disabled:opacity-50">
+              {refreshing ? "Refreshing…" : "Refresh"}
+            </button>
+          </div>
         </div>
         <div className="mb-4 flex flex-wrap gap-2">
           <input className="flex-1 rounded-lg border border-stone-300 px-3 py-2 text-sm" style={{ minWidth: 240 }} placeholder="Search id, type, department, text…" value={q} onChange={(e) => setQ(e.target.value)} />

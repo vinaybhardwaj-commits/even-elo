@@ -30,6 +30,8 @@ async function fwd(req: NextRequest, path: string[], method: string): Promise<Ne
   // stay ASCII-safe, and clinician names are not.
   const init: RequestInit = {
     method,
+    // Belt-and-braces: these are live governance reads, never cache them.
+    cache: "no-store",
     headers: {
       Authorization: `Bearer ${APITOK}`,
       "Content-Type": "application/json",
