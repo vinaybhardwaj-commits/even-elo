@@ -29,7 +29,14 @@ function client(): SqlFn {
       "DATABASE_URL is not set. Configure it in Vercel project env or .env.local.",
     );
   }
-  cached = neon(url);
+  // Next 14 patches global fetch and caches it, and this driver (0.10.4) runs
+  // every query through that fetch without a cache directive. Any query whose
+  // body never changes — list and dashboard reads — can then be answered from
+  // the Data Cache indefinitely, while per-id reads (unique body) stay fresh.
+  // That asymmetry silently froze the incident queue in even-incident for ~5
+  // days (0008/0009 invisible, 25 Jul); this app has the identical exposure
+  // across 22 API routes. Route-level force-dynamic does NOT cover it.
+  cached = neon(url, { fetchOptions: { cache: "no-store" } });
   return cached;
 }
 
