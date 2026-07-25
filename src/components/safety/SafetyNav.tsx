@@ -6,7 +6,11 @@ const items = [
   { label: "Dashboard", href: "/safety#dashboard" },
   { label: "Queue", href: "/safety#queue" },
   { label: "Recurring patterns", href: "/safety#recurring" },
-  { label: "Notifications", href: "/safety/notifications" },
+  // "Notification rules", not "Notifications": this tab renders on every safety
+  // screen INCLUDING /safety/incidents/[id], where "Notifications" read as a tab
+  // belonging to the incident you were viewing. The rules are global — one
+  // inc_notify_route table consulted for every incident (observed 25 Jul).
+  { label: "Notification rules", href: "/safety/notifications" },
 ];
 
 /** Sticky sub-nav shown on every Safety screen — jump to any section/page. */
