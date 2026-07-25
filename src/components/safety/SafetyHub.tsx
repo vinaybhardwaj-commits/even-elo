@@ -248,6 +248,12 @@ export default function SafetyHub() {
           <div className="flex items-center gap-3">
             <div className="text-[13px] font-medium text-stone-500">{incidents ? `${incidents.filter((r) => r.status !== "closed" && r.status !== "verified").length} open` : ""}</div>
             {loadedAt && <span className="text-[12px] text-stone-400">updated {loadedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>}
+            {/* Saturday review register (A1.2). A plain link, never a fetch —
+                the browser must stream it straight to disk as an attachment. */}
+            <a href="/api/safety/register" download
+              className="rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-[13px] font-medium text-stone-700 hover:bg-stone-50">
+              Download register
+            </a>
             <button onClick={() => loadAll()} disabled={refreshing}
               className="rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-[13px] font-medium text-stone-700 hover:bg-stone-50 disabled:opacity-50">
               {refreshing ? "Refreshing…" : "Refresh"}
