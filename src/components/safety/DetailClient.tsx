@@ -64,6 +64,18 @@ export default function IncidentDetail() {
   const Field = ({ label, value }: { label: string; value: React.ReactNode }) =>
     value ? <div style={S.field}><div style={S.flabel}>{label}</div><div style={S.fvalue}>{value}</div></div> : null;
 
+  // Closure SLA — 7 working days from report date (PRD Addendum A1, A1-D16).
+  // sla_state is computed upstream in even-incident; null due_at renders nothing.
+  const slaState = g("sla_state");
+  const dueAt = g("due_at");
+  const SLA_LOOK: Record<string, { label: string; bg: string; fg: string }> = {
+    overdue: { label: "Overdue", bg: "#fee2e2", fg: "#b91c1c" },
+    due_soon: { label: "Due soon", bg: "#fef3c7", fg: "#b45309" },
+    on_track: { label: "On track", bg: "#f1f5f9", fg: "#475569" },
+    closed: { label: "Closed", bg: "#dcfce7", fg: "#15803d" },
+  };
+  const sla = slaState ? SLA_LOOK[slaState] : null;
+
   return (
     <main style={S.wrap}>
       <a href="/safety" style={S.back}>← Queue</a>
@@ -73,6 +85,7 @@ export default function IncidentDetail() {
         <h1 style={S.id}>{g("id")}</h1>
         {g("near_miss") === "true" && <span style={S.nearMiss}>near miss</span>}
         <span style={S.sevTag}>{sev || "unrated"}</span>
+        {sla && <span style={{ ...S.slaTag, background: sla.bg, color: sla.fg }}>{sla.label}</span>}
       </div>
       <div style={S.subhead}>{g("type_name") || "Unclassified"} · {g("dept_name") || "—"}{g("location_name") ? ` · ${g("location_name")}` : ""}</div>
 
@@ -133,6 +146,22 @@ export default function IncidentDetail() {
         </div>
         {saveNote && <div style={{ marginTop: 8, fontSize: 13, color: "#15803d", fontWeight: 600 }}>{saveNote}</div>}
         {saveErr && <div style={{ marginTop: 8, fontSize: 13, color: "#b91c1c", fontWeight: 600 }}>{saveErr}</div>}
+
+        {/* 7-working-day closure clock. Weekends are skipped and there is no
+            holiday calendar (A1-D16), so a due date can land on a holiday. */}
+        <div style={S.grid}>
+          <Field
+            label="Due (7 working days)"
+            value={dueAt ? new Date(dueAt).toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" }) : null}
+          />
+          <Field label="Closed" value={g("closed_at") ? new Date(g("closed_at")!).toLocaleString() : null} />
+          <Field
+            label="Owner assigned"
+            value={g("owner_assigned_by")
+              ? `${g("owner_assigned_by")}${g("owner_assigned_at") ? ` on ${new Date(g("owner_assigned_at")!).toLocaleDateString()}` : ""}`
+              : g("owner_assigned_at") ? new Date(g("owner_assigned_at")!).toLocaleDateString() : null}
+          />
+        </div>
       </section>
 
       <section style={S.card}>
@@ -195,6 +224,7 @@ const S: Record<string, React.CSSProperties> = {
   lifeRow: { display: "flex", gap: 10, marginTop: 10, flexWrap: "wrap", alignItems: "center" },
   sel: { padding: "9px 12px", fontSize: 14, border: "1px solid #cbd5e1", borderRadius: 9, background: "#fff" },
   owner: { flex: "1 1 160px", padding: "9px 12px", fontSize: 14, border: "1px solid #cbd5e1", borderRadius: 9 },
+  slaTag: { fontSize: 11, fontWeight: 700, borderRadius: 6, padding: "3px 9px" },
   btn: { padding: "9px 14px", fontSize: 14, fontWeight: 600, color: "#fff", background: "#2b5191", border: "none", borderRadius: 9, cursor: "pointer" },
   btnSm: { padding: "9px 12px", fontSize: 13, fontWeight: 600, color: "#2b5191", background: "#eef2fb", border: "1px solid #dbe4f5", borderRadius: 9, cursor: "pointer" },
   rcaHead: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 8 },

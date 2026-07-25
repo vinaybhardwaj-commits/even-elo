@@ -4,15 +4,19 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 /* ---------- types ---------- */
 type KN = { k: string; n: number; cat?: string };
+/** Closure SLA against the 7-working-day clock (PRD Addendum A1, A1-D16). */
+type SlaState = "closed" | "overdue" | "due_soon" | "on_track" | null;
 type Stats = {
-  totals: { total: number; open: number; near_miss: number; high_sev: number; with_rca: number };
+  totals: { total: number; open: number; near_miss: number; high_sev: number; with_rca: number; overdue?: number; due_soon?: number };
   capa: { rcas: number; verified: number; closed: number };
+  sla?: { overdue: number; due_soon: number };
   bySeverity: KN[]; byStatus: KN[]; byType: KN[]; byDept: KN[]; byCategory: KN[]; byImpact: KN[];
   series: KN[]; topClusters: { label: string; recurrence_count: number; risk_score: number | null }[];
 };
 type Incident = {
   id: string; reported_at: string; severity: string | null; near_miss: boolean; status: string;
   type_name: string | null; dept_name: string | null; location_name: string | null; narrative_snippet: string; rca_count: number;
+  due_at?: string | null; closed_at?: string | null; sla_state?: SlaState;
 };
 type Cluster = { id: string; label: string; recurrence_count: number; risk_score: number | null; last_seen: string | null; member_count: number; rca_count: number };
 
@@ -48,6 +52,25 @@ function Kpi({ n, label, accent }: { n: React.ReactNode; label: string; accent?:
     </div>
   );
 }
+/**
+ * Closure-SLA badge (A1-D16). Rendered only when there is something to say:
+ * a closed incident and an on-track one both show nothing, so the badge means
+ * "this needs attention" wherever it appears. sla_state is computed upstream in
+ * even-incident; a null due_at yields null and renders nothing at all.
+ *
+ * The countdown is CALENDAR days remaining, which is what a reader wants to see
+ * on a row ("Due in 3d"); the due_soon window itself is working days.
+ */
+function SlaBadge({ state, dueAt }: { state?: SlaState; dueAt?: string | null }) {
+  if (state !== "overdue" && state !== "due_soon") return null;
+  if (state === "overdue") {
+    return <span className="rounded bg-red-100 px-1.5 py-0.5 text-[11px] font-bold text-red-700">Overdue</span>;
+  }
+  const ms = dueAt ? new Date(dueAt).getTime() - Date.now() : NaN;
+  const label = !Number.isFinite(ms) ? "Due soon" : ms <= 0 ? "Due today" : `Due in ${Math.ceil(ms / 86400000)}d`;
+  return <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-bold text-amber-700">{label}</span>;
+}
+
 function RankBars({ rows, color = "#0f766e" }: { rows: KN[]; color?: string }) {
   const max = Math.max(1, ...rows.map((r) => r.n));
   if (!rows.length) return <div className="text-sm text-stone-400">No data yet.</div>;
@@ -129,6 +152,9 @@ export default function SafetyHub() {
   const t = stats?.totals; const cap = stats?.capa;
   const nearMissPct = t && t.total ? Math.round((t.near_miss / t.total) * 100) : 0;
   const rcaPct = t && t.total ? Math.round((t.with_rca / t.total) * 100) : 0;
+  // Reads either shape: stats.sla.overdue or totals.overdue. 0 before migration
+  // 009 is applied, which is correct — nothing is overdue if nothing has a due date.
+  const overdue = stats?.sla?.overdue ?? t?.overdue ?? 0;
   const catMax = Math.max(1, ...(stats?.byCategory || []).map((c) => c.n));
   const sevMax = Math.max(1, ...SEV_ORDER.map(([k]) => sevCount(k)));
   const seriesMax = Math.max(1, ...(stats?.series || []).map((s) => s.n));
@@ -141,9 +167,11 @@ export default function SafetyHub() {
 
         {!stats ? <div className="text-sm text-stone-400">Loading…</div> : (
           <>
-            <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
+            <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-7">
               <Kpi n={t!.total} label="Incidents" />
               <Kpi n={t!.open} label="Open" />
+              {/* 7-working-day closure clock (A1-D16). Red only when non-zero. */}
+              <Kpi n={overdue} label="Overdue" accent={overdue ? "#dc2626" : undefined} />
               <Kpi n={`${nearMissPct}%`} label="Near-miss / caught" />
               <Kpi n={t!.high_sev} label="Major or worse" accent={t!.high_sev ? "#dc2626" : undefined} />
               <Kpi n={`${rcaPct}%`} label="With RCA" />
@@ -279,6 +307,7 @@ export default function SafetyHub() {
                   {r.near_miss && <span className="rounded bg-sky-100 px-1.5 py-0.5 text-[11px] font-bold text-sky-700">near miss</span>}
                   <span className="rounded bg-stone-100 px-2 py-0.5 text-[11px] font-medium text-stone-600">{STATUS_ORDER.find(([k]) => k === r.status)?.[1] || r.status}</span>
                   {r.rca_count > 0 && <span className="rounded bg-green-100 px-1.5 py-0.5 text-[11px] font-bold text-green-700">RCA</span>}
+                  <SlaBadge state={r.sla_state} dueAt={r.due_at} />
                   <span className="ml-auto text-[12px] text-stone-400">{new Date(r.reported_at).toLocaleDateString()}</span>
                 </div>
                 <div className="mt-2 text-[15px] font-semibold">{r.type_name || "Unclassified"} · {r.dept_name || "—"}{r.location_name ? ` · ${r.location_name}` : ""}</div>
