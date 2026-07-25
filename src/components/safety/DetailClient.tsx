@@ -5,6 +5,18 @@ import { useParams } from "next/navigation";
 
 type Inc = Record<string, unknown>;
 type Rca = Record<string, unknown>;
+/** Evidence attached at intake by the reporter, or here by a reviewer (A1-D21). */
+type Attachment = {
+  id: string; blob_url: string; pathname: string; content_type: string | null;
+  size_bytes: number | null; uploaded_by: string | null; source: string; created_at: string;
+};
+
+const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp", "image/heic", "application/pdf"];
+const MAX_MB = 10;
+const MAX_FILES = 5;
+const isImage = (ct: string | null) => !!ct && ct.startsWith("image/") && ct !== "image/heic";
+const prettySize = (n: number | null) => (!n ? "" : n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+const fileNameOf = (a: Attachment) => (a.pathname || "").split("/").pop() || a.pathname;
 
 const SEV_COLOR: Record<string, string> = { negligible: "#94a3b8", minor: "#3b82f6", moderate: "#d97706", major: "#ea580c", catastrophic: "#dc2626" };
 const STATUS = [["open", "Open"], ["under_investigation", "Investigating"], ["capa_assigned", "CAPA assigned"], ["closed", "Closed"], ["verified", "Verified"]];
@@ -21,13 +33,84 @@ export default function IncidentDetail() {
   const [saveNote, setSaveNote] = useState<string | null>(null);
   const [saveErr, setSaveErr] = useState<string | null>(null);
 
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [attachEnabled, setAttachEnabled] = useState(false);
+
   function load() {
     fetch(`/api/safety/office/incidents/${id}`).then((r) => r.json()).then((j) => {
-      if (j.ok) { setInc(j.incident); setRcas(j.rcas || []); setCluster(j.cluster || null); setSiblings(j.siblings || []); setOwner((j.incident.owner_name as string) || ""); }
+      if (j.ok) {
+        setInc(j.incident); setRcas(j.rcas || []); setCluster(j.cluster || null); setSiblings(j.siblings || []);
+        setOwner((j.incident.owner_name as string) || "");
+        setAttachments(j.attachments || []);
+        setAttachEnabled(j.attachmentsEnabled === true);
+      }
       else setErr(j.error || "Failed to load");
     }).catch(() => setErr("Failed to load"));
   }
   useEffect(load, [id]);
+
+  /**
+   * Upload evidence browser-direct to Vercel Blob (A1-D8, M&M decision 11 —
+   * bytes NEVER pass through a route handler, in either app).
+   *
+   * even-elo carries no Blob SDK, so this runs the handshake by hand:
+   * even-incident mints a short-lived, size- and type-constrained client token
+   * and tells us the upload URL and protocol version; we PUT once. Reusing its
+   * per-request state machine: setSaving / setSaveNote / setSaveErr.
+   */
+  async function uploadFile(file: File) {
+    setSaveErr(null); setSaveNote(null);
+    if (!ALLOWED_TYPES.includes(file.type)) { setSaveErr("Only JPEG, PNG, WEBP, HEIC or PDF can be attached."); return; }
+    if (file.size > MAX_MB * 1024 * 1024) { setSaveErr(`${file.name} is larger than ${MAX_MB} MB.`); return; }
+    if (attachments.length >= MAX_FILES) { setSaveErr(`This incident already has the maximum of ${MAX_FILES} attachments.`); return; }
+
+    setSaving("attach");
+    try {
+      const t = await fetch(`/api/safety/office/incidents/${id}/attachments`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "token", pathname: file.name, contentType: file.type, size: file.size }),
+      }).then((r) => r.json());
+      if (!t.ok || !t.token) { setSaveErr(t.error || "Could not authorise the upload."); return; }
+
+      const put = await fetch(t.uploadUrl, {
+        method: "PUT",
+        headers: {
+          authorization: `Bearer ${t.token}`,
+          "x-api-version": String(t.apiVersion),
+          "x-content-type": file.type,
+          "x-add-random-suffix": "1",
+        },
+        body: file,
+      });
+      if (!put.ok) { setSaveErr(`Upload failed (${put.status}).`); return; }
+      const blob = (await put.json()) as { url?: string; pathname?: string };
+      if (!blob?.url) { setSaveErr("Upload did not return a file reference."); return; }
+
+      const rec = await fetch(`/api/safety/office/incidents/${id}/attachments`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ record: { url: blob.url, pathname: blob.pathname || file.name, contentType: file.type, size: file.size } }),
+      }).then((r) => r.json());
+      if (!rec.ok) { setSaveErr(rec.error || "Uploaded, but could not be recorded."); return; }
+
+      setSaveNote("Attachment added ✓");
+      setTimeout(() => setSaveNote(null), 2500);
+      load();
+    } catch {
+      setSaveErr("Network error — the file was not attached.");
+    } finally { setSaving(null); }
+  }
+
+  async function removeAttachment(attachmentId: string) {
+    setSaving("attach"); setSaveErr(null); setSaveNote(null);
+    try {
+      const j = await fetch(`/api/safety/office/incidents/${id}/attachments?attachmentId=${encodeURIComponent(attachmentId)}`, { method: "DELETE" })
+        .then((r) => r.json());
+      if (j.ok) { setSaveNote("Attachment removed ✓"); setTimeout(() => setSaveNote(null), 2500); load(); }
+      else setSaveErr(j.error || "Could not remove the attachment.");
+    } catch {
+      setSaveErr("Network error — not removed.");
+    } finally { setSaving(null); }
+  }
 
   async function patch(body: Record<string, unknown>, tag: string) {
     setSaving(tag); setSaveErr(null); setSaveNote(null);
@@ -164,6 +247,51 @@ export default function IncidentDetail() {
         </div>
       </section>
 
+      {/* Evidence (A1-D21). Deepthi: "so we don't have to back and forth
+          looking for evidence." Hidden entirely when Blob is not configured. */}
+      {(attachEnabled || attachments.length > 0) && (
+        <section style={S.card}>
+          <div style={S.rcaHead}>
+            <div style={S.flabel}>Evidence</div>
+            {attachEnabled && attachments.length < MAX_FILES && (
+              <label style={{ ...S.btnSm, display: "inline-block", cursor: saving === "attach" ? "wait" : "pointer" }}>
+                {saving === "attach" ? "Uploading…" : "+ Add file"}
+                <input type="file" style={{ display: "none" }} disabled={saving === "attach"}
+                  accept={ALLOWED_TYPES.join(",")}
+                  onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) uploadFile(f); }} />
+              </label>
+            )}
+          </div>
+          {attachments.length === 0 ? (
+            <div style={S.muted}>No evidence attached.</div>
+          ) : (
+            <div style={S.attachGrid}>
+              {attachments.map((a) => (
+                <div key={a.id} style={S.attachCard}>
+                  <a href={a.blob_url} target="_blank" rel="noreferrer" style={S.attachLink}>
+                    {isImage(a.content_type) ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={a.blob_url} alt={fileNameOf(a)} style={S.thumb} />
+                    ) : (
+                      <div style={S.fileIcon}>{a.content_type === "application/pdf" ? "PDF" : "FILE"}</div>
+                    )}
+                    <div style={S.attachName} title={fileNameOf(a)}>{fileNameOf(a)}</div>
+                  </a>
+                  <div style={S.attachMeta}>
+                    {prettySize(a.size_bytes)}
+                    {a.size_bytes ? " · " : ""}
+                    {a.source === "office" ? (a.uploaded_by || "reviewer") : "reporter"}
+                  </div>
+                  <button style={S.attachX} disabled={saving === "attach"} onClick={() => removeAttachment(a.id)}>Remove</button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div style={S.attachHelp}>Up to {MAX_FILES} files, {MAX_MB} MB each. JPEG, PNG, WEBP, HEIC or PDF.</div>
+          {saving === "attach" && <div style={{ marginTop: 8, fontSize: 13, color: "#64748b" }}>Working…</div>}
+        </section>
+      )}
+
       <section style={S.card}>
         <div style={S.rcaHead}>
           <div style={S.flabel}>Root cause & CAPA</div>
@@ -225,6 +353,15 @@ const S: Record<string, React.CSSProperties> = {
   sel: { padding: "9px 12px", fontSize: 14, border: "1px solid #cbd5e1", borderRadius: 9, background: "#fff" },
   owner: { flex: "1 1 160px", padding: "9px 12px", fontSize: 14, border: "1px solid #cbd5e1", borderRadius: 9 },
   slaTag: { fontSize: 11, fontWeight: 700, borderRadius: 6, padding: "3px 9px" },
+  attachGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(148px, 1fr))", gap: 12, marginTop: 10 },
+  attachCard: { border: "1px solid #e6eaf0", borderRadius: 10, padding: 8, background: "#fff" },
+  attachLink: { display: "block", textDecoration: "none", color: "inherit" },
+  thumb: { width: "100%", height: 96, objectFit: "cover", borderRadius: 7, display: "block", background: "#f1f5f9" },
+  fileIcon: { width: "100%", height: 96, borderRadius: 7, background: "#f1f5f9", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700, color: "#64748b", letterSpacing: ".06em" },
+  attachName: { fontSize: 12.5, marginTop: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#1e293b" },
+  attachMeta: { fontSize: 11.5, color: "#94a3b8", marginTop: 2 },
+  attachX: { marginTop: 6, border: "none", background: "none", color: "#dc2626", fontSize: 12, fontWeight: 600, cursor: "pointer", padding: 0 },
+  attachHelp: { fontSize: 12, color: "#94a3b8", marginTop: 10 },
   btn: { padding: "9px 14px", fontSize: 14, fontWeight: 600, color: "#fff", background: "#2b5191", border: "none", borderRadius: 9, cursor: "pointer" },
   btnSm: { padding: "9px 12px", fontSize: 13, fontWeight: 600, color: "#2b5191", background: "#eef2fb", border: "1px solid #dbe4f5", borderRadius: 9, cursor: "pointer" },
   rcaHead: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 8 },

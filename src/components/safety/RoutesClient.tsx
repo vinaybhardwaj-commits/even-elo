@@ -2,7 +2,17 @@
 
 import { useEffect, useState } from "react";
 
-type Target = { to: string; name?: string };
+/**
+ * A1-D19 — an ABSENT channel means WhatsApp. That is what keeps the six seeded
+ * routes working with no data migration, so existing rows render as WhatsApp
+ * without ever having carried the field.
+ */
+type Channel = "whatsapp" | "email";
+type Target = { to: string; name?: string; channel?: Channel };
+const channelOf = (t: Target): Channel => (t.channel === "email" ? "email" : "whatsapp");
+/** Shape only. Deliverability is the provider's problem, not this form's. */
+const targetLooksValid = (t: Target) =>
+  channelOf(t) === "email" ? t.to.includes("@") && !t.to.trim().endsWith("@g.us") : !!t.to.trim();
 type Route = { id: string; label: string; match_field: string; match_value: string | null; targets: Target[]; active: boolean };
 type Meta = { types: { name: string }[]; departments: { name: string }[] };
 
@@ -46,7 +56,16 @@ export default function Routes() {
   async function testAll() {
     setNote("Sending test…");
     const j = await fetch("/api/safety/office/notify/test", { method: "POST" }).then((x) => x.json());
-    setNote(j.ok ? `✅ Test sent to ${j.sent}/${j.attempted} recipient(s).` : `Not sent: ${j.error || j.reason}`);
+    // Report per rail, so "it didn't arrive" points at a rail instead of a guess.
+    const perRail = [
+      j.whatsapp ? `WhatsApp ${j.whatsapp.sent}/${j.whatsapp.attempted}${j.whatsapp.configured === false ? " (not configured)" : ""}` : null,
+      j.email ? `Email ${j.email.sent}/${j.email.attempted}${j.email.configured === false ? " (not configured)" : ""}` : null,
+    ].filter(Boolean).join(" · ");
+    setNote(
+      j.ok
+        ? `✅ Test sent to ${j.sent}/${j.attempted} recipient(s).${perRail ? ` ${perRail}` : ""}`
+        : `Not sent: ${j.error || j.reason}${perRail ? ` — ${perRail}` : ""}`,
+    );
   }
 
   const valueOptions = (field: string): string[] | null =>
@@ -59,7 +78,7 @@ export default function Routes() {
         <div><div style={S.kicker}>EHRC Incident — Safety Office</div><h1 style={S.h1}>Notification routing</h1></div>
         <div style={S.nav}><a href="/safety" style={S.link}>Queue</a><a href="/safety#dashboard" style={S.link}>Dashboard</a><button style={S.test} onClick={testAll}>Send test</button></div>
       </div>
-      <p style={S.intro}>Each rule fans an alert out to its recipients when an incident matches. A recipient is a phone number (E.164, e.g. +9163…) or a WhatsApp group id (…@g.us). Rules combine — an incident notifies everyone in every matching rule. Inactive rules are ignored.</p>
+      <p style={S.intro}>Each rule fans an alert out to its recipients when an incident matches. A recipient is either an <b>email</b> address or a <b>WhatsApp</b> number (E.164, e.g. +9163…) or group id (…@g.us) — pick the channel per recipient. Everyone on email for one incident receives a single message, with all recipients visible. Rules combine — an incident notifies everyone in every matching rule. Inactive rules are ignored.</p>
       {note && <div style={S.note}>{note}</div>}
 
       {loaded && routes.length === 0 && <div style={S.muted}>No rules yet.</div>}
@@ -84,14 +103,28 @@ export default function Routes() {
               )}
             </div>
             <div style={S.flabel}>Notify</div>
-            {r.targets.map((t, k) => (
-              <div key={k} style={S.tRow}>
-                <input style={S.tTo} placeholder="+9163… or group@g.us" value={t.to} onChange={(e) => updTarget(i, k, { to: e.target.value })} />
-                <input style={S.tName} placeholder="name (optional)" value={t.name || ""} onChange={(e) => updTarget(i, k, { name: e.target.value })} />
-                <button style={S.x} onClick={() => upd(i, { targets: r.targets.filter((_, m) => m !== k) })}>✕</button>
-              </div>
-            ))}
-            <button style={S.add} onClick={() => upd(i, { targets: [...r.targets, { to: "", name: "" }] })}>+ Add recipient</button>
+            {r.targets.map((t, k) => {
+              const ch = channelOf(t);
+              const bad = t.to.trim() !== "" && !targetLooksValid(t);
+              return (
+                <div key={k} style={S.tRow}>
+                  <select style={S.tChan} value={ch}
+                    onChange={(e) => updTarget(i, k, { channel: e.target.value as Channel })}>
+                    <option value="whatsapp">WhatsApp</option>
+                    <option value="email">Email</option>
+                  </select>
+                  <input style={{ ...S.tTo, ...(bad ? S.tBad : null) }}
+                    placeholder={ch === "email" ? "name@even.in" : "+9163… or group@g.us"}
+                    value={t.to} onChange={(e) => updTarget(i, k, { to: e.target.value })} />
+                  <input style={S.tName} placeholder="name (optional)" value={t.name || ""} onChange={(e) => updTarget(i, k, { name: e.target.value })} />
+                  <button style={S.x} onClick={() => upd(i, { targets: r.targets.filter((_, m) => m !== k) })}>✕</button>
+                </div>
+              );
+            })}
+            {r.targets.some((t) => t.to.trim() && !targetLooksValid(t)) && (
+              <div style={S.tWarn}>An email recipient needs an address containing “@”. A WhatsApp recipient needs a number or group id.</div>
+            )}
+            <button style={S.add} onClick={() => upd(i, { targets: [...r.targets, { to: "", name: "", channel: "whatsapp" }] })}>+ Add recipient</button>
             <div style={S.cardFoot}>
               <button style={S.save} onClick={() => save(i)}>Save</button>
               <button style={S.del} onClick={() => del(i)}>Delete</button>
@@ -126,6 +159,9 @@ const S: Record<string, React.CSSProperties> = {
   tRow: { display: "flex", gap: 8, alignItems: "center", marginBottom: 7 },
   tTo: { flex: "1 1 200px", padding: "8px 10px", fontSize: 14, border: "1px solid #cbd5e1", borderRadius: 9, fontFamily: "ui-monospace, Menlo, monospace" },
   tName: { flex: "1 1 120px", padding: "8px 10px", fontSize: 14, border: "1px solid #cbd5e1", borderRadius: 9 },
+  tChan: { flex: "0 0 auto", padding: "8px 10px", fontSize: 13.5, border: "1px solid #cbd5e1", borderRadius: 9, background: "#fff" },
+  tBad: { borderColor: "#fca5a5", background: "#fef2f2" },
+  tWarn: { fontSize: 12.5, color: "#b45309", margin: "2px 0 6px" },
   x: { border: "none", background: "transparent", color: "#94a3b8", cursor: "pointer", fontSize: 14, flex: "0 0 auto" },
   add: { marginTop: 2, padding: "6px 10px", fontSize: 13, fontWeight: 600, color: "#2b5191", background: "#eef2fb", border: "1px solid #dbe4f5", borderRadius: 8, cursor: "pointer" },
   cardFoot: { display: "flex", gap: 10, marginTop: 12 },
