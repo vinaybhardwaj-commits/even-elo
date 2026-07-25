@@ -233,7 +233,7 @@ export function IncidentReporting({ doctorName }: { doctorName: string }) {
           <div className="border-t border-stone-100 pt-3">
             <label className={labelCls}>Track an anonymous report by reference code</label>
             <div className="flex gap-2">
-              <input value={lookupRef} onChange={(e) => setLookupRef(e.target.value)} placeholder="EHRC-INC-2026-0001" className={inputCls + " font-mono"} />
+              <input value={lookupRef} onChange={(e) => setLookupRef(e.target.value)} placeholder="<UNIT>-INC-2026-0001" className={inputCls + " font-mono"} />
               <button onClick={lookup} className="shrink-0 rounded-lg border border-stone-200 px-4 text-sm font-medium">Check</button>
             </div>
             {lookupErr && <div className="mt-2 text-[12.5px] text-rose-600">{lookupErr}</div>}

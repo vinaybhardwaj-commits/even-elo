@@ -17,6 +17,8 @@ type Incident = {
   id: string; reported_at: string; severity: string | null; near_miss: boolean; status: string;
   type_name: string | null; dept_name: string | null; location_name: string | null; narrative_snippet: string; rca_count: number;
   due_at?: string | null; closed_at?: string | null; sla_state?: SlaState;
+  /** A1-D26 — five hospitals share this queue. Optional: absent on the degraded upstream row shape. */
+  unit_code?: string | null; unit_name?: string | null;
 };
 type Cluster = { id: string; label: string; recurrence_count: number; risk_score: number | null; last_seen: string | null; member_count: number; rca_count: number };
 
@@ -96,6 +98,7 @@ export default function SafetyHub() {
   const [clusters, setClusters] = useState<Cluster[]>([]);
   const [scanning, setScanning] = useState(false);
   const [q, setQ] = useState(""); const [status, setStatus] = useState(""); const [sev, setSev] = useState("");
+  const [unit, setUnit] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [loadedAt, setLoadedAt] = useState<Date | null>(null);
 
@@ -140,12 +143,28 @@ export default function SafetyHub() {
     finally { setScanning(false); }
   }
 
+  /**
+   * A1-D26 — the unit list is derived from the loaded rows, client-side, in the
+   * same spirit as the status/severity filters: no extra endpoint, and the
+   * dropdown can only ever offer units that actually appear in the queue.
+   */
+  const unitOptions = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of incidents || []) {
+      const code = (r.unit_code || "").trim();
+      if (!code || m.has(code)) continue;
+      m.set(code, (r.unit_name || "").trim() || code);
+    }
+    return Array.from(m.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [incidents]);
+
   const filtered = useMemo(() => {
     if (!incidents) return [];
     const ql = q.trim().toLowerCase();
     return incidents.filter((r) => (!status || r.status === status) && (!sev || r.severity === sev) &&
-      (!ql || [r.id, r.type_name, r.dept_name, r.location_name, r.narrative_snippet].some((v) => (v || "").toLowerCase().includes(ql))));
-  }, [incidents, q, status, sev]);
+      (!unit || r.unit_code === unit) &&
+      (!ql || [r.id, r.unit_code, r.unit_name, r.type_name, r.dept_name, r.location_name, r.narrative_snippet].some((v) => (v || "").toLowerCase().includes(ql))));
+  }, [incidents, q, status, sev, unit]);
 
   const sevCount = (k: string) => stats?.bySeverity.find((x) => x.k === k)?.n ?? 0;
   const statusCount = (k: string) => stats?.byStatus.find((x) => x.k === k)?.n ?? 0;
@@ -296,6 +315,13 @@ export default function SafetyHub() {
           <select className="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm" value={sev} onChange={(e) => setSev(e.target.value)}>
             <option value="">All severities</option>{SEV_ORDER.slice(0, 5).map(([k]) => <option key={k} value={k}>{k}</option>)}
           </select>
+          {/* A1-D26 — hidden entirely on a single-unit estate, where it would
+              be a control with exactly one choice. */}
+          {unitOptions.length > 1 && (
+            <select className="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm" value={unit} onChange={(e) => setUnit(e.target.value)}>
+              <option value="">All units</option>{unitOptions.map(([code, name]) => <option key={code} value={code}>{name}</option>)}
+            </select>
+          )}
         </div>
         {!incidents ? <div className="text-sm text-stone-400">Loading…</div> : filtered.length === 0 ? <div className="text-sm text-stone-400">No incidents match.</div> : (
           <div className="space-y-2.5">
@@ -304,7 +330,11 @@ export default function SafetyHub() {
                 <div className="flex flex-wrap items-center gap-2.5">
                   <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: SEV_COLOR[r.severity || ""] || "#cbd5e1" }} />
                   <span className="font-mono text-[13px] font-bold">{r.id}</span>
-                  {r.near_miss && <span className="rounded bg-sky-100 px-1.5 py-0.5 text-[11px] font-bold text-sky-700">near miss</span>}
+                  {/* A1-D26 — which hospital. Muted: it is context, not status. */}
+                  {r.unit_code && (
+                    <span title={r.unit_name || r.unit_code} className="font-mono text-[11px] font-semibold text-stone-400">{r.unit_code}</span>
+                  )}
+                  {r.near_miss &&<span className="rounded bg-sky-100 px-1.5 py-0.5 text-[11px] font-bold text-sky-700">near miss</span>}
                   <span className="rounded bg-stone-100 px-2 py-0.5 text-[11px] font-medium text-stone-600">{STATUS_ORDER.find(([k]) => k === r.status)?.[1] || r.status}</span>
                   {r.rca_count > 0 && <span className="rounded bg-green-100 px-1.5 py-0.5 text-[11px] font-bold text-green-700">RCA</span>}
                   <SlaBadge state={r.sla_state} dueAt={r.due_at} />

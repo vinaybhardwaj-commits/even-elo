@@ -14,11 +14,14 @@ const channelOf = (t: Target): Channel => (t.channel === "email" ? "email" : "wh
 const targetLooksValid = (t: Target) =>
   channelOf(t) === "email" ? t.to.includes("@") && !t.to.trim().endsWith("@g.us") : !!t.to.trim();
 type Route = { id: string; label: string; match_field: string; match_value: string | null; targets: Target[]; active: boolean };
-type Meta = { types: { name: string }[]; departments: { name: string }[] };
+type Meta = { types: { name: string }[]; departments: { name: string }[]; units: { code: string; name: string }[] };
 
 const FIELDS: [string, string][] = [
   ["any", "All incidents"], ["category", "Category is…"], ["type", "Type is…"],
   ["department", "Department is…"], ["severity", "Severity is…"], ["severity_min", "Severity at least…"],
+  // A1-D29. A rule that does NOT use this field still matches every unit, so
+  // adding it changes nothing for the six rules that already exist.
+  ["unit", "Unit is…"],
 ];
 const SEVS = ["negligible", "minor", "moderate", "major", "catastrophic"];
 const CATS = ["clinical", "non_clinical"];
@@ -43,6 +46,7 @@ function notifiesOn(r: Route): { text: string; warn: boolean } {
     case "department": return { text: `department = ${pretty}`, warn: false };
     case "severity": return { text: `severity = ${pretty}`, warn: false };
     case "severity_min": return { text: `severity ${pretty} or worse`, warn: false };
+    case "unit": return { text: `unit = ${pretty}`, warn: false };
     default: return { text: `${r.match_field} = ${pretty}`, warn: true };
   }
 }
@@ -91,7 +95,7 @@ export default function Routes() {
         setLoaded(true);
       }
     });
-    fetch("/api/safety/incident/meta", { cache: "no-store" }).then((r) => r.json()).then((j) => { if (j.ok) setMeta({ types: j.types, departments: j.departments }); });
+    fetch("/api/safety/incident/meta", { cache: "no-store" }).then((r) => r.json()).then((j) => { if (j.ok) setMeta({ types: j.types, departments: j.departments, units: j.units || [] }); });
   }, []);
   useEffect(() => { load(); }, [load]);
 
@@ -233,7 +237,11 @@ export default function Routes() {
 
   const valueOptions = (field: string): string[] | null =>
     field === "category" ? CATS : field === "type" ? (meta?.types || []).map((t) => t.name)
-    : field === "department" ? (meta?.departments || []).map((d) => d.name) : (field === "severity" || field === "severity_min") ? SEVS : null;
+    : field === "department" ? (meta?.departments || []).map((d) => d.name)
+    // The CODE, not the name: notify.ts compares match_value against the
+    // incident's unit_code, so storing "Altius Hospital" would never match.
+    : field === "unit" ? (meta?.units || []).map((u) => u.code)
+    : (field === "severity" || field === "severity_min") ? SEVS : null;
 
   /**
    * Who actually gets notified, derived from the SAVED state (never the unsaved

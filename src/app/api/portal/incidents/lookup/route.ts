@@ -14,7 +14,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "Not enabled" }, { status: 404 });
   }
   const ref = (req.nextUrl.searchParams.get("ref") || "").trim().toUpperCase();
-  if (!/^EHRC-INC-\d{4}-\d{1,6}$/.test(ref)) {
+  // A1-D28: the unit prefix is per-site (EHRC, EHBR, EHIN, EHBO, EHSB), so the
+  // guard matches any four-letter unit. Narrower than this and four hospitals'
+  // reporters would be told their own reference is malformed.
+  if (!/^[A-Z]{4}-INC-\d{4}-\d{1,6}$/.test(ref)) {
     return NextResponse.json({ ok: false, error: "Reference looks like EHRC-INC-2026-0001" }, { status: 400 });
   }
   try {

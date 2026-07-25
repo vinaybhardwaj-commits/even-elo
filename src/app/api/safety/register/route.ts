@@ -6,8 +6,8 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 /**
- * GET /api/safety/register?month=YYYY-MM — the Saturday review register as a
- * downloadable CSV.
+ * GET /api/safety/register?month=YYYY-MM&unit=CODE — the Saturday review
+ * register as a downloadable CSV.
  *
  * PRD Addendum A1 §A1.2. Deepthi reads every incident aloud with its RCA,
  * corrective action and preventive action from ONE page in the Saturday 2-3pm
@@ -24,6 +24,11 @@ export const maxDuration = 60;
  * red text, wrapping, column widths and freeze pane are LOST. Quality gets the
  * ten columns, in order, with the data, opening in Excel. CSV also cannot carry
  * one-sheet-per-month — the MONTH column (already column A) does that job.
+ *
+ * A1-D30 — ELEVEN columns since Q7: UNIT is inserted as column B, immediately
+ * after MONTH. This knowingly deviates from the ten-column format signed off in
+ * A1.2.1, and is justified by Deepthi's own requirement #3 ("Unit name, if we
+ * use the same template across all units"). Confirm with her at review.
  */
 
 const BASE = process.env.INCIDENT_API_BASE;
@@ -40,6 +45,8 @@ async function authed() {
 type Row = {
   id: string;
   display_no: string | null;
+  unit_code: string | null;
+  unit_name: string | null;
   occurred_at: string | null;
   reported_at: string | null;
   narrative: string | null;
@@ -80,6 +87,7 @@ const CARE_LABEL: Record<string, string> = { clinical: "Clinical", non_clinical:
 
 const HEADERS = [
   "MONTH",
+  "UNIT",
   "INCIDENT NO.",
   "INCIDENT",
   "CLINICAL/ NON CLINICAL",
@@ -155,6 +163,7 @@ function buildCsv(rows: Row[]): string {
   for (const r of rows) {
     lines.push(csvRow([
       istDate(r.occurred_at || r.reported_at),
+      r.unit_name ?? r.unit_code ?? "",
       r.display_no ?? "",
       r.narrative ?? "",
       r.care_type ? (CARE_LABEL[r.care_type] ?? "") : "",
@@ -182,11 +191,21 @@ export async function GET(req: NextRequest) {
   const raw = req.nextUrl.searchParams.get("month");
   const month = raw && /^\d{4}-(0[1-9]|1[0-2])$/.test(raw) ? raw : null;
 
-  let j: { ok?: boolean; month?: string | null; rows?: Row[]; error?: string };
+  // A1-D30 — ?unit= is passed straight through. Upstream decides what an
+  // unknown code means (an empty row set, never an error), and echoes back the
+  // scope it actually applied so the filename below cannot overstate it.
+  const rawUnit = (req.nextUrl.searchParams.get("unit") || "").trim().toUpperCase();
+  const unit = /^[A-Z0-9_-]{1,16}$/.test(rawUnit) ? rawUnit : null;
+
+  let j: { ok?: boolean; month?: string | null; unit?: string | null; rows?: Row[]; error?: string };
   try {
     // Same shape as the ifetch helper in /api/mcp: bearer + no-store + timeout.
     // Deliberately NOT routed through the [...path] proxy (A1-D14).
-    const res = await fetch(`${BASE}/api/office/register${month ? `?month=${encodeURIComponent(month)}` : ""}`, {
+    const qs = new URLSearchParams();
+    if (month) qs.set("month", month);
+    if (unit) qs.set("unit", unit);
+    const q = qs.toString();
+    const res = await fetch(`${BASE}/api/office/register${q ? `?${q}` : ""}`, {
       headers: { Authorization: `Bearer ${APITOK}`, "Content-Type": "application/json" },
       cache: "no-store",
       signal: AbortSignal.timeout(30000),
@@ -206,7 +225,8 @@ export async function GET(req: NextRequest) {
   // for — upstream ignores a malformed month, and a file called ...-2026-13-...
   // holding every month would be a lie.
   const applied = j.month !== undefined ? j.month : month;
-  const filename = `EHRC-Incident-Register-${applied ?? "ALL"}-${istStamp()}.csv`;
+  const appliedUnit = j.unit !== undefined ? j.unit : unit;
+  const filename = `${appliedUnit ?? "EHRC"}-Incident-Register-${applied ?? "ALL"}-${istStamp()}.csv`;
 
   return new NextResponse(buildCsv(j.rows), {
     status: 200,

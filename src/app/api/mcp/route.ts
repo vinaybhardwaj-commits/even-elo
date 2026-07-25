@@ -108,7 +108,7 @@ const TOOLS = [
     inputSchema: { type: "object", properties: { incident_id: { type: "string" }, reason: { type: "string" } }, required: ["incident_id","reason"] } },
   { name: "list_incident_reports", description: "EHRC Incident Reporting system (incident.evenos.app — RCA/CAPA pipeline, ALL departments/staff; NOT the physician-feedback 'incidents' domain). List recent incident reports, newest first, with optional filters applied server-side in this tool.",
     inputSchema: { type: "object", properties: { status: { type: "string", description: "open|under_investigation|capa_assigned|closed|verified" }, severity: { type: "string", description: "negligible|minor|moderate|major|catastrophic" }, department: { type: "string", description: "substring match on department name" }, type: { type: "string", description: "substring match on incident type name" }, near_miss: { type: "boolean" }, limit: { type: "number" } } } },
-  { name: "get_incident_report", description: "Full record for one incident report (EHRC-INC-YYYY-NNNN): narrative, classification, lifecycle, RCA/CAPA, recurrence cluster context.",
+  { name: "get_incident_report", description: "Full record for one incident report (<UNIT>-INC-YYYY-NNNN, e.g. EHRC-INC-2026-1166 or EHBR-INC-2026-0001): narrative, classification, lifecycle, RCA/CAPA, recurrence cluster context.",
     inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } },
   { name: "incident_report_stats", description: "Incident-system dashboard stats: totals (open/near-miss/high-sev/with-RCA), CAPA counts, breakdowns by severity/status/type/department/impact, weekly series.",
     inputSchema: { type: "object", properties: {} } },
@@ -120,7 +120,7 @@ const TOOLS = [
     inputSchema: { type: "object", properties: {} } },
   { name: "scan_rca_patterns", description: "Run the RCA pattern miner now (embeds un-patterned RCAs, clusters into patterns). Safe to re-run; processes up to 200.",
     inputSchema: { type: "object", properties: {} } },
-  { name: "delete_incident_report", description: "PERMANENTLY delete an incident report (EHRC-INC-YYYY-NNNN) with full cascade: RCAs, CAPAs, audit rows, cluster repair. For test/smoke rows — deliberately has NO UI. Requires confirm=true. Irreversible; audited on both sides.",
+  { name: "delete_incident_report", description: "PERMANENTLY delete an incident report (<UNIT>-INC-YYYY-NNNN) with full cascade: RCAs, CAPAs, audit rows, cluster repair. For test/smoke rows — deliberately has NO UI. Requires confirm=true. Irreversible; audited on both sides.",
     inputSchema: { type: "object", properties: { id: { type: "string" }, confirm: { type: "boolean" } }, required: ["id","confirm"] } },
   { name: "list_portal_announcements", description: "List Doctor-Portal What's-new / Coming-soon announcements (portal_announcements). Shows active + inactive with ids.",
     inputSchema: { type: "object", properties: { include_inactive: { type: "boolean" } } } },
@@ -308,7 +308,7 @@ async function runTool(name: string, args: Json, sql: Sql): Promise<unknown> {
       if (name === "scan_rca_patterns") return await ifetch("/api/office/rca-patterns/scan", { method: "POST" });
       if (name === "delete_incident_report") {
         const id = s(args.id).toUpperCase();
-        if (!/^EHRC-INC-\d{4}-\d{1,6}$/.test(id)) throw new Error("id must look like EHRC-INC-2026-0001");
+        if (!/^[A-Z]{4}-INC-\d{4}-\d{1,6}$/.test(id)) throw new Error("id must look like EHRC-INC-2026-0001 (any 4-letter unit prefix: EHRC, EHBR, EHIN, EHBO, EHSB)");
         if (args.confirm !== true) throw new Error("Refusing: irreversible delete requires confirm=true");
         const r = await ifetch(`/api/office/incidents/${encodeURIComponent(id)}`, { method: "DELETE" });
         await audit(sql, actor.id, "delete", "incident_report", id, { via: "mcp", cascade: r });
@@ -317,12 +317,12 @@ async function runTool(name: string, args: Json, sql: Sql): Promise<unknown> {
       if (name === "list_incident_clusters") return await ifetch("/api/office/clusters");
       if (name === "get_incident_report") {
         const id = s(args.id).toUpperCase();
-        if (!/^EHRC-INC-\d{4}-\d{1,6}$/.test(id)) throw new Error("id must look like EHRC-INC-2026-0001");
+        if (!/^[A-Z]{4}-INC-\d{4}-\d{1,6}$/.test(id)) throw new Error("id must look like EHRC-INC-2026-0001 (any 4-letter unit prefix: EHRC, EHBR, EHIN, EHBO, EHSB)");
         return await ifetch(`/api/office/incidents/${encodeURIComponent(id)}`);
       }
       if (name === "update_incident_report") {
         const id = s(args.id).toUpperCase();
-        if (!/^EHRC-INC-\d{4}-\d{1,6}$/.test(id)) throw new Error("id must look like EHRC-INC-2026-0001");
+        if (!/^[A-Z]{4}-INC-\d{4}-\d{1,6}$/.test(id)) throw new Error("id must look like EHRC-INC-2026-0001 (any 4-letter unit prefix: EHRC, EHBR, EHIN, EHBO, EHSB)");
         const body: Record<string, unknown> = {};
         if (s(args.status)) body.status = s(args.status);
         if (args.owner_name !== undefined) body.owner_name = s(args.owner_name) || null;
