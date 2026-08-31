@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { PortalNav, MobileTabBar, type Dest } from "@/components/portal/PortalNav";
 import { HomeExtras, type AnnData } from "@/components/portal/HomeExtras";
+import { FindingsForDoctor } from "@/components/portal/FindingsForDoctor";
 import { IncidentReporting } from "@/components/portal/IncidentReporting";
 
 interface Phys { id: string; full_name: string; preferred_name: string | null; primary_specialty: string | null; registration_number: string | null; registration_council: string | null; registration_expiry: string | null; email: string | null; phone: string | null; date_joined_network: string | null; current_status: string }
@@ -38,20 +39,21 @@ export default function PortalHome() {
   const [engs, setEngs] = useState<Eng[]>([]);
   const [quals, setQuals] = useState<Qual[]>([]);
   const [privs, setPrivs] = useState<Priv[]>([]);
-  const [tab, setTab] = useState<"overview" | "performance" | "qualifications" | "privileges" | "report" | "aboutme" | "resign">("overview");
+  const [tab, setTab] = useState<"overview" | "performance" | "findings" | "qualifications" | "privileges" | "report" | "aboutme" | "resign">("overview");
   const [ann, setAnn] = useState<AnnData | null>(null);
-  const [features, setFeatures] = useState<{ incidents: boolean }>({ incidents: false });
+  const [features, setFeatures] = useState<{ incidents: boolean; findings: boolean }>({ incidents: false, findings: false });
   const [reportMode, setReportMode] = useState<"chooser" | "incident" | "feedback">("chooser");
   useEffect(() => {
     fetch("/api/portal/announcements").then((r) => r.json()).then((j) => {
-      if (j.ok) { setAnn({ whats_new: j.whats_new ?? [], coming_soon: j.coming_soon ?? [] }); setFeatures(j.features ?? { incidents: false }); }
+      if (j.ok) { setAnn({ whats_new: j.whats_new ?? [], coming_soon: j.coming_soon ?? [] }); setFeatures(j.features ?? { incidents: false, findings: false }); }
     }).catch(() => undefined);
   }, []);
   // Five-destination nav (R5): map destinations onto the existing tab keys.
-  const dest: Dest = tab === "overview" ? "home" : tab === "performance" ? "performance" : tab === "report" ? "report" : tab === "qualifications" || tab === "privileges" ? "credentials" : "me";
+  const dest: Dest = tab === "overview" ? "home" : tab === "performance" ? "performance" : tab === "findings" ? "findings" : tab === "report" ? "report" : tab === "qualifications" || tab === "privileges" ? "credentials" : "me";
   const goDest = (d: Dest) => {
     if (d === "home") setTab("overview");
     else if (d === "performance") setTab("performance");
+    else if (d === "findings") setTab("findings");
     else if (d === "report") { setTab("report"); setReportMode("chooser"); }
     else if (d === "credentials") setTab("qualifications");
     else setTab("aboutme");
@@ -208,13 +210,22 @@ export default function PortalHome() {
       <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="max-w-[900px] mx-auto px-4 sm:px-6 py-5 pb-8">
         {/* R5 nav: bottom bar on phones, pills on desktop */}
-        <PortalNav dest={dest} onChange={goDest} />
+        <PortalNav dest={dest} onChange={goDest} showFindings={features.findings} />
 
         {loading ? <div className="text-sm text-stone-500">Loading…</div> : (
         <>
           {tab === "overview" && me && (
             <div className="space-y-4">
               <HomeExtras ann={ann} />
+              {/* WM2 teaser — the HomeExtras card shell. Renders ONLY when the flag is on, so a
+                  dark flag leaves no trace of Findings on Home. */}
+              {features.findings && (
+                <section className="bg-white border border-stone-200 rounded-xl p-5">
+                  <h2 className="text-[11px] font-bold uppercase tracking-[0.08em] text-brand mb-2">Findings</h2>
+                  <div className="text-[13px] text-stone-500 leading-snug">Documentation &amp; prescribing signals routed to you, with the note behind each one.</div>
+                  <button onClick={() => goDest("findings")} className="mt-3 px-3.5 py-1.5 rounded-lg text-[13px] font-medium bg-brand text-white">View findings</button>
+                </section>
+              )}
               <section className="bg-white border border-stone-200 rounded-xl p-5">
                 <h2 className="text-sm font-semibold mb-3">Your profile</h2>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-2 gap-x-6 text-sm">
@@ -243,6 +254,8 @@ export default function PortalHome() {
               </section>
             </div>
           )}
+
+          {tab === "findings" && <FindingsForDoctor />}
 
           {tab === "performance" && (
             perfLoading ? <div className="text-sm text-stone-500">Loading…</div> :
@@ -596,7 +609,7 @@ export default function PortalHome() {
         )}
       </div>
       </div>
-      <MobileTabBar dest={dest} onChange={goDest} />
+      <MobileTabBar dest={dest} onChange={goDest} showFindings={features.findings} />
     </main>
   );
 }

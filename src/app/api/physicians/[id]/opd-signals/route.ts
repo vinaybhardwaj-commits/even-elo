@@ -9,8 +9,11 @@ export const runtime = "nodejs";
 /**
  * Per-physician OPD signal appearances (PRD §6.5 — profile Signals section).
  * Reconstructed from the snapshot store's affected[] lists (top-5 cap per
- * signal per day, so this is partial until the CDMSS v1.2 per-doctor endpoint
- * ships). Advisory framing is mandatory at render.
+ * signal per day, so this remains partial). The CDMSS per-doctor endpoint HAS
+ * now shipped and is read by /api/portal/findings — but it answers a different
+ * question (findings routed to a doctor) from this one (a doctor's appearances
+ * in cohort signals), so it does not supersede this route. Advisory framing is
+ * mandatory at render.
  */
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
   const u = await getCurrentUser();

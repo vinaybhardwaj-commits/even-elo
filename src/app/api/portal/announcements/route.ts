@@ -23,6 +23,11 @@ export async function GET() {
     ok: true,
     whats_new: rows.filter((r) => r.kind === "whats_new"),
     coming_soon: rows.filter((r) => r.kind === "coming_soon"),
-    features: { incidents: process.env.PORTAL_INCIDENTS === "1" },
+    // WM2: the Findings flag is evaluated HERE and nowhere else — server-side, so the portal
+    // bundle never carries the env name, and one fetch decides both panels' visibility.
+    features: {
+      incidents: process.env.PORTAL_INCIDENTS === "1",
+      findings: process.env.PORTAL_FINDINGS === "1",
+    },
   });
 }

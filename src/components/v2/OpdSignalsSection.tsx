@@ -5,7 +5,9 @@ import { useEffect, useState } from "react";
 /**
  * Physician profile "Signals" section (PRD v1.4 §6.5). Reads the per-doctor
  * appearance history reconstructed from EPI's snapshot store (partial — top-5
- * cap per signal/day — until the CDMSS v1.2 per-doctor endpoint ships).
+ * cap per signal/day). The CDMSS per-doctor endpoint has shipped and backs the
+ * portal's Findings panel; it answers a different question and does not replace
+ * this section's cohort-appearance view.
  * Advisory framing is contractual: supportive, non-punitive; small-n caveat.
  */
 
