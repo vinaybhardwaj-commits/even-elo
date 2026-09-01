@@ -9,7 +9,8 @@
  *
  * ⚠️ WHAT IS STRIPPED, AND WHY IT IS STRIPPED HERE RATHER THAN AT RENDER ─────────────────────────
  *
- * The upstream payload carries three things a physician must not be shown:
+ * The upstream payload carries three OPERATIONAL fields a physician must not be shown (the fourth
+ * stripped item, the CDMSS uid, is an identifier and has its own contract below):
  *   · `metrics`  — the audit/operational scorecard. These findings are advisory; putting a metric
  *                  block beside them turns "here is something to look at" into "here is your score".
  *   · `overdue`  — a per-signal lateness boolean.
@@ -18,9 +19,14 @@
  * someone who has no in-portal way to stop it is the worst of both worlds.
  *
  * `toPortalPayload` builds the response by WHITELIST rather than by deleting keys. A delete-list
- * silently leaks whatever upstream adds next; a whitelist fails closed. That is also why the
- * doctor's own `uid` does not survive: the client never needs the CDMSS identifier, so it never
- * receives it.
+ * silently leaks whatever upstream adds next; a whitelist fails closed.
+ *
+ * ⚠️ STANDING PORTAL CONTRACT: `physicians.cdmss_doctor_uid` is NEVER exposed by a portal API. It
+ * is dropped in BOTH places upstream carries it — the envelope's `doctor.uid` and every signal's
+ * `doctor_uid` — and the omission is enforced by the type (`PortalAuditSignal`) as well as by the
+ * whitelist, so re-adding it fails the typecheck rather than passing review. The uid is a join key
+ * between two internal systems; a physician's browser has no use for it, and an identifier that is
+ * never sent cannot leak from the client.
  *
  * ⚠️ INFERRED NOTHING. The shape below is the §3 contract, verified live against CDMSS main on
  * 31 Aug 2026. Any field not named there is treated as absent rather than guessed.
@@ -82,8 +88,9 @@ export interface DoctorAuditsUpstream {
   advisory: string;
 }
 
-/** A signal as the portal is allowed to see it — the lateness instruments removed. */
-export type PortalAuditSignal = Omit<DoctorAuditSignal, "overdue" | "sla_due_at">;
+/** A signal as the portal is allowed to see it — the lateness instruments and the CDMSS join key
+ *  removed. Omitting them in the TYPE is what makes the strip enforceable rather than habitual. */
+export type PortalAuditSignal = Omit<DoctorAuditSignal, "overdue" | "sla_due_at" | "doctor_uid">;
 
 export interface PortalFindingsPayload {
   ok: true;
@@ -139,7 +146,6 @@ export function toPortalPayload(up: DoctorAuditsUpstream): PortalFindingsPayload
     signals: signals.map((s) => ({
       reference: s.reference,
       signal_id: s.signal_id,
-      doctor_uid: s.doctor_uid,
       signal_type: s.signal_type,
       label: s.label,
       importance: s.importance,
