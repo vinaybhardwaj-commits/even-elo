@@ -28,6 +28,7 @@ const GENERIC = { ok: true, message: "If an account exists for that email, a PIN
  * permanent 4-digit PIN (no forced change). Requesting also enables portal access.
  * Always returns a generic success to prevent email enumeration. Gated by
  * EMAIL_SENDING_ENABLED (the PIN can't be delivered while sending is off).
+ * Must await sendEmail — a fire-and-forget send is frozen by Vercel after the 200.
  */
 export async function POST(req: NextRequest) {
   const { email } = (await req.json().catch(() => ({}))) as { email?: string };
@@ -61,7 +62,7 @@ export async function POST(req: NextRequest) {
               ${JSON.stringify({ email: ph.email, portal_access: true, must_change_pin: false })}::jsonb)`;
 
     const appUrl = process.env.NEXT_PUBLIC_PORTAL_URL || "https://doctors.evenos.app";
-    void sendEmail({
+    const sent = await sendEmail({
       to: ph.email,
       subject: "Your Even Physician Portal PIN",
       html: wrapHtml("Your portal PIN", `
@@ -73,7 +74,10 @@ export async function POST(req: NextRequest) {
           <strong>PIN:</strong> <code style="font-size:18px;letter-spacing:2px;">${pin}</code>
         </p>
         <p>If you didn't request this, you can ignore this email — your previous PIN (if any) has been replaced, so contact an administrator if that's a concern.</p>`),
-    }).catch(() => undefined);
+    });
+    if (!sent.ok) {
+      console.error(JSON.stringify({ epi_email: "request_pin_send_failed", error: sent.error }));
+    }
   }
 
   return NextResponse.json(GENERIC, { headers: NO_STORE });
