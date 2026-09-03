@@ -118,17 +118,26 @@ function SignalCard({ s }: { s: PortalAuditSignal }) {
           )}
           {Array.isArray(rep.citations) && rep.citations.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
-              {rep.citations.map((c) => (
-                <a
-                  key={c.n}
-                  href={c.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-[12px] text-brand font-medium break-words"
-                >
-                  [{c.n}] {c.title}
-                </a>
-              ))}
+              {rep.citations.map((c) =>
+                // Upstream can send a citation with no url. Rendering that as a link gives a doctor a
+                // clickable source that goes nowhere — a trust leak on the element meant to earn trust.
+                // No url, no link: same text, plainly, with nothing that reads as pressable.
+                c.url && c.url.trim() ? (
+                  <a
+                    key={c.n}
+                    href={c.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[12px] text-brand font-medium break-words"
+                  >
+                    [{c.n}] {c.title}
+                  </a>
+                ) : (
+                  <span key={c.n} className="text-[12px] text-stone-500 break-words">
+                    [{c.n}] {c.title}
+                  </span>
+                )
+              )}
             </div>
           )}
         </div>
