@@ -33,5 +33,18 @@ export async function POST(request: NextRequest) {
     full_name: p.full_name as string, portal_must_change_pin: Boolean(p.portal_must_change_pin),
   });
   await setPhysicianCookie(token);
+
+  // The sign-in is already done — the cookie is set and the doctor is in. This row is the record of
+  // it, not a step in it, so a failing audit write must cost them nothing. Swallow and continue:
+  // losing one audit row is a gap in the log, while throwing here would lock out a physician who
+  // typed the right PIN. Mirrors the audit_log_v2 insert in ../request-pin/route.ts.
+  try {
+    await sql`INSERT INTO audit_log_v2 (action, entity_type, entity_id, after_json)
+              VALUES ('portal_login', 'physician', ${p.id as string},
+              ${JSON.stringify({ email: p.email as string, via: "portal" })}::jsonb)`;
+  } catch {
+    // Intentionally ignored: see above.
+  }
+
   return NextResponse.json({ ok: true, must_change_pin: Boolean(p.portal_must_change_pin) }, { headers: NO_STORE });
 }
