@@ -28,6 +28,9 @@ export async function GET() {
     features: {
       incidents: process.env.PORTAL_INCIDENTS === "1",
       findings: process.env.PORTAL_FINDINGS === "1",
+      // WM2 v1: reactions and responses on the Findings card. A SECOND flag rather than a wider
+      // `findings` one, so the read-only panel can stay up while the write paths are dark.
+      reactions: process.env.PORTAL_REACTIONS === "1",
     },
   });
 }
