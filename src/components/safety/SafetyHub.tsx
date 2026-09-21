@@ -183,6 +183,20 @@ export default function SafetyHub() {
       {/* ===================== DASHBOARD ===================== */}
       <section id="dashboard" className="scroll-mt-32">
         <h2 className="mb-4 text-lg font-semibold">Overview</h2>
+        <div className="mb-5 flex flex-col gap-4 rounded-xl border border-teal-200 bg-gradient-to-r from-teal-50 to-emerald-50 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="text-base font-semibold text-stone-900">File a hospital incident</div>
+            <p className="mt-1 text-sm text-stone-600">
+              Clinical or operational — your report will appear in this queue for the safety team.
+            </p>
+          </div>
+          <a
+            href="/safety/report"
+            className="shrink-0 rounded-lg bg-teal-700 px-5 py-2.5 text-center text-sm font-semibold text-white shadow-sm transition hover:bg-teal-800"
+          >
+            Report an incident
+          </a>
+        </div>
 
         {!stats ? <div className="text-sm text-stone-400">Loading…</div> : (
           <>
