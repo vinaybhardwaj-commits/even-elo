@@ -130,7 +130,7 @@ describe("feedback home shaping", () => {
       "lib/feedback-home.ts",
       "app/api/incidents/home/route.ts",
       "components/feedback/FeedbackHome.tsx",
-      "components/feedback/PhysicianFeedbackStub.tsx",
+      "components/feedback/PhysicianFeedbackDetail.tsx",
       "components/shell/HeadlineStrip.tsx",
       "components/shell/DoctorLookup.tsx",
     ];

@@ -1,7 +1,7 @@
 "use client";
 
-import { PhysicianFeedbackStub } from "@/components/feedback/PhysicianFeedbackStub";
+import { PhysicianFeedbackDetail } from "@/components/feedback/PhysicianFeedbackDetail";
 
 export default function PhysicianFeedbackPage() {
-  return <PhysicianFeedbackStub />;
+  return <PhysicianFeedbackDetail />;
 }
