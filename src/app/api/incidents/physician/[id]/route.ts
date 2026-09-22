@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { neon } from "@neondatabase/serverless";
 import { actorFromRequest } from "@/lib/auth";
 import { getHospitalFilterId } from "@/lib/hospital-filter";
-import { HEADLINE_SUMMARY_LABEL, SUMMARY_STATE_NONE } from "@/lib/feedback-home";
 import {
   negativeActivityHint,
   positiveSourceHint,
@@ -30,7 +29,7 @@ function iso(v: unknown): string | null {
  *
  * Physician-scoped feedback detail. Join is incidents.target_physician_id.
  * Visibility matches GET /api/incidents. The payload has no free text.
- * Summary fields are the empty state only.
+ * Summary state is loaded from GET /api/incidents/physician/:id/summary.
  */
 export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
@@ -129,8 +128,6 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
       }, null),
       negative_hint: negativeActivityHint(timeline),
       positive_hint: positiveSourceHint(timeline),
-      summaries: SUMMARY_STATE_NONE,
-      summaries_label: HEADLINE_SUMMARY_LABEL,
     },
     timeline,
   };

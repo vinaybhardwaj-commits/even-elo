@@ -6,8 +6,9 @@ export default defineConfig({
     environment: "node",
   },
   resolve: {
-    alias: {
-      "server-only": path.resolve(__dirname, "src/test/server-only-stub.ts"),
-    },
+    alias: [
+      { find: /^@\//, replacement: `${path.resolve(__dirname, "src")}/` },
+      { find: "server-only", replacement: path.resolve(__dirname, "src/test/server-only-stub.ts") },
+    ],
   },
 });

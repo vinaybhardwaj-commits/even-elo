@@ -130,7 +130,6 @@ describe("feedback home shaping", () => {
       "lib/feedback-home.ts",
       "app/api/incidents/home/route.ts",
       "components/feedback/FeedbackHome.tsx",
-      "components/feedback/PhysicianFeedbackDetail.tsx",
       "components/shell/HeadlineStrip.tsx",
       "components/shell/DoctorLookup.tsx",
     ];
@@ -140,5 +139,8 @@ describe("feedback home shaping", () => {
       expect(src, file).not.toMatch(banned);
       expect(src, file).not.toMatch(/summary_text|generated_summary/);
     }
+    const detail = readFileSync(join(root, "components/feedback/PhysicianFeedbackDetail.tsx"), "utf8");
+    expect(detail).not.toMatch(/\b(generateContent|@google-cloud\/vertexai)\b/);
+    expect(detail).not.toMatch(/narrative_preview/);
   });
 });

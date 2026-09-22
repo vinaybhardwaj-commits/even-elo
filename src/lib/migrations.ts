@@ -1229,5 +1229,22 @@ export const MIGRATIONS: Migration[] = [
       WHERE NOT EXISTS (SELECT 1 FROM portal_announcements WHERE created_by = 'r5-seed');
     `,
   },
+  {
+    id: "029_physician_feedback_summaries",
+    description: "Sprint 3.2 — one current PHI-safe feedback summary per physician. Regenerate overwrites the row. No multi-version history.",
+    sql: `
+      CREATE TABLE IF NOT EXISTS physician_feedback_summaries (
+        physician_id              uuid PRIMARY KEY REFERENCES physicians(id) ON DELETE CASCADE,
+        summary_body              text NOT NULL CHECK (char_length(summary_body) > 0),
+        generated_at              timestamptz NOT NULL DEFAULT now(),
+        model_id                  text NOT NULL,
+        vertex_location           text NOT NULL,
+        vertex_project            text,
+        feedback_count_at_gen     integer NOT NULL CHECK (feedback_count_at_gen >= 0),
+        generated_by_profile_id   uuid REFERENCES profiles(id),
+        updated_at                timestamptz NOT NULL DEFAULT now()
+      );
+    `,
+  },
 ];
 
