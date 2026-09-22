@@ -21,11 +21,19 @@ import { HospitalFilter } from "../HospitalFilter";
  * and greyed until their phases ship. OPD Governance flips live in R3.
  */
 
+type HonestyBadge = "soon" | "proposed" | "stale" | "empty";
+
 interface NavLeaf {
   label: string;
   href?: string; // absent = planned teaser
   show?: boolean;
-  tag?: "soon";
+  badge?: HonestyBadge;
+}
+
+interface ShellHonesty {
+  ok?: boolean;
+  opd?: { stale: boolean; lastDay: string | null } | null;
+  elo?: { empty: boolean; vcs: number; cases: number; snapshots: number } | null;
 }
 
 interface NavGroup {
@@ -33,8 +41,26 @@ interface NavGroup {
   items: NavLeaf[];
 }
 
+function HonestyPill({ kind }: { kind: HonestyBadge }) {
+  const label = kind === "soon" ? "soon" : kind === "proposed" ? "Proposed" : kind === "stale" ? "Stale" : "Empty";
+  const tone =
+    kind === "proposed"
+      ? "bg-violet-100 text-violet-700"
+      : kind === "stale"
+        ? "bg-orange-100 text-orange-800"
+        : kind === "empty"
+          ? "bg-stone-200 text-stone-600"
+          : "bg-stone-100 text-stone-400";
+  return (
+    <span className={"ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide " + tone}>
+      {label}
+    </span>
+  );
+}
+
 export function ShellV2() {
   const [user, setUser] = useState<UserSummary | null>(null);
+  const [honesty, setHonesty] = useState<ShellHonesty | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const pathname = usePathname();
 
@@ -43,6 +69,12 @@ export function ShellV2() {
       .then((r) => r.json())
       .then((j) => {
         if (j.ok && j.user) setUser(j.user as UserSummary);
+      })
+      .catch(() => undefined);
+    fetch("/api/shell/honesty")
+      .then((r) => r.json())
+      .then((j: ShellHonesty) => {
+        if (j.ok) setHonesty(j);
       })
       .catch(() => undefined);
   }, []);
@@ -74,9 +106,20 @@ export function ShellV2() {
     {
       label: "Governance",
       items: [
-        { label: "OPD Governance", href: "/opd-governance" },
-        { label: "IPD Governance", tag: "soon" },
-        { label: "Surgical Governance", href: "/surgical-governance", show: isSuper },
+        { label: "Document Audits", badge: "proposed" },
+        {
+          label: "OPD Governance",
+          href: "/opd-governance",
+          badge: honesty?.opd?.stale ? "stale" : undefined,
+        },
+        { label: "RMO Inbox", badge: "proposed" },
+        { label: "IPD Governance", badge: "soon" },
+        {
+          label: "Surgical ELO",
+          href: "/surgical-governance",
+          show: isSuper,
+          badge: honesty?.elo?.empty ? "empty" : undefined,
+        },
         { label: "Patient Feedback", href: "/incidents" },
         { label: "Incidents (e-IRIS)", href: "/safety", show: showIncidents },
         { label: "Safety Report", href: "/safety/report", show: showIncidents },
@@ -87,12 +130,12 @@ export function ShellV2() {
       label: "M&M",
       items: [
         { label: "M&M Cases", href: "/mm", show: showIncidents },
-        { label: "Protocol-gap register", tag: "soon", show: showIncidents },
+        { label: "Protocol-gap register", badge: "soon", show: showIncidents },
       ],
     },
     {
       label: "Councils",
-      items: [{ label: "Meetings & Actions", tag: "soon" }],
+      items: [{ label: "Meetings & Actions", badge: "soon" }],
     },
   ];
 
@@ -141,18 +184,20 @@ export function ShellV2() {
                       : "text-stone-600 hover:bg-stone-100 hover:text-stone-900")
                   }
                 >
-                  {item.label}
+                  <span className="min-w-0 truncate">{item.label}</span>
+                  {item.badge ? <HonestyPill kind={item.badge} /> : null}
                 </Link>
               ) : (
                 <div
                   key={item.label}
-                  className="flex cursor-default items-center gap-2 rounded-lg px-2.5 py-[7px] text-[13.5px] font-medium text-stone-300"
-                  title="Planned — coming soon"
+                  className={
+                    "flex cursor-default items-center gap-2 rounded-lg px-2.5 py-[7px] text-[13.5px] font-medium " +
+                    (item.badge === "proposed" ? "text-stone-500" : "text-stone-300")
+                  }
+                  title={item.badge === "proposed" ? "Proposed — no volumes until ingest" : "Planned — coming soon"}
                 >
-                  {item.label}
-                  <span className="ml-auto rounded-full bg-stone-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-stone-400">
-                    soon
-                  </span>
+                  <span className="min-w-0 truncate">{item.label}</span>
+                  {item.badge ? <HonestyPill kind={item.badge} /> : null}
                 </div>
               ),
             )}

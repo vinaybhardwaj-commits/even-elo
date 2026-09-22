@@ -95,7 +95,7 @@ function defaultNav(showElo: boolean, showAdmin: boolean, showSafety: boolean): 
   if (showSafety) items.push({ label: "Incidents (e-IRIS)", href: "/safety" });
   if (showSafety) items.push({ label: "Safety Report", href: "/safety/report" });
   if (showSafety) items.push({ label: "M&M", href: "/mm" }); // same SGC/super predicate (M&M PRD decision 13)
-  if (showElo) items.push({ label: "Surgical Governance", href: "/surgical-governance" });
+  if (showElo) items.push({ label: "Surgical ELO", href: "/surgical-governance" });
   if (showAdmin) items.push({ label: "Admin", href: "/admin" });
   items.push({ label: "Guide", href: "/guide" });
   return items;

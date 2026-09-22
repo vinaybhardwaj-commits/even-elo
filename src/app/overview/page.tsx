@@ -1,15 +1,17 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
+import { OverviewModules } from "@/components/overview/OverviewModules";
 import { getCurrentUser } from "@/lib/auth";
 import { sql } from "@/lib/db";
+import { buildOverviewModel, type IrisCounts } from "@/lib/overview-modules";
+import { loadStage2Counts } from "@/lib/stage2-counts";
 import {
   getSeries,
   latestSnapshot,
   computeAges,
   computeResolved,
   computeMovers,
-  qualitySeries,
   signalKey,
   getIncidentSeries,
   computeClusterSignals,
@@ -19,9 +21,9 @@ import {
 export const dynamic = "force-dynamic";
 
 /**
- * Overview — the continuous governance signal board (PRD v1.4-LOCKED §4.2, R2).
- * NOT a daily digest: rolling-window trends, signal persistence/aging, movers,
- * and the unified open-work queue. /home redirects here while UI_V2 is on.
+ * Overview — programme home (Sprint 2.1) plus the continuous signal board
+ * (PRD v1.4-LOCKED §4.2). Tiles use live counts. Document Audits and RMO stay
+ * proposed. /home redirects here while UI_V2 is on.
  */
 
 interface PendingQual {
@@ -47,25 +49,6 @@ interface NegIncident {
   submitted_at: string;
 }
 
-function Spark({ points, stroke }: { points: Array<{ value: number }>; stroke: string }) {
-  if (points.length < 2) return <span className="text-[10px] text-stone-300">no trend yet</span>;
-  const w = 62;
-  const h = 20;
-  const vals = points.map((p) => p.value);
-  const min = Math.min(...vals);
-  const max = Math.max(...vals);
-  const span = max - min || 1;
-  const step = w / (points.length - 1);
-  const pts = points
-    .map((p, i) => `${Math.round(i * step)},${Math.round(h - 2 - ((p.value - min) / span) * (h - 4))}`)
-    .join(" ");
-  return (
-    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} aria-hidden>
-      <polyline points={pts} fill="none" stroke={stroke} strokeWidth="2" />
-    </svg>
-  );
-}
-
 function ageBadge(days: number, regressed: boolean) {
   const label =
     days < 1 ? "new" : days < 14 ? `active ${days}d` : `active ${Math.round(days / 7)} wks`;
@@ -83,30 +66,32 @@ function ageBadge(days: number, regressed: boolean) {
   );
 }
 
-async function incidentStats(): Promise<{
-  open: number | null;
-  total: number | null;
-  highSev: number | null;
-}> {
+async function incidentStats(): Promise<IrisCounts> {
+  const none: IrisCounts = { open: null, total: null, highSev: null, withRca: null, overdue: null };
   const base = process.env.INCIDENT_API_BASE;
   const tok = process.env.INCIDENT_API_TOKEN;
-  if (!base || !tok) return { open: null, total: null, highSev: null };
+  if (!base || !tok) return none;
   try {
     const res = await fetch(`${base}/api/office/stats`, {
       headers: { Authorization: `Bearer ${tok}` },
       cache: "no-store",
       signal: AbortSignal.timeout(4000),
     });
-    if (!res.ok) return { open: null, total: null, highSev: null };
+    if (!res.ok) return none;
     // Shape verified live 2 Jul: { ok, totals: { total, open, near_miss, high_sev, with_rca }, ... }
-    const j = (await res.json()) as { totals?: { total?: number; open?: number; high_sev?: number } };
+    const j = (await res.json()) as {
+      totals?: { total?: number; open?: number; high_sev?: number; with_rca?: number; overdue?: number };
+    };
+    const num = (value: unknown) => (typeof value === "number" ? value : null);
     return {
-      open: typeof j.totals?.open === "number" ? j.totals.open : null,
-      total: typeof j.totals?.total === "number" ? j.totals.total : null,
-      highSev: typeof j.totals?.high_sev === "number" ? j.totals.high_sev : null,
+      open: num(j.totals?.open),
+      total: num(j.totals?.total),
+      highSev: num(j.totals?.high_sev),
+      withRca: num(j.totals?.with_rca),
+      overdue: num(j.totals?.overdue),
     };
   } catch {
-    return { open: null, total: null, highSev: null };
+    return none;
   }
 }
 
@@ -186,21 +171,6 @@ export default async function OverviewPage({
   } catch {
     clusterSignals = [];
   }
-  const qseries = qualitySeries(series).slice(-Math.min(windowDays, series.length));
-
-  const counts = (
-    (await sql`
-      SELECT
-        (SELECT count(*)::int FROM incidents WHERE status='open' AND polarity='negative') AS open_negative,
-        (SELECT count(*)::int FROM incidents WHERE polarity='negative' AND submitted_at > now() - make_interval(days => ${windowDays})) AS neg_window,
-        (SELECT count(*)::int FROM incidents WHERE polarity='negative' AND submitted_at <= now() - make_interval(days => ${windowDays}) AND submitted_at > now() - make_interval(days => ${windowDays * 2})) AS neg_prior,
-        (SELECT count(*)::int FROM qualifications WHERE verified=false) AS pending_quals`) as unknown as Array<{
-      open_negative: number;
-      neg_window: number;
-      neg_prior: number;
-      pending_quals: number;
-    }>
-  )[0];
 
   const pendingQuals = (await sql`
     SELECT q.id, q.degree, q.year_completed, q.created_at, p.id AS physician_id, p.full_name
@@ -232,22 +202,28 @@ export default async function OverviewPage({
   // them, for users who cannot open the module.
   const showMm = user.is_super_admin || user.is_sgc_member;
   const mm = showMm ? await mmStats() : { open: null, inReview: null, gapsOpen: null, queue: [] };
+  const stage2 = await loadStage2Counts();
+  const overviewModel = buildOverviewModel(stage2, inc, {
+    canOpenElo: user.is_super_admin,
+    canOpenSafety: showMm,
+  });
 
   const canVerify = user.is_super_admin || user.is_hr || user.is_site_medical_head;
-  const actNow = signals.filter((s) => s.severity === "act_now").length;
-  const feedbackTrend =
-    counts.neg_prior === 0 ? "stable" : counts.neg_window > counts.neg_prior * 1.3 ? "rising" : counts.neg_window < counts.neg_prior * 0.7 ? "falling" : "stable";
-  const docsStroke = actNow > 0 ? "#e11d48" : signals.length > 0 ? "#d97706" : "#059669";
 
   return (
     <AppShell>
       <main className="mx-auto max-w-[1400px] px-4 py-8 sm:px-8">
-        <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
+        <OverviewModules model={overviewModel} />
+
+        <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Governance overview</h1>
-            <p className="mt-1 text-sm text-stone-500">
-              Ongoing signals across all domains
-              {latest ? ` · OPD audit data through ${latest.day}` : " · awaiting first OPD snapshot"}
+            <h2 className="text-sm font-semibold text-stone-800">Ongoing signals</h2>
+            <p className="mt-0.5 text-[12.5px] text-stone-500">
+              {latest
+                ? `OPD audit data through ${latest.day}${overviewModel.opd.stale ? " · snapshot labeled Stale on the tiles above" : ""}`
+                : stage2?.opdLastDay
+                  ? `Last stored OPD snapshot is ${stage2.opdLastDay}, outside this 90-day window · labeled Stale. No act-now volume is invented from it.`
+                  : "No OPD snapshot stored"}
               {latest?.payload.engine ? ` · ${latest.payload.engine}` : ""}
             </p>
           </div>
@@ -265,86 +241,6 @@ export default async function OverviewPage({
               </Link>
             ))}
           </div>
-        </div>
-
-        {/* Category tiles */}
-        <div className={"mb-5 grid grid-cols-2 gap-3 " + (showMm ? "lg:grid-cols-6" : "lg:grid-cols-5")}>
-          <div className="rounded-xl border border-stone-200 bg-white px-4 py-3">
-            <div className="text-[12.5px] font-semibold">Documentation quality</div>
-            <div className="mt-1.5 flex items-center justify-between gap-2">
-              <span
-                className={
-                  "rounded-full px-2 py-0.5 text-[10.5px] font-bold " +
-                  (actNow > 0 ? "bg-rose-50 text-rose-700" : signals.length ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700")
-                }
-              >
-                {actNow > 0 ? `${actNow} act now` : signals.length ? `${signals.length} watch` : "OK"}
-              </span>
-              <Spark points={qseries} stroke={docsStroke} />
-            </div>
-            <div className="mt-1.5 text-[11.5px] text-stone-500">
-              {signals.length} active signal{signals.length === 1 ? "" : "s"}
-              {resolved.length ? ` · ${resolved.length} resolved` : ""}
-            </div>
-          </div>
-          <Link href="/incidents" className="rounded-xl border border-stone-200 bg-white px-4 py-3 hover:border-brand">
-            <div className="text-[12.5px] font-semibold">Patient feedback</div>
-            <div className="mt-1.5">
-              <span className={"rounded-full px-2 py-0.5 text-[10.5px] font-bold " + (counts.open_negative > 0 ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700")}>
-                {counts.open_negative} open negative
-              </span>
-            </div>
-            <div className="mt-1.5 text-[11.5px] text-stone-500">
-              {counts.neg_window} in {windowDays}d vs {counts.neg_prior} prior · {feedbackTrend}
-            </div>
-          </Link>
-          <Link href="/safety" className="rounded-xl border border-stone-200 bg-white px-4 py-3 hover:border-brand">
-            <div className="text-[12.5px] font-semibold">Incidents</div>
-            <div className="mt-1.5">
-              <span className={"rounded-full px-2 py-0.5 text-[10.5px] font-bold " + ((inc.highSev ?? 0) > 0 ? "bg-rose-50 text-rose-700" : (inc.open ?? 0) > 0 ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700")}>
-                {inc.open !== null ? `${inc.open} open${(inc.highSev ?? 0) > 0 ? ` · ${inc.highSev} major+` : ""}` : "open module"}
-              </span>
-            </div>
-            <div className="mt-1.5 text-[11.5px] text-stone-500">
-              {inc.total !== null ? `${inc.total} total · all departments · RCA/CAPA` : "reporting · RCA · CAPA"}
-            </div>
-          </Link>
-          {showMm && (
-            <Link href="/mm" className="rounded-xl border border-stone-200 bg-white px-4 py-3 hover:border-brand">
-              <div className="text-[12.5px] font-semibold">M&amp;M</div>
-              <div className="mt-1.5">
-                <span
-                  className={
-                    "rounded-full px-2 py-0.5 text-[10.5px] font-bold " +
-                    ((mm.inReview ?? 0) > 0 ? "bg-amber-50 text-amber-700" : (mm.open ?? 0) > 0 ? "bg-sky-50 text-sky-700" : "bg-emerald-50 text-emerald-700")
-                  }
-                >
-                  {mm.open !== null ? `${mm.open} open${(mm.inReview ?? 0) > 0 ? ` · ${mm.inReview} in review` : ""}` : "open module"}
-                </span>
-              </div>
-              <div className="mt-1.5 text-[11.5px] text-stone-500">
-                {mm.gapsOpen !== null ? `${mm.gapsOpen} protocol gap${mm.gapsOpen === 1 ? "" : "s"} open` : "clinical-layer review"}
-              </div>
-            </Link>
-          )}
-          <Link href="/onboarding" className="rounded-xl border border-stone-200 bg-white px-4 py-3 hover:border-brand">
-            <div className="text-[12.5px] font-semibold">Credentialing hygiene</div>
-            <div className="mt-1.5">
-              <span className={"rounded-full px-2 py-0.5 text-[10.5px] font-bold " + (counts.pending_quals + expiries.length > 0 ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700")}>
-                {counts.pending_quals + expiries.length > 0 ? `${counts.pending_quals + expiries.length} open items` : "OK"}
-              </span>
-            </div>
-            <div className="mt-1.5 text-[11.5px] text-stone-500">
-              {counts.pending_quals} pending · {expiries.length} expiries ≤30d
-            </div>
-          </Link>
-          <Link href="/surgical-governance" className="rounded-xl border border-stone-200 bg-white px-4 py-3 hover:border-brand">
-            <div className="text-[12.5px] font-semibold">Surgical governance</div>
-            <div className="mt-1.5">
-              <span className="rounded-full bg-stone-100 px-2 py-0.5 text-[10.5px] font-bold text-stone-500">module</span>
-            </div>
-            <div className="mt-1.5 text-[11.5px] text-stone-500">streams · cases · scores</div>
-          </Link>
         </div>
 
         <div className="grid gap-4 lg:grid-cols-[1.5fr_1fr]">
@@ -422,7 +318,9 @@ export default async function OverviewPage({
               </div>
             ) : (
               <p className="py-6 text-center text-sm text-stone-400">
-                No OPD snapshots yet — the 06:00 IST cron (or a backfill run) populates this board.
+                {stage2?.opdLastDay
+                  ? `Last OPD snapshot ${stage2.opdLastDay} is outside this window and is labeled Stale. No act-now volume is invented from it.`
+                  : "No OPD snapshots yet — the 06:00 IST cron (or a backfill run) populates this board."}
               </p>
             )}
             {(movers.improving.length > 0 || movers.worsening.length > 0) && (
