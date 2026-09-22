@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { authorAttribution } from "@/lib/document-audits";
 
 interface LocalFinding {
   finding_id: string;
@@ -14,6 +15,9 @@ interface LocalFinding {
   authored_at: string;
   doc_type_label: string;
   pdf_url: string | null;
+  pdf_status: "available" | "unavailable";
+  response_owner: "pipe_a" | "local";
+  signal_reference: string | null;
   doctor_response_verb: string | null;
   doctor_response_comment: string | null;
   doctor_responded_at: string | null;
@@ -90,12 +94,12 @@ export function LocalDocumentAuditsForDoctor() {
             <div className="mt-1 text-[12px] text-stone-500">
               {f.doc_type_label}
               {f.external_ref ? ` · ${f.external_ref}` : ""}
-              {` · Authored by RMO ${f.authored_by_name}`}
+              {` · ${authorAttribution(f.authored_by_name)}`}
             </div>
             {f.finding_body ? (
               <p className="mt-2 text-[13px] text-stone-600 leading-snug">{f.finding_body}</p>
             ) : null}
-            {f.pdf_url ? (
+            {f.pdf_status === "available" && f.pdf_url ? (
               <a
                 href={f.pdf_url}
                 target="_blank"
@@ -104,8 +108,15 @@ export function LocalDocumentAuditsForDoctor() {
               >
                 Download audit findings PDF
               </a>
-            ) : null}
-            {f.doctor_response_verb ? (
+            ) : (
+              <p className="mt-3 text-[12px] text-stone-500">Audit findings PDF is not available from CDMSS yet.</p>
+            )}
+            {f.response_owner === "pipe_a" ? (
+              <p className="mt-3 text-[12px] text-stone-600 bg-stone-50 border border-stone-100 rounded-md px-3 py-2">
+                This issue is on your Findings list
+                {f.signal_reference ? ` (${f.signal_reference})` : ""}. Respond there so you are not asked twice.
+              </p>
+            ) : f.doctor_response_verb ? (
               <p className="mt-3 text-[12px] text-stone-600 bg-stone-50 border border-stone-100 rounded-md px-3 py-2">
                 You responded: {f.doctor_response_verb}
                 {f.doctor_response_comment ? ` · ${f.doctor_response_comment}` : ""}

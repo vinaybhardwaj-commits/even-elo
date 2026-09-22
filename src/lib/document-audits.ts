@@ -10,6 +10,45 @@
  * Distinct from e-IRIS / Patient Feedback incidents / ISS.
  */
 
+/** Machine stamp until an RMO confirms. Never present this as a named human RMO. */
+export const SYSTEM_AUDIT_AUTHOR = "CDMSS audit (pending RMO review)";
+
+export function isSystemAuditAuthor(name: string | null | undefined): boolean {
+  return name === SYSTEM_AUDIT_AUTHOR;
+}
+
+/** Staff/portal attribution. System rows keep the pending label; confirmed rows name the RMO. */
+export function authorAttribution(name: string | null | undefined): string {
+  if (!name) return "Author not recorded";
+  if (isSystemAuditAuthor(name)) return SYSTEM_AUDIT_AUTHOR;
+  return `RMO ${name}`;
+}
+
+/**
+ * Portal PDF link. Only an absolute URL already stored from CDMSS counts.
+ * A guessed `/api/governance/audits/:id/pdf` is not shown until ingest has verified it.
+ */
+export function portalPdfStatus(cdmssPdfUrl: string | null | undefined): {
+  pdf_url: string | null;
+  pdf_status: "available" | "unavailable";
+} {
+  if (typeof cdmssPdfUrl === "string" && /^https?:\/\//i.test(cdmssPdfUrl.trim())) {
+    return { pdf_url: cdmssPdfUrl.trim(), pdf_status: "available" };
+  }
+  return { pdf_url: null, pdf_status: "unavailable" };
+}
+
+/** Who the doctor should answer. Pipe A owns the ask when a routed signal matches. */
+export function portalResponseOwner(
+  responseOwner: string | null | undefined,
+  signalReference: string | null | undefined,
+): "pipe_a" | "local" {
+  if (responseOwner === "pipe_a") return "pipe_a";
+  if (responseOwner === "local") return "local";
+  if (signalReference && signalReference.trim()) return "pipe_a";
+  return "local";
+}
+
 export const DOC_TYPES = ["progress", "ot", "discharge"] as const;
 export type DocType = (typeof DOC_TYPES)[number];
 
@@ -146,6 +185,9 @@ export interface RmoWorkItem {
   open_age_days: number;
   recurrence_count: number;
   remediator_note: string;
+  portal_visible: boolean;
+  author_pending: boolean;
+  signal_reference: string | null;
 }
 
 export interface SgcExceptionItem {

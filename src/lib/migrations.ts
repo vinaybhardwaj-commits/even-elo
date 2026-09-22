@@ -1314,5 +1314,39 @@ export const MIGRATIONS: Migration[] = [
       ON CONFLICT (id) DO NOTHING;
     `,
   },
+  {
+    id: "031_document_audit_ingest_keys",
+    description:
+      "Stage 4 ingest keys for Pipe B: stable finding_ref, queue_item_ref, EHRC-AUD signal reference, note_class, and response_owner (pipe_a vs local). doctor_uid stays server-side.",
+    sql: `
+      ALTER TABLE document_audits
+        ADD COLUMN IF NOT EXISTS note_class text,
+        ADD COLUMN IF NOT EXISTS source_audit_id text,
+        ADD COLUMN IF NOT EXISTS doctor_uid text;
+
+      ALTER TABLE document_audit_findings
+        ADD COLUMN IF NOT EXISTS finding_ref text,
+        ADD COLUMN IF NOT EXISTS queue_item_ref text,
+        ADD COLUMN IF NOT EXISTS signal_reference text,
+        ADD COLUMN IF NOT EXISTS signal_type text,
+        ADD COLUMN IF NOT EXISTS note_class text,
+        ADD COLUMN IF NOT EXISTS response_owner text;
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_daf_audit_finding_ref
+        ON document_audit_findings (audit_id, finding_ref)
+        WHERE finding_ref IS NOT NULL;
+
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'daf_response_owner_chk'
+        ) THEN
+          ALTER TABLE document_audit_findings
+            ADD CONSTRAINT daf_response_owner_chk
+            CHECK (response_owner IS NULL OR response_owner IN ('pipe_a', 'local'));
+        END IF;
+      END $$;
+    `,
+  },
 ];
 
