@@ -8,11 +8,15 @@ const TIMEOUT_MS = 12_000;
 const CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform";
 
 /**
- * Server-only Vertex client for Sprint 3.1.
- * The super-admin health probe and later staff summary generation both use
+ * Server-only Vertex client for Sprint 3.1+.
+ * The super-admin health probe and staff summary generation both use
  * createVertexClient. Summary prompts are built outside this module.
+ * Pass httpTimeoutMs for long-running RCA/CAPA calls (default 12s for health).
  */
-export function createVertexClient(credentials: VertexCredentials): GoogleGenAI {
+export function createVertexClient(
+  credentials: VertexCredentials,
+  httpTimeoutMs: number = TIMEOUT_MS,
+): GoogleGenAI {
   return new GoogleGenAI({
     vertexai: true,
     project: credentials.project,
@@ -24,7 +28,7 @@ export function createVertexClient(credentials: VertexCredentials): GoogleGenAI 
       },
       scopes: [CLOUD_PLATFORM_SCOPE],
     },
-    httpOptions: { timeout: TIMEOUT_MS },
+    httpOptions: { timeout: httpTimeoutMs },
   });
 }
 

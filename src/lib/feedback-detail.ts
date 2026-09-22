@@ -6,7 +6,7 @@
 import { categoryLabel } from "./feedback-home";
 
 export const SUMMARY_PANEL_TITLE = "Summary";
-export const SUMMARY_PANEL_SUBTITLE = "Theme-level · count-based prompts";
+export const SUMMARY_PANEL_SUBTITLE = "Pattern · RCA · CAPA";
 export const NO_FEEDBACK_COPY = "No feedback on file for this physician.";
 
 export interface FeedbackTimelineItem {

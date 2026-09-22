@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { neon } from "@neondatabase/serverless";
 import { isVertexSummariesEnabled } from "@/lib/vertex/env";
-import { generateThemeSummary } from "@/lib/physician-summary/generate";
+import { generateRcaCapaSummary } from "@/lib/physician-summary/generate";
 import {
   getSummaryResponse,
   loadFeedbackScope,
@@ -20,7 +20,8 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 export const fetchCache = "force-no-store";
 export const runtime = "nodejs";
-export const maxDuration = 30;
+/** Two-pass RCA/CAPA may issue several Vertex calls (batched Pass A + Pass B). */
+export const maxDuration = 300;
 
 const NO_STORE = { "Cache-Control": "no-store, max-age=0" };
 
@@ -64,8 +65,9 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
 /**
  * POST /api/incidents/physician/:id/summary
  *
- * On-demand generate / regenerate. Overwrites the current row.
- * Requires FEATURE_VERTEX_SUMMARIES === "true". Prompts use aggregates only.
+ * On-demand generate / regenerate (Sprint 3.3 RCA/CAPA with narratives).
+ * Overwrites the current row. Requires FEATURE_VERTEX_SUMMARIES === "true".
+ * AuthZ (SGC / super) is the control — prompts may include full narratives.
  */
 export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
@@ -97,7 +99,7 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
       );
     }
 
-    const generated = await generateThemeSummary(scope.rows, scope.specialty);
+    const generated = await generateRcaCapaSummary(scope.rows, scope.specialty);
     if (!generated.ok) {
       if (generated.code === "flag_off") {
         return NextResponse.json(

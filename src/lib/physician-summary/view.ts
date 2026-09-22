@@ -6,6 +6,7 @@ import {
   type SummaryChipLabel,
   type SummaryUiState,
 } from "./state";
+import { parseSummarySections, type SummarySection } from "./sections";
 
 export interface SummaryRecord {
   body: string;
@@ -47,6 +48,8 @@ export interface SummaryView {
   gatedTone: "muted" | "brand" | null;
   showBody: boolean;
   body: string | null;
+  /** Sprint 3.3 structured sections when the stored body has RCA/CAPA headings. */
+  sections: SummarySection[] | null;
   showMeta: boolean;
   meta: {
     model: string;
@@ -123,6 +126,7 @@ function base(state: SummaryUiState, hint: string): SummaryView {
     gatedTone: null,
     showBody: false,
     body: null,
+    sections: null,
     showMeta: false,
     meta: null,
     showStaleBanner: false,
@@ -222,7 +226,7 @@ export function resolveSummaryView(input: {
     const view = base("empty", "No stored summary");
     const n = server.live_feedback_count;
     view.gatedTitle = "No summary yet";
-    view.gatedBody = `${n} feedback ${n === 1 ? "row is" : "rows are"} ready. Generate a theme-level governance summary. Prompts use counts only.`;
+    view.gatedBody = `${n} feedback ${n === 1 ? "row is" : "rows are"} ready. Generate a provisional RCA and CAPA from negative narratives (positives: recognition only).`;
     view.gatedTone = "brand";
     view.actions = [
       { label: "Generate summary", disabled: false, action: "generate", variant: "primary" },
@@ -247,24 +251,26 @@ export function resolveSummaryView(input: {
     });
     view.showBody = true;
     view.body = server.summary.body;
+    view.sections = parseSummarySections(server.summary.body);
     view.showMeta = true;
     view.meta = metaFrom(server.summary);
     view.actions = [
       { label: "Regenerate summary", disabled: false, action: "generate", variant: "primary" },
       { label: "Keep current", disabled: false, action: "keep", variant: "ghost" },
     ];
-    view.footnote = "Theme-level only. The prior summary stays until a successful regenerate overwrites it.";
+    view.footnote = "Provisional RCA/CAPA. The prior summary stays until a successful regenerate overwrites it.";
     return view;
   }
 
   const view = base("ready", `${server.summary.feedback_count_at_gen} feedback used`);
   view.showBody = true;
   view.body = server.summary.body;
+  view.sections = parseSummarySections(server.summary.body);
   view.showMeta = true;
   view.meta = metaFrom(server.summary);
   view.actions = [
     { label: "Regenerate summary", disabled: false, action: "generate", variant: "secondary" },
   ];
-  view.footnote = "Theme-level governance summary. Patient quotes are not included.";
+  view.footnote = "Provisional RCA and CAPA for negatives; positives are recognition only.";
   return view;
 }

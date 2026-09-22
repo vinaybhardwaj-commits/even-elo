@@ -301,7 +301,20 @@ export function PhysicianFeedbackDetail() {
                     </div>
                   ) : null}
 
-                  {summaryView.showBody && summaryView.body ? (
+                  {summaryView.showBody && summaryView.sections && summaryView.sections.length > 0 ? (
+                    <div className="space-y-4">
+                      {summaryView.sections.map((section) => (
+                        <section key={section.title} aria-label={section.title}>
+                          <h3 className="text-[11px] font-bold uppercase tracking-wide text-stone-500">
+                            {section.title}
+                          </h3>
+                          <div className="mt-1.5 whitespace-pre-wrap text-[13.5px] leading-relaxed text-stone-800">
+                            {section.body}
+                          </div>
+                        </section>
+                      ))}
+                    </div>
+                  ) : summaryView.showBody && summaryView.body ? (
                     <div className="whitespace-pre-wrap text-[13.5px] leading-relaxed text-stone-800">
                       {summaryView.body}
                     </div>
