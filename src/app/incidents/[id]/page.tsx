@@ -209,7 +209,7 @@ function Inner() {
       <TopNav />
       <main className="max-w-[900px] mx-auto px-8 py-8">
         <div className="text-sm text-stone-500 mb-2">
-          <Link href="/incidents" className="hover:text-stone-900">Feedback</Link>
+          <Link href="/incidents" className="hover:text-stone-900">Patient Feedback</Link>
           <span className="mx-1.5">/</span>
           <span className="text-stone-900 font-medium">#{i.id.slice(0, 8)}</span>
         </div>

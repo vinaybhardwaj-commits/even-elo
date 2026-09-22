@@ -90,9 +90,10 @@ function defaultNav(showElo: boolean, showAdmin: boolean, showSafety: boolean): 
     { label: "Home", href: "/home" },
     { label: "Physician DB", href: "/physicians" },
     { label: "Credentialing", href: "/onboarding" },
-    { label: "Feedback", href: "/incidents" },
+    { label: "Patient Feedback", href: "/incidents" },
   ];
-  if (showSafety) items.push({ label: "Incidents", href: "/safety" });
+  if (showSafety) items.push({ label: "Incidents (e-IRIS)", href: "/safety" });
+  if (showSafety) items.push({ label: "Safety Report", href: "/safety/report" });
   if (showSafety) items.push({ label: "M&M", href: "/mm" }); // same SGC/super predicate (M&M PRD decision 13)
   if (showElo) items.push({ label: "Surgical Governance", href: "/surgical-governance" });
   if (showAdmin) items.push({ label: "Admin", href: "/admin" });
