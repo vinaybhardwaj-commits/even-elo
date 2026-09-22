@@ -1,7 +1,7 @@
 /**
- * PHI-safe feedback aggregates for Sprint 3.2.
- * Only enum labels and counts leave this module. Raw category strings,
- * narratives, and identifiers are never copied into the aggregate.
+ * Feedback aggregates and narrative row helpers for physician summaries.
+ * Aggregates remain available for UI counts; Generate prompts use narratives
+ * (Sprint 3.3 / POLICY-AUTHORIZED-STAFF-DATA-2026-09-22).
  */
 
 export interface SafeFeedbackRow {
@@ -13,6 +13,8 @@ export interface SafeFeedbackRow {
   status: string;
   source: string;
   patient_rating: number | null;
+  /** Full narrative for RCA/CAPA generation. Null when absent. */
+  narrative: string | null;
 }
 
 export interface MonthBucket {
@@ -33,6 +35,9 @@ export interface FeedbackAggregate {
   by_rating: Record<string, number>;
   by_month: Record<string, MonthBucket>;
 }
+
+/** Newest live negatives sent to Pass A (Sprint 3.3 cap). */
+export const MAX_NEGATIVES_FOR_SUMMARY = 40;
 
 const CATEGORIES = new Set([
   "clinical",
@@ -56,6 +61,9 @@ const COMMENDATIONS = new Set([
 const SEVERITIES = new Set(["low", "medium", "high", "critical"]);
 const STATUSES = new Set(["open", "closed"]);
 const SOURCES = new Set(["patient", "peer", "governance", "external_public"]);
+
+const THIN_NARRATIVE_RE =
+  /^(unsatisfied|dissatisfied|unsatisfied rating only|rating only|no (written )?comment|n\/?a|none|-|—|\.{0,3})$/i;
 
 function bump(map: Record<string, number>, key: string) {
   map[key] = (map[key] ?? 0) + 1;
@@ -87,9 +95,44 @@ function sortedCounts(map: Record<string, number>): Record<string, number> {
   return out;
 }
 
+export function isLiveRow(row: Pick<SafeFeedbackRow, "status">): boolean {
+  return row.status !== "retracted";
+}
+
+/**
+ * True when the narrative is empty, whitespace, or a rating-only stub.
+ * Pass A/B must not invent root causes for these.
+ */
+export function isThinNarrative(narrative: string | null | undefined): boolean {
+  const text = (narrative ?? "").replace(/\s+/g, " ").trim();
+  if (text.length < 12) return true;
+  if (THIN_NARRATIVE_RE.test(text)) return true;
+  if (/rating only/i.test(text) && text.length < 80) return true;
+  return false;
+}
+
+/** Live rows newest-first (assumes input already ordered DESC by submitted_at). */
+export function liveRows(rows: readonly SafeFeedbackRow[]): SafeFeedbackRow[] {
+  return rows.filter(isLiveRow);
+}
+
+/** Newest live negatives, capped for summary generation. */
+export function negativesForSummary(rows: readonly SafeFeedbackRow[]): SafeFeedbackRow[] {
+  return liveRows(rows)
+    .filter((row) => row.polarity === "negative")
+    .slice()
+    .sort((a, b) => Date.parse(b.submitted_at) - Date.parse(a.submitted_at))
+    .slice(0, MAX_NEGATIVES_FOR_SUMMARY);
+}
+
+/** Live positives (uncapped; used for optional recognition themes only). */
+export function positivesForSummary(rows: readonly SafeFeedbackRow[]): SafeFeedbackRow[] {
+  return liveRows(rows).filter((row) => row.polarity === "positive");
+}
+
 /**
  * Counts non-retracted rows. Unknown enum values collapse to "other" or
- * "unset" so a dirty column cannot carry a name or narrative into the prompt.
+ * "unset". Narratives are never copied into the aggregate object.
  */
 export function aggregateFeedback(rows: readonly SafeFeedbackRow[]): FeedbackAggregate {
   const by_category: Record<string, number> = {};

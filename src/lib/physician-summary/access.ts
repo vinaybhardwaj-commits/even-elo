@@ -108,6 +108,8 @@ export async function loadFeedbackScope(
     throw new SummaryAccessError(404, "not_found", "Physician not found");
   }
 
+  // Narratives are included for RCA/CAPA Generate (Sprint 3.3).
+  // AuthZ (viewer / SGC+super for Generate) is the control — not a prompt-layer PHI ban.
   const rows = (await sql`
     SELECT
       i.submitted_at,
@@ -117,7 +119,8 @@ export async function loadFeedbackScope(
       i.severity,
       i.status,
       i.source,
-      i.patient_rating
+      i.patient_rating,
+      i.narrative
     FROM incidents i
     WHERE i.target_physician_id = ${physicianId}::uuid
       AND (
@@ -139,6 +142,7 @@ export async function loadFeedbackScope(
     status: String(row.status ?? ""),
     source: String(row.source ?? "peer"),
     patient_rating: row.patient_rating == null ? null : Number(row.patient_rating),
+    narrative: row.narrative == null ? null : String(row.narrative),
   }));
 
   const { liveCount, newestAt } = scopeStats(safe);
