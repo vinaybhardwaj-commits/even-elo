@@ -20,6 +20,56 @@ const BASE = process.env.GOV_API_BASE || "https://even-cdmss.vercel.app";
 const PDF_PROBE_CAP = 8;
 const hospitalCache = new Map<string, string | null>();
 
+const EXPORT_PATH = "/api/governance/document-audits-export";
+const NOTE_CLASS_PARAMS = new Set(["ot", "discharge_summary", "progress"]);
+const DAY_PARAM = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Optional CDMSS export filters. Unset fields keep the export's own defaults. */
+export interface DocumentAuditIngestOpts {
+  window?: string | number | null;
+  note_class?: string | null;
+  from?: string | null;
+  to?: string | null;
+}
+
+function positiveIntDays(raw: string | number | null | undefined): string | null {
+  if (raw == null || raw === "") return null;
+  const n = typeof raw === "number" ? raw : Number(String(raw).trim());
+  if (!Number.isInteger(n) || n < 1) return null;
+  return String(n);
+}
+
+function dayParam(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const v = raw.trim();
+  return DAY_PARAM.test(v) ? v : null;
+}
+
+function noteClassParam(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const v = raw.trim();
+  return NOTE_CLASS_PARAMS.has(v) ? v : null;
+}
+
+/** `${BASE}/api/governance/document-audits-export` plus only provided, valid params. */
+export function buildDocumentAuditsExportUrl(
+  base: string,
+  opts: DocumentAuditIngestOpts = {},
+): string {
+  const root = base.replace(/\/+$/, "");
+  const params = new URLSearchParams();
+  const windowDays = positiveIntDays(opts.window);
+  if (windowDays) params.set("window", windowDays);
+  const noteClass = noteClassParam(opts.note_class);
+  if (noteClass) params.set("note_class", noteClass);
+  const from = dayParam(opts.from);
+  if (from) params.set("from", from);
+  const to = dayParam(opts.to);
+  if (to) params.set("to", to);
+  const qs = params.toString();
+  return qs ? `${root}${EXPORT_PATH}?${qs}` : `${root}${EXPORT_PATH}`;
+}
+
 function isoOrNull(v: string | null): string | null {
   if (!v) return null;
   const t = Date.parse(v);
@@ -39,10 +89,10 @@ export interface IngestRunResult {
   skips: ReturnType<typeof countSkips>;
 }
 
-async function fetchExport(): Promise<unknown> {
+async function fetchExport(opts: DocumentAuditIngestOpts = {}): Promise<unknown> {
   const key = process.env.GOV_API_KEY;
   if (!key) throw new Error("GOV_API_KEY not configured");
-  const res = await fetch(`${BASE}/api/governance/document-audits-export`, {
+  const res = await fetch(buildDocumentAuditsExportUrl(BASE, opts), {
     headers: { "x-api-key": key },
     cache: "no-store",
     signal: AbortSignal.timeout(20000),
@@ -228,9 +278,11 @@ async function applyRouteHit(hit: RouteHit): Promise<void> {
   `;
 }
 
-export async function runDocumentAuditIngest(): Promise<IngestRunResult> {
+export async function runDocumentAuditIngest(
+  opts: DocumentAuditIngestOpts = {},
+): Promise<IngestRunResult> {
   hospitalCache.clear();
-  const payload = await fetchExport();
+  const payload = await fetchExport(opts);
   const plan = planDocumentAuditIngest(payload);
   if (!plan.ok) throw new Error(plan.error);
 

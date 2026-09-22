@@ -4,7 +4,7 @@ import { recordIngestMeta, runDocumentAuditIngest } from "@/lib/document-audit-i
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 /**
  * Document-audit ingest (Stage 4 slices A–C).
@@ -13,6 +13,12 @@ export const maxDuration = 60;
  * Auth matches /api/cron/gov-snapshot: CRON_SECRET bearer, vercel-cron user
  * agent, or any active signed-in governance user (admin trigger).
  * Idempotent upserts. Does not mint OT gov signals.
+ *
+ * Ops can scope the CDMSS export with query params (forwarded as-is when valid):
+ *   ?note_class=ot
+ *   ?window=30
+ *   ?from=2026-09-01&to=2026-09-21
+ * Unset params keep the export's own defaults. Cron runs without query string.
  */
 async function allowed(req: NextRequest): Promise<boolean> {
   const secret = process.env.CRON_SECRET;
@@ -31,7 +37,13 @@ async function run(req: NextRequest) {
   const ua = req.headers.get("user-agent") || "";
   const mode = ua.startsWith("vercel-cron/") ? "cron" : "manual";
   try {
-    const result = await runDocumentAuditIngest();
+    const q = req.nextUrl.searchParams;
+    const result = await runDocumentAuditIngest({
+      window: q.get("window"),
+      note_class: q.get("note_class"),
+      from: q.get("from"),
+      to: q.get("to"),
+    });
     return NextResponse.json({ ...result, mode });
   } catch (e) {
     const message = e instanceof Error ? e.message : "ingest failed";
