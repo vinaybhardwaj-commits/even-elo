@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { OpdSignalsSection } from "@/components/v2/OpdSignalsSection";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { TopNav } from "@/components/TopNav";
 import { AddEngagementModal } from "@/components/AddEngagementModal";
@@ -13,6 +13,7 @@ import { OppeReviewModal } from "@/components/OppeReviewModal";
 import { EditPrivilegeModal } from "@/components/EditPrivilegeModal";
 import { ChangeCategoryModal } from "@/components/ChangeCategoryModal";
 import { MiniLineChart } from "@/components/MiniLineChart";
+import { PhysicianDocumentationSection } from "@/components/document-audits/PhysicianDocumentationSection";
 
 interface Physician {
   id: string;
@@ -202,6 +203,7 @@ const SECTIONS = [
   { key: "oppe", label: "OPPE", available: true },
   { key: "elo", label: "Surgical Governance score", available: false, sprint: "Phase 3" },
   { key: "feedback", label: "Feedback", available: true },
+  { key: "documentation", label: "Documentation", available: true },
 ] as const;
 
 function timeAgo(iso: string): string {
@@ -221,6 +223,7 @@ function fmtDate(iso: string | null): string {
 export default function PhysicianProfilePage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const id = params?.id;
 
   const [physician, setPhysician] = useState<Physician | null>(null);
@@ -242,8 +245,15 @@ export default function PhysicianProfilePage() {
   const [changeCatEngId, setChangeCatEngId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
-  const [section, setSection] = useState<string>("overview");
+  const tabParam = searchParams?.get("tab");
+  const [section, setSection] = useState<string>(
+    tabParam === "documentation" ? "documentation" : "overview",
+  );
   const [addEng, setAddEng] = useState(false);
+
+  useEffect(() => {
+    if (tabParam === "documentation") setSection("documentation");
+  }, [tabParam]);
 
   async function portalPost(bodyObj: Record<string, unknown>): Promise<boolean> {
     const r = await fetch(`/api/physicians/${id}/portal-access`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(bodyObj) });
@@ -967,7 +977,11 @@ export default function PhysicianProfilePage() {
             </section>
           )}
 
-          {!["overview", "engagements", "qualifications", "metrics", "oppe", "feedback"].includes(section) && (
+          {section === "documentation" && id ? (
+            <PhysicianDocumentationSection physicianId={id} />
+          ) : null}
+
+          {!["overview", "engagements", "qualifications", "metrics", "oppe", "feedback", "documentation"].includes(section) && (
             <div className="bg-white border border-stone-200 rounded-xl py-16 text-center">
               <div className="text-sm text-stone-500">This section ships in the next sprint.</div>
             </div>

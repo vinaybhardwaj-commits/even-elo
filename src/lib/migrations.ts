@@ -1246,5 +1246,73 @@ export const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    id: "030_document_audits",
+    description:
+      "Stage 4 — Document Audits / RMO authoring. Audits ingested into Governance; findings always record which RMO authored them; target physician remediates via portal. No RMO-as-fixer assignee model.",
+    sql: `
+      CREATE TABLE IF NOT EXISTS document_audits (
+        id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        external_ref      text UNIQUE,
+        hospital_id       uuid REFERENCES hospitals(id),
+        hospital_code     text NOT NULL,
+        physician_id      uuid NOT NULL REFERENCES physicians(id),
+        doc_type          text NOT NULL CHECK (doc_type IN ('progress','ot','discharge')),
+        note_date         date,
+        ingested_at       timestamptz NOT NULL DEFAULT now(),
+        last_synced_at    timestamptz,
+        cdmss_pdf_url     text,
+        triage_routed_at  timestamptz,
+        source            text NOT NULL DEFAULT 'cdmss',
+        created_at        timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_document_audits_physician ON document_audits(physician_id, ingested_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_document_audits_hospital ON document_audits(hospital_code, ingested_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_document_audits_triage ON document_audits(physician_id, triage_routed_at)
+        WHERE triage_routed_at IS NOT NULL;
+
+      CREATE TABLE IF NOT EXISTS document_audit_findings (
+        id                        uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        audit_id                  uuid NOT NULL REFERENCES document_audits(id) ON DELETE CASCADE,
+        finding_label             text NOT NULL CHECK (char_length(finding_label) > 0),
+        finding_body              text,
+        severity                  text NOT NULL CHECK (severity IN ('critical','high','medium','low')),
+        status                    text NOT NULL DEFAULT 'open'
+          CHECK (status IN ('open','in_progress','remediated','contested','escalated')),
+        -- RMO authors findings; always retain which RMO wrote them.
+        authored_by_profile_id    uuid REFERENCES profiles(id),
+        authored_by_name          text NOT NULL CHECK (char_length(authored_by_name) > 0),
+        authored_at               timestamptz NOT NULL DEFAULT now(),
+        -- Target physician remediates / responds (portal). Not an RMO-fixer assignee.
+        physician_id              uuid NOT NULL REFERENCES physicians(id),
+        recurrence_count          integer NOT NULL DEFAULT 1 CHECK (recurrence_count >= 1),
+        portal_visible            boolean NOT NULL DEFAULT false,
+        doctor_response_verb      text CHECK (
+          doctor_response_verb IS NULL
+          OR doctor_response_verb IN ('agree','disagree','needs_clarification')
+        ),
+        doctor_response_comment   text,
+        doctor_responded_at       timestamptz,
+        updated_at                timestamptz NOT NULL DEFAULT now(),
+        created_at                timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_daf_status ON document_audit_findings(status, authored_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_daf_physician ON document_audit_findings(physician_id, authored_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_daf_portal ON document_audit_findings(physician_id)
+        WHERE portal_visible = true;
+      CREATE INDEX IF NOT EXISTS idx_daf_severity_status ON document_audit_findings(severity, status, authored_at DESC);
+
+      -- Singleton ingest honesty row (Empty / Stale chrome). No invented volumes.
+      CREATE TABLE IF NOT EXISTS document_audit_ingest_meta (
+        id                integer PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+        last_success_at   timestamptz,
+        last_attempt_at   timestamptz,
+        note              text,
+        updated_at        timestamptz NOT NULL DEFAULT now()
+      );
+      INSERT INTO document_audit_ingest_meta (id) VALUES (1)
+      ON CONFLICT (id) DO NOTHING;
+    `,
+  },
 ];
 

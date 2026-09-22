@@ -54,7 +54,9 @@ export function SurgicalEloEmpty({ counts }: { counts: EloCounts | null }) {
 
         <div className="mb-5 rounded-[10px] border border-teal-200 bg-teal-50 px-4 py-3 text-[13.5px] leading-relaxed text-teal-900">
           <strong className="font-semibold">PRD honesty: </strong>
-          Do not invent VCs or caseload from document audits. <strong>Adherence</strong> is {adherence.label.toLowerCase()} until CDMSS ingest (Stage 4 → Stage 5 bridge).{" "}
+          Do not invent VCs or caseload from document audits. <strong>Adherence</strong> is{" "}
+          {adherence.state === "empty" ? "empty until audits or surgical feedback arrive" : `live (${adherence.label})`}{" "}
+          from Stage 4 document audits + surgical feedback.{" "}
           <strong>Outcomes</strong> below are Lab / EHRC cohort context only — not ELO scores.
         </div>
 
@@ -103,20 +105,45 @@ export function SurgicalEloEmpty({ counts }: { counts: EloCounts | null }) {
         <section className="mb-5 overflow-hidden rounded-xl border border-stone-200 bg-white shadow-[0_1px_2px_rgba(28,25,23,0.04)]">
           <div className="flex items-center justify-between border-b border-stone-200 px-4 py-3">
             <h2 className="text-[0.98rem] font-semibold">Adherence</h2>
-            <span className="rounded-full bg-stone-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-stone-600">
+            <span
+              className={
+                "rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide " +
+                (adherence.state === "live"
+                  ? "bg-emerald-100 text-emerald-800"
+                  : "bg-stone-100 text-stone-600")
+              }
+            >
               {adherence.label}
             </span>
           </div>
           <div className="p-4">
-            <div className="rounded-lg border border-dashed border-stone-200 bg-stone-50 px-4 py-7 text-center">
-              <div className="text-[0.98rem] font-semibold text-stone-900">{adherence.label}</div>
-              <p className="mx-auto mt-1.5 max-w-lg text-[13px] leading-relaxed text-stone-500">
-                Adherence will seed from document audits (Progress / OT / Discharge) once CDMSS ingest is live (Stage 4) and the Stage 5 bridge lands. Until then this leg stays empty — no placeholder scores.
-              </p>
-            </div>
-            <p className="mt-3 text-[12px] text-stone-500">
-              Open questions A6.3 / A6.4 may refine placement; “awaiting inputs” ships meanwhile.
-            </p>
+            {adherence.state === "live" && adherence.percent !== null ? (
+              <div>
+                <div className="text-[2rem] font-bold tracking-tight text-stone-900">{adherence.percent}%</div>
+                <p className="mt-1.5 max-w-lg text-[13px] leading-relaxed text-stone-500">{adherence.detail}</p>
+                <p className="mt-2 text-[12px] text-stone-500">{adherence.sourceSummary}</p>
+                <Link
+                  href="/document-audits"
+                  className="mt-3 inline-block text-[12.5px] font-semibold text-brand hover:underline"
+                >
+                  Document Audits →
+                </Link>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-dashed border-stone-200 bg-stone-50 px-4 py-7 text-center">
+                <div className="text-[0.98rem] font-semibold text-stone-900">{adherence.label}</div>
+                <p className="mx-auto mt-1.5 max-w-lg text-[13px] leading-relaxed text-stone-500">
+                  {adherence.detail} Progress / OT / Discharge audits and surgical feedback feed this leg when
+                  present — Stage 4 starts Adherence now (no Stage 5 deferral).
+                </p>
+                <Link
+                  href="/document-audits"
+                  className="mt-3 inline-block text-[12.5px] font-semibold text-brand hover:underline"
+                >
+                  Document Audits →
+                </Link>
+              </div>
+            )}
           </div>
         </section>
 

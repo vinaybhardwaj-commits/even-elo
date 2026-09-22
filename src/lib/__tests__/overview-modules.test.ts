@@ -14,6 +14,7 @@ import {
   shellBadgeModel,
   type Stage2DbCounts,
 } from "../overview-modules";
+import { emptyAdherenceInputs } from "../adherence-stage4";
 
 function db(partial: Partial<Stage2DbCounts> = {}): Stage2DbCounts {
   return {
@@ -28,24 +29,40 @@ function db(partial: Partial<Stage2DbCounts> = {}): Stage2DbCounts {
     elo: { vcs: 0, cases: 0, snapshots: 0, observationCases: 0 },
     opdLastDay: "2026-07-02",
     opdAgeDays: 82,
+    documentAudits: 0,
+    documentAuditOpenFindings: 0,
+    adherence: emptyAdherenceInputs(),
     ...partial,
   };
 }
 
 describe("overview honesty", () => {
-  it("never assigns a Document Audits or RMO volume", () => {
-    expect(documentAuditVolume()).toBeNull();
+  it("wires Document Audits and RMO to live empty routes with zero volumes", () => {
+    expect(documentAuditVolume(0)).toBe(0);
+    expect(documentAuditVolume(null)).toBeNull();
     const model = buildOverviewModel(db(), { open: 5, total: 5, highSev: 4, withRca: 2, overdue: 3 });
     const audits = model.tiles.find((t) => t.id === "document-audits");
     const rmo = model.tiles.find((t) => t.id === "rmo");
-    expect(audits?.volume).toBeNull();
-    expect(audits?.href).toBeNull();
-    expect(audits?.chip).toBe("proposed");
-    expect(audits?.body.toLowerCase()).not.toMatch(/\d+\s+audits/);
-    expect(rmo?.volume).toBeNull();
-    expect(rmo?.href).toBeNull();
-    expect(rmo?.chip).toBe("proposed");
-    expect(model.headline.map((h) => h.label).join(" ")).not.toMatch(/document audit/i);
+    expect(audits?.volume).toBe(0);
+    expect(audits?.href).toBe("/document-audits");
+    expect(audits?.chip).toBe("empty");
+    expect(audits?.body.toLowerCase()).toMatch(/none ingested|honest empty/);
+    expect(rmo?.volume).toBe(0);
+    expect(rmo?.href).toBe("/rmo-inbox");
+    expect(rmo?.chip).toBe("empty");
+  });
+
+  it("shows live Document Audits volumes when ingest exists", () => {
+    const model = buildOverviewModel(
+      db({ documentAudits: 12, documentAuditOpenFindings: 4 }),
+    );
+    const audits = model.tiles.find((t) => t.id === "document-audits");
+    const rmo = model.tiles.find((t) => t.id === "rmo");
+    expect(audits?.chip).toBe("live");
+    expect(audits?.volume).toBe(12);
+    expect(audits?.body).toContain("12 audits");
+    expect(rmo?.chip).toBe("live");
+    expect(rmo?.volume).toBe(4);
   });
 
   it("labels an old OPD snapshot Stale and a fresh one Live", () => {
@@ -125,28 +142,50 @@ describe("overview honesty", () => {
 });
 
 describe("shell badges", () => {
-  it("keeps proposed surfaces volumeless and reflects live OPD / ELO", () => {
+  it("reflects empty Document Audits / RMO and live OPD / ELO", () => {
     const badges = shellBadgeModel(db());
-    expect(badges.documentAudits).toEqual({ chip: "proposed", volume: null });
-    expect(badges.rmo.volume).toBeNull();
+    expect(badges.documentAudits).toEqual({ chip: "empty", volume: 0 });
+    expect(badges.rmo).toEqual({ chip: "empty", volume: 0 });
     expect(badges.opd).toEqual({ stale: true, lastDay: "2026-07-02" });
     expect(badges.elo).toEqual({ empty: true, vcs: 0, cases: 0, snapshots: 0 });
 
-    const fresh = shellBadgeModel(db({ opdAgeDays: 0, opdLastDay: "2026-09-22", elo: { vcs: 1, cases: 0, snapshots: 0, observationCases: 0 } }));
+    const fresh = shellBadgeModel(
+      db({
+        opdAgeDays: 0,
+        opdLastDay: "2026-09-22",
+        elo: { vcs: 1, cases: 0, snapshots: 0, observationCases: 0 },
+        documentAudits: 3,
+        documentAuditOpenFindings: 2,
+      }),
+    );
     expect(fresh.opd?.stale).toBe(false);
     expect(fresh.elo?.empty).toBe(false);
+    expect(fresh.documentAudits).toEqual({ chip: "live", volume: 3 });
+    expect(fresh.rmo).toEqual({ chip: "live", volume: 2 });
     expect(shellBadgeModel(null).elo).toBeNull();
     expect(shellBadgeModel(null).opd).toBeNull();
   });
 });
 
 describe("surgical elo honesty", () => {
-  it("keeps adherence as awaiting inputs with no percent", () => {
+  it("keeps adherence empty with no percent when no inputs", () => {
     const adherence = adherencePresentation();
-    expect(adherence.state).toBe("awaiting_inputs");
+    expect(adherence.state).toBe("empty");
     expect(adherence.label).toBe(ADHERENCE_LABEL);
     expect(adherence.percent).toBeNull();
     expect(adherence.label).not.toContain("%");
+  });
+
+  it("surfaces live adherence when audits exist", () => {
+    const adherence = adherencePresentation({
+      auditFindingCount: 5,
+      remediatedCount: 3,
+      openPressureCount: 1,
+      surgicalFeedbackCount: 0,
+      snapshotPercent: null,
+    });
+    expect(adherence.state).toBe("live");
+    expect(adherence.percent).not.toBeNull();
   });
 
   it("surfaces the Lab cohort as context and not an ELO score", () => {
@@ -162,7 +201,6 @@ describe("surgical elo honesty", () => {
     expect(src).not.toContain("ScoreBar");
     expect(src).not.toContain("TierDistributionBar");
     expect(src).toContain("adherencePresentation");
-    expect(src).toContain("awaiting inputs");
     expect(src).toContain("not a Surgical ELO score");
     expect(src).not.toContain("patient_name");
   });

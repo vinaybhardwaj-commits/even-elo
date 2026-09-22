@@ -143,6 +143,8 @@ export type PortalAuditSignal = Omit<
 > & {
   my_reaction: PortalReaction | null;
   note_class: NoteClass;
+  /** CDMSS audit-findings PDF when available (Stage 4 lock). */
+  pdf_url: string | null;
 };
 
 export interface PortalFindingsPayload {
@@ -244,6 +246,27 @@ export function toPortalSignal(
   s: DoctorAuditSignal,
   myReaction: PortalReaction | null = null,
 ): PortalAuditSignal {
+  const rep = s.representative ?? null;
+  const pdfFromRep =
+    rep && typeof (rep as unknown as { pdf_url?: unknown }).pdf_url === "string"
+      ? ((rep as unknown as { pdf_url: string }).pdf_url as string)
+      : null;
+  const pdfFromSignal =
+    typeof (s as unknown as { pdf_url?: unknown }).pdf_url === "string"
+      ? ((s as unknown as { pdf_url: string }).pdf_url as string)
+      : null;
+  const base = process.env.GOV_API_BASE || "https://even-cdmss.vercel.app";
+  const pdfBuilt =
+    rep?.audit_id
+      ? `${base}/api/governance/audits/${encodeURIComponent(rep.audit_id)}/pdf`
+      : s.reference
+        ? `${base}/api/governance/audits/${encodeURIComponent(s.reference)}/pdf`
+        : null;
+  const pdf_url =
+    (pdfFromSignal && pdfFromSignal.startsWith("http") ? pdfFromSignal : null) ||
+    (pdfFromRep && pdfFromRep.startsWith("http") ? pdfFromRep : null) ||
+    pdfBuilt;
+
   return {
     reference: s.reference,
     signal_id: s.signal_id,
@@ -254,7 +277,7 @@ export function toPortalSignal(
     status: s.status,
     instances: s.instances,
     window: s.window,
-    representative: s.representative ?? null,
+    representative: rep,
     routed_at: s.routed_at ?? null,
     response: s.response ?? null,
     ruling: s.ruling ?? null,
@@ -267,6 +290,7 @@ export function toPortalSignal(
       : null,
     note_class: normalizeNoteClass(s.note_class),
     my_reaction: myReaction,
+    pdf_url,
   };
 }
 

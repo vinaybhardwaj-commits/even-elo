@@ -397,8 +397,31 @@ function SignalCard({
               )}
             </div>
           )}
+          {s.pdf_url ? (
+            <a
+              href={s.pdf_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-3 inline-flex rounded-lg border border-brand bg-brand/10 px-3 py-1.5 text-[12.5px] font-semibold text-brand hover:bg-brand hover:text-white"
+            >
+              Download audit findings PDF
+            </a>
+          ) : null}
         </div>
       )}
+
+      {!rep && s.pdf_url ? (
+        <div className="mt-3 pt-3 border-t border-stone-100">
+          <a
+            href={s.pdf_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex rounded-lg border border-brand bg-brand/10 px-3 py-1.5 text-[12.5px] font-semibold text-brand hover:bg-brand hover:text-white"
+          >
+            Download audit findings PDF
+          </a>
+        </div>
+      ) : null}
 
       {s.triage && (s.triage.rationale || s.triage.policy_version) && (
         <div className={rowCls}>
