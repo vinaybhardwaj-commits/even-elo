@@ -1,9 +1,19 @@
 /**
  * Sprint 2.1 / 2.2 — Overview tiles and Surgical ELO honesty.
+ * Stage 4 — Document Audits / RMO go live (honest empty when no ingest);
+ * Adherence starts from available audits + surgical feedback.
  *
  * Pure shaping only. Callers pass queried counts. This module never invents
  * Document Audits volumes or Surgical ELO scores.
  */
+
+import {
+  ADHERENCE_EMPTY_LABEL,
+  computeAdherencePresentation,
+  emptyAdherenceInputs,
+  type AdherenceInputs,
+  type AdherencePresentation,
+} from "@/lib/adherence-stage4";
 
 /** Last OPD snapshot older than this (calendar days) is labeled Stale. */
 export const OPD_STALE_AFTER_DAYS = 14;
@@ -20,8 +30,9 @@ export const LAB_EHRC_COHORT = {
   lockedNote: "locked ~1 Sep 2026",
 };
 
-export const ADHERENCE_STATE = "awaiting_inputs" as const;
-export const ADHERENCE_LABEL = "Awaiting inputs";
+/** @deprecated Stage 4 — prefer adherencePresentation(inputs). Kept for old string matches. */
+export const ADHERENCE_STATE = "empty" as const;
+export const ADHERENCE_LABEL = ADHERENCE_EMPTY_LABEL;
 
 export interface EloCounts {
   vcs: number;
@@ -50,6 +61,10 @@ export interface Stage2DbCounts {
   elo: EloCounts;
   opdLastDay: string | null;
   opdAgeDays: number | null;
+  /** Stage 4 — null when tables unreadable; 0 when empty (honest). */
+  documentAudits: number | null;
+  documentAuditOpenFindings: number | null;
+  adherence: AdherenceInputs | null;
 }
 
 export type TileChip = "live" | "proposed" | "stale" | "empty" | "partial" | "not_loaded" | "live_route";
@@ -63,7 +78,7 @@ export interface ModuleTile {
   body: string;
   meta: string;
   href: string | null;
-  /** Set only for live queried modules. Document Audits and RMO stay null. */
+  /** Set for live queried modules. Null when unread / not applicable. */
   volume: number | null;
 }
 
@@ -96,9 +111,10 @@ const EMPTY_IRIS: IrisCounts = {
   overdue: null,
 };
 
-/** Document Audits has no ingest. The volume is structurally absent. */
-export function documentAuditVolume(): null {
-  return null;
+/** Volume for Overview tile — null only when counts could not be read. */
+export function documentAuditVolume(count: number | null | undefined): number | null {
+  if (count === null || count === undefined) return null;
+  return count;
 }
 
 export function eloIsProductionEmpty(counts: Pick<EloCounts, "vcs" | "cases" | "snapshots">): boolean {
@@ -110,8 +126,8 @@ export function opdIsStale(ageDays: number | null, staleAfterDays = OPD_STALE_AF
   return ageDays > staleAfterDays;
 }
 
-export function adherencePresentation(): { state: typeof ADHERENCE_STATE; label: string; percent: null } {
-  return { state: ADHERENCE_STATE, label: ADHERENCE_LABEL, percent: null };
+export function adherencePresentation(inputs?: AdherenceInputs | null): AdherencePresentation {
+  return computeAdherencePresentation(inputs ?? emptyAdherenceInputs());
 }
 
 /** Outcomes copy for the empty ELO surface. Never an ELO score. */
@@ -157,8 +173,12 @@ function irisBody(iris: IrisCounts): string {
   return `${bits.join(" · ")}. Separate from physician feedback.`;
 }
 
-function eloBody(elo: EloCounts): string {
-  return `${elo.vcs} VCs · ${elo.cases} surgical cases · ${elo.snapshots} score snapshots. Adherence awaiting inputs.`;
+function eloBody(elo: EloCounts, adherence: AdherencePresentation): string {
+  const adh =
+    adherence.state === "empty"
+      ? "Adherence empty (no audits / surgical feedback yet)"
+      : `Adherence ${adherence.label}`;
+  return `${elo.vcs} VCs · ${elo.cases} surgical cases · ${elo.snapshots} score snapshots. ${adh}.`;
 }
 
 export function buildOverviewModel(
@@ -166,7 +186,9 @@ export function buildOverviewModel(
   iris: IrisCounts = EMPTY_IRIS,
   access: OverviewAccess = { canOpenElo: false, canOpenSafety: false },
 ): OverviewViewModel {
-  const auditVolume = documentAuditVolume();
+  const auditVolume = documentAuditVolume(db?.documentAudits ?? null);
+  const openFindings = db?.documentAuditOpenFindings ?? null;
+  const adherence = adherencePresentation(db?.adherence ?? null);
   const opdStale = db ? opdIsStale(db.opdAgeDays) : true;
   const eloEmpty = db ? eloIsProductionEmpty(db.elo) : false;
 
@@ -257,11 +279,16 @@ export function buildOverviewModel(
       id: "document-audits",
       group: "clinical",
       title: "Document Audits",
-      chip: "proposed",
-      chipLabel: "Proposed",
-      body: "Progress / OT / Discharge shell. CDMSS ingest is not live — no audit volumes are shown.",
-      meta: "Awaiting Stage 4 ingest",
-      href: null,
+      chip: !db || auditVolume === null ? "empty" : auditVolume === 0 ? "empty" : "live",
+      chipLabel: !db || auditVolume === null ? "Empty" : auditVolume === 0 ? "Empty" : "Live",
+      body:
+        auditVolume === null
+          ? "Document audit tables could not be read. Volumes are omitted rather than invented."
+          : auditVolume === 0
+            ? "Progress / OT / Discharge audits. None ingested yet — honest empty."
+            : `${auditVolume} audits · ${openFindings ?? 0} open findings. RMO-authored; physicians remediate via portal.`,
+      meta: "Open Document Audits →",
+      href: "/document-audits",
       volume: auditVolume,
     },
     {
@@ -279,12 +306,17 @@ export function buildOverviewModel(
       id: "rmo",
       group: "clinical",
       title: "RMO Inbox",
-      chip: "proposed",
-      chipLabel: "Proposed",
-      body: "RMO workqueue for document-audit follow-ups. Empty until Stage 4 assignments exist.",
-      meta: "Proposed — no assignments yet",
-      href: null,
-      volume: null,
+      chip: !db || openFindings === null ? "empty" : openFindings === 0 ? "empty" : "live",
+      chipLabel: !db || openFindings === null ? "Empty" : openFindings === 0 ? "Empty" : "Live",
+      body:
+        openFindings === null
+          ? "RMO authoring queue could not be read."
+          : openFindings === 0
+            ? "RMO authoring / triage pipe. Empty until findings are authored. Doctors remediate via portal — RMOs do not fix."
+            : `${openFindings} open findings in the RMO pipe. Authored by RMO; remediator = target physician.`,
+      meta: "Open RMO Inbox →",
+      href: "/rmo-inbox",
+      volume: openFindings,
     },
     {
       id: "surgical-elo",
@@ -292,7 +324,7 @@ export function buildOverviewModel(
       title: "Surgical ELO",
       chip: !db ? "empty" : eloEmpty ? "empty" : "live",
       chipLabel: !db ? "Unavailable" : eloEmpty ? "Empty" : "Live",
-      body: db ? eloBody(db.elo) : "Counts unavailable — VC, case, and snapshot volumes are not shown.",
+      body: db ? eloBody(db.elo, adherence) : "Counts unavailable — VC, case, and snapshot volumes are not shown.",
       meta: access.canOpenElo ? "View Surgical ELO →" : "Super admin",
       href: access.canOpenElo ? "/surgical-governance" : null,
       volume: db ? db.elo.vcs : null,
@@ -344,7 +376,7 @@ export function buildOverviewModel(
   ];
 
   const banner = db
-    ? `Document Audits and RMO Inbox stay Proposed (no invented volumes). Surgical ELO is ${db.elo.vcs} / ${db.elo.cases} / ${db.elo.snapshots}. OPD last snapshot day ${db.opdLastDay ?? "none"} — ${opdStale ? "labeled Stale" : "current"}. Patient Feedback uses live ${db.feedbackTotal} / ${db.feedbackOpenNegative} open negative / ${db.feedbackPositive} positive / ${db.physiciansWithFeedback} physicians with feedback.`
+    ? `Document Audits ${db.documentAudits ?? "—"} · RMO open ${db.documentAuditOpenFindings ?? "—"}. Surgical ELO is ${db.elo.vcs} / ${db.elo.cases} / ${db.elo.snapshots}; Adherence ${adherence.label}. OPD last snapshot day ${db.opdLastDay ?? "none"} — ${opdStale ? "labeled Stale" : "current"}. Patient Feedback uses live ${db.feedbackTotal} / ${db.feedbackOpenNegative} open negative / ${db.feedbackPositive} positive / ${db.physiciansWithFeedback} physicians with feedback.`
     : "Live database counts could not be read. Document Audits, RMO, and Surgical ELO volumes are not shown.";
 
   return {
@@ -360,12 +392,20 @@ export function buildOverviewModel(
 export function shellBadgeModel(db: Stage2DbCounts | null): {
   opd: { stale: boolean; lastDay: string | null } | null;
   elo: { empty: boolean; vcs: number; cases: number; snapshots: number } | null;
-  documentAudits: { chip: "proposed"; volume: null };
-  rmo: { chip: "proposed"; volume: null };
+  documentAudits: { chip: "empty" | "live"; volume: number | null };
+  rmo: { chip: "empty" | "live"; volume: number | null };
 } {
+  const audits = documentAuditVolume(db?.documentAudits ?? null);
+  const open = db?.documentAuditOpenFindings ?? null;
   return {
-    documentAudits: { chip: "proposed", volume: documentAuditVolume() },
-    rmo: { chip: "proposed", volume: null },
+    documentAudits: {
+      chip: audits === null || audits === 0 ? "empty" : "live",
+      volume: audits,
+    },
+    rmo: {
+      chip: open === null || open === 0 ? "empty" : "live",
+      volume: open,
+    },
     opd: db ? { stale: opdIsStale(db.opdAgeDays), lastDay: db.opdLastDay } : null,
     elo: db
       ? {

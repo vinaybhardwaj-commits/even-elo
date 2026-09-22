@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { PortalNav, MobileTabBar, type Dest } from "@/components/portal/PortalNav";
 import { HomeExtras, type AnnData } from "@/components/portal/HomeExtras";
 import { FindingsForDoctor } from "@/components/portal/FindingsForDoctor";
+import { LocalDocumentAuditsForDoctor } from "@/components/portal/LocalDocumentAuditsForDoctor";
 import { IncidentReporting } from "@/components/portal/IncidentReporting";
 
 interface Phys { id: string; full_name: string; preferred_name: string | null; primary_specialty: string | null; registration_number: string | null; registration_council: string | null; registration_expiry: string | null; email: string | null; phone: string | null; date_joined_network: string | null; current_status: string }
@@ -269,10 +270,13 @@ export default function PortalHome() {
           )}
 
           {tab === "findings" && (
-            <FindingsForDoctor
-              reactions={features.reactions}
-              respond={features.findingsRespond}
-            />
+            <div className="space-y-4">
+              <FindingsForDoctor
+                reactions={features.reactions}
+                respond={features.findingsRespond}
+              />
+              <LocalDocumentAuditsForDoctor />
+            </div>
           )}
 
           {tab === "performance" && (

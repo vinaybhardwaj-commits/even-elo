@@ -21,7 +21,7 @@ import { HospitalFilter } from "../HospitalFilter";
  * and greyed until their phases ship. OPD Governance flips live in R3.
  */
 
-type HonestyBadge = "soon" | "proposed" | "stale" | "empty";
+type HonestyBadge = "soon" | "proposed" | "stale" | "empty" | "live";
 
 interface NavLeaf {
   label: string;
@@ -34,6 +34,8 @@ interface ShellHonesty {
   ok?: boolean;
   opd?: { stale: boolean; lastDay: string | null } | null;
   elo?: { empty: boolean; vcs: number; cases: number; snapshots: number } | null;
+  documentAudits?: { chip: "empty" | "live" | "proposed"; volume: number | null } | null;
+  rmo?: { chip: "empty" | "live" | "proposed"; volume: number | null } | null;
 }
 
 interface NavGroup {
@@ -42,15 +44,26 @@ interface NavGroup {
 }
 
 function HonestyPill({ kind }: { kind: HonestyBadge }) {
-  const label = kind === "soon" ? "soon" : kind === "proposed" ? "Proposed" : kind === "stale" ? "Stale" : "Empty";
+  const label =
+    kind === "soon"
+      ? "soon"
+      : kind === "proposed"
+        ? "Proposed"
+        : kind === "stale"
+          ? "Stale"
+          : kind === "live"
+            ? "Live"
+            : "Empty";
   const tone =
     kind === "proposed"
       ? "bg-violet-100 text-violet-700"
       : kind === "stale"
         ? "bg-orange-100 text-orange-800"
-        : kind === "empty"
-          ? "bg-stone-200 text-stone-600"
-          : "bg-stone-100 text-stone-400";
+        : kind === "live"
+          ? "bg-emerald-100 text-emerald-800"
+          : kind === "empty"
+            ? "bg-stone-200 text-stone-600"
+            : "bg-stone-100 text-stone-400";
   return (
     <span className={"ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide " + tone}>
       {label}
@@ -106,13 +119,13 @@ export function ShellV2() {
     {
       label: "Governance",
       items: [
-        { label: "Document Audits", badge: "proposed" },
+        { label: "Document Audits", href: "/document-audits", badge: honesty?.documentAudits?.chip === "live" ? "live" : "empty" },
         {
           label: "OPD Governance",
           href: "/opd-governance",
           badge: honesty?.opd?.stale ? "stale" : undefined,
         },
-        { label: "RMO Inbox", badge: "proposed" },
+        { label: "RMO Inbox", href: "/rmo-inbox", badge: honesty?.rmo?.chip === "live" ? "live" : "empty" },
         { label: "IPD Governance", badge: "soon" },
         {
           label: "Surgical ELO",
