@@ -14,9 +14,9 @@ export const runtime = "nodejs";
 /**
  * GET /api/portal/findings — WM2: the governance findings routed to the signed-in physician.
  *
- * READ-ONLY. The two write paths are separate routes (./react and ./respond) behind the
- * PORTAL_REACTIONS flag; this one only ever reads. What it gained in v1 is `my_reaction` on each
- * signal — the doctor's own private reaction, read back so the card can show what they recorded.
+ * READ-ONLY. The two write paths are separate routes (./react and ./respond) with independent
+ * flags; this one only ever reads. What it gained in v1 is `my_reaction` on each signal — the
+ * doctor's own private reaction, read back so the card can show what they recorded.
  *
  * ⚠️ THREE FAILURES, THREE DIFFERENT ANSWERS — and none of them is an empty list ────────────────
  *

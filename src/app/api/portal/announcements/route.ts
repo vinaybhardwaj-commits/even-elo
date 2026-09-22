@@ -28,9 +28,10 @@ export async function GET() {
     features: {
       incidents: process.env.PORTAL_INCIDENTS === "1",
       findings: process.env.PORTAL_FINDINGS === "1",
-      // WM2 v1: reactions and responses on the Findings card. A SECOND flag rather than a wider
-      // `findings` one, so the read-only panel can stay up while the write paths are dark.
+      // WM2 v1: private research reactions remain independently gated.
       reactions: process.env.PORTAL_REACTIONS === "1",
+      // P2: workflow writes are independent of private research reactions and default dark.
+      findingsRespond: process.env.PORTAL_FINDINGS_RESPOND === "1",
     },
   });
 }

@@ -115,11 +115,18 @@ describe("toPortalPayload: the strip still holds, and now carries my_reaction", 
   });
 
   it("toPortalSignal strips the same three fields for the respond route's returned signal", () => {
-    const s = toPortalSignal(signal(), { reaction: "dismiss", at: "2026-09-07T10:00:00Z" });
+    const s = toPortalSignal(
+      signal({ triage: { rationale: "Route for physician review", policy_version: "triage-v2" } }),
+      { reaction: "dismiss", at: "2026-09-07T10:00:00Z" },
+    );
     expect(s).not.toHaveProperty("overdue");
     expect(s).not.toHaveProperty("sla_due_at");
     expect(s).not.toHaveProperty("doctor_uid");
     expect(s.my_reaction).toEqual({ reaction: "dismiss", at: "2026-09-07T10:00:00Z" });
+    expect(s.triage).toEqual({
+      rationale: "Route for physician review",
+      policy_version: "triage-v2",
+    });
   });
 });
 
@@ -234,48 +241,71 @@ describe("parseReactBody: the body is exactly two keys", () => {
   });
 });
 
-describe("parseRespondBody: four fields, and an acknowledgment never carries a verdict", () => {
-  it("accepts an explanation with a verdict and a comment", () => {
-    expect(parseRespondBody({ signal_id: "sig-1", type: "explanation", verdict: "disagree", comment: "  because  " })).toEqual({
+describe("parseRespondBody: the P2 doctor verbs", () => {
+  it("accepts disagree with a comment", () => {
+    expect(parseRespondBody({ signal_id: "sig-1", verb: "disagree", comment: "  because  " })).toEqual({
       ok: true,
       signalId: "sig-1",
-      type: "explanation",
-      verdict: "disagree",
+      verb: "disagree",
       comment: "because",
     });
   });
 
-  it("forces verdict null on an acknowledgment even when one is sent", () => {
-    expect(parseRespondBody({ signal_id: "sig-1", type: "acknowledgment", verdict: "agree" })).toEqual({
+  it("accepts agree without a comment", () => {
+    expect(parseRespondBody({ signal_id: "sig-1", verb: "agree" })).toEqual({
       ok: true,
       signalId: "sig-1",
-      type: "acknowledgment",
-      verdict: null,
+      verb: "agree",
       comment: null,
     });
   });
 
-  it("rejects a type that is not one of the two", () => {
-    expect(parseRespondBody({ signal_id: "sig-1", type: "ruling" })).toEqual({
+  it("rejects an unknown or missing verb", () => {
+    expect(parseRespondBody({ signal_id: "sig-1", verb: "ruling" })).toEqual({
       ok: false,
-      message: "type must be acknowledgment or explanation",
+      message: "verb must be agree, disagree or needs_clarification",
     });
     expect(parseRespondBody({ signal_id: "sig-1" })).toEqual({
       ok: false,
-      message: "type must be acknowledgment or explanation",
+      message: "verb must be agree, disagree or needs_clarification",
     });
   });
 
-  it("ignores any other key rather than forwarding it", () => {
-    const out = parseRespondBody({ signal_id: "sig-1", type: "acknowledgment", doctor_uid: "other", physician_id: "other" });
-    expect(out).toEqual({ ok: true, signalId: "sig-1", type: "acknowledgment", verdict: null, comment: null });
-    expect(JSON.stringify(out)).not.toContain("other");
+  it("rejects identity and any other extra key", () => {
+    expect(parseRespondBody({ signal_id: "sig-1", verb: "agree", doctor_uid: "other" })).toEqual({
+      ok: false,
+      message: "unexpected field in body",
+    });
+    expect(parseRespondBody({ signal_id: "sig-1", verb: "agree", physician_id: "other" }).ok).toBe(false);
   });
 
   it("caps the comment at the contract length", () => {
     const long = "x".repeat(COMMENT_MAX + 500);
-    const out = parseRespondBody({ signal_id: "sig-1", type: "explanation", verdict: "agree", comment: long });
+    const out = parseRespondBody({ signal_id: "sig-1", verb: "agree", comment: long });
     expect(out.ok && out.comment?.length).toBe(COMMENT_MAX);
+  });
+
+  it("requires context for disagree and needs_clarification", () => {
+    expect(parseRespondBody({ signal_id: "sig-1", verb: "disagree" })).toEqual({
+      ok: false,
+      message: "disagree requires a comment",
+    });
+    expect(parseRespondBody({ signal_id: "sig-1", verb: "needs_clarification", comment: " " })).toEqual({
+      ok: false,
+      message: "needs_clarification requires a comment",
+    });
+  });
+
+  it("accepts all three doctor verbs", () => {
+    expect(parseRespondBody({ signal_id: "sig-1", verb: "agree" }).ok).toBe(true);
+    expect(parseRespondBody({ signal_id: "sig-1", verb: "disagree", comment: "No" }).ok).toBe(true);
+    expect(
+      parseRespondBody({
+        signal_id: "sig-1",
+        verb: "needs_clarification",
+        comment: "Which policy?",
+      }).ok,
+    ).toBe(true);
   });
 
   it("normalizeComment turns whitespace-only into null", () => {
@@ -343,36 +373,28 @@ describe("the findings GET survives a failed reactions call", () => {
   });
 });
 
-describe("with the flag off the card shows none of this kickoff's controls", () => {
+describe("with the respond flag off the card shows no workflow controls", () => {
   const LABELS = [
-    "I already knew this",
-    "This surprised me",
-    "Dismiss",
-    "Acknowledge",
     "Agree",
     "Disagree",
-    "Your reaction · private research record · not sent to governance",
+    "Needs clarification",
     "Response · goes to your care manager",
-    "Disagree sends this finding back to your care manager.",
+    "Disagree or Needs clarification sends this finding back to your care manager.",
   ];
 
-  it("every new label lives inside the file's two flagged rows", () => {
+  it("every response label lives in the separately gated response row", () => {
     const src = SRC(CARD);
-    // Both rows render only from the `reactions ?` branch of SignalCard. Everything the kickoff
-    // adds is inside ReactionRow or ResponseRow, which nothing else mounts.
-    const rowA = src.slice(src.indexOf("function ReactionRow"), src.indexOf("function ResponseRow"));
     const rowB = src.slice(src.indexOf("function ResponseRow"), src.indexOf("function SignalCard"));
     const consts = src.slice(0, src.indexOf("function Shell"));
     for (const label of LABELS) {
-      expect(rowA + rowB + consts).toContain(label);
+      expect(rowB + consts).toContain(label);
     }
-    expect(src).toContain("{reactions ? (");
-    expect(src).toContain("<ReactionRow s={s} onRefetch={onRefetch} />");
+    expect(src).toContain("{respond ? (");
   });
 
-  it("the v0 sentence is what renders on the flag-off branch, unchanged", () => {
+  it("the read-only sentence renders on the respond flag-off branch", () => {
     const src = SRC(CARD);
-    const off = src.slice(src.indexOf("s.response_required !== \"none\" &&"));
+    const off = src.slice(src.lastIndexOf("s.response_required !== \"none\" &&"));
     expect(off).toContain(
       "A response is requested — until in-portal responses ship, respond via your care manager.",
     );
@@ -381,11 +403,20 @@ describe("with the flag off the card shows none of this kickoff's controls", () 
     }
   });
 
-  it("the flag reaches the card as a prop that defaults to false", () => {
-    expect(SRC(CARD)).toContain("{ reactions = false }: { reactions?: boolean }");
-    expect(SRC("src/app/portal/page.tsx")).toContain("<FindingsForDoctor reactions={features.reactions} />");
+  it("the independent flag reaches the card and defaults false", () => {
+    expect(SRC(CARD)).toContain("respond = false");
+    expect(SRC("src/app/portal/page.tsx")).toContain("respond={features.findingsRespond}");
     expect(SRC("src/app/api/portal/announcements/route.ts")).toContain(
-      'reactions: process.env.PORTAL_REACTIONS === "1"',
+      'findingsRespond: process.env.PORTAL_FINDINGS_RESPOND === "1"',
     );
+    expect(SRC(RESPOND_ROUTE)).toContain('process.env.PORTAL_FINDINGS_RESPOND !== "1"');
+  });
+
+  it("the BFF generates and forwards one idempotency key per submit", () => {
+    const actions = SRC("src/lib/findings-actions.ts");
+    const route = SRC(RESPOND_ROUTE);
+    expect(route).toContain("const clientRequestId = randomUUID()");
+    expect(actions).toContain("client_request_id: input.clientRequestId");
+    expect(actions).toContain('"Idempotency-Key": input.clientRequestId');
   });
 });

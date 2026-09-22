@@ -3,10 +3,9 @@
  *
  * ⚠️ THE READ PATH IS STILL READ-ONLY. This module fetches and strips; it writes nothing. WM2 v1
  * adds two write paths, and they live elsewhere on purpose: src/lib/findings-actions.ts holds the
- * two CAT calls (a private reaction, and the workflow response that goes to the care manager), and
- * both are behind the PORTAL_REACTIONS flag. With that flag off the portal behaves exactly as v0
- * did — a destination with no controls. The one thing this module gained is `my_reaction`, the
- * doctor's OWN reaction read back so the card can render what they already recorded.
+ * two CDMSS calls. Private reactions use PORTAL_REACTIONS; workflow responses use the independent
+ * PORTAL_FINDINGS_RESPOND flag. The one thing this module gained for reactions is `my_reaction`,
+ * the doctor's OWN reaction read back so the card can render what they already recorded.
  *
  * ⚠️ WHAT IS STRIPPED, AND WHY IT IS STRIPPED HERE RATHER THAN AT RENDER ─────────────────────────
  *
@@ -60,6 +59,11 @@ export interface AuditRepresentative {
   citations: AuditCitation[];
 }
 
+export interface DoctorSafeTriage {
+  rationale: string | null;
+  policy_version: string | null;
+}
+
 export type AuditStatus = "routed" | "responded" | "escalated" | "ruled" | "closed";
 
 /** One signal exactly as upstream sends it. */
@@ -80,6 +84,7 @@ export interface DoctorAuditSignal {
   sla_due_at: string | null;      // STRIPPED before it reaches the portal
   response: unknown | null;
   ruling: unknown | null;
+  triage?: DoctorSafeTriage | null;
 }
 
 /** The upstream envelope. `metrics` is typed so the strip is visible, never so it can be rendered. */
@@ -218,6 +223,13 @@ export function toPortalSignal(
     routed_at: s.routed_at ?? null,
     response: s.response ?? null,
     ruling: s.ruling ?? null,
+    triage: s.triage
+      ? {
+          rationale: typeof s.triage.rationale === "string" ? s.triage.rationale : null,
+          policy_version:
+            typeof s.triage.policy_version === "string" ? s.triage.policy_version : null,
+        }
+      : null,
     my_reaction: myReaction,
   };
 }

@@ -41,11 +41,24 @@ export default function PortalHome() {
   const [privs, setPrivs] = useState<Priv[]>([]);
   const [tab, setTab] = useState<"overview" | "performance" | "findings" | "qualifications" | "privileges" | "report" | "aboutme" | "resign">("overview");
   const [ann, setAnn] = useState<AnnData | null>(null);
-  const [features, setFeatures] = useState<{ incidents: boolean; findings: boolean; reactions: boolean }>({ incidents: false, findings: false, reactions: false });
+  const [features, setFeatures] = useState<{
+    incidents: boolean;
+    findings: boolean;
+    reactions: boolean;
+    findingsRespond: boolean;
+  }>({ incidents: false, findings: false, reactions: false, findingsRespond: false });
   const [reportMode, setReportMode] = useState<"chooser" | "incident" | "feedback">("chooser");
   useEffect(() => {
     fetch("/api/portal/announcements").then((r) => r.json()).then((j) => {
-      if (j.ok) { setAnn({ whats_new: j.whats_new ?? [], coming_soon: j.coming_soon ?? [] }); setFeatures(j.features ?? { incidents: false, findings: false, reactions: false }); }
+      if (j.ok) {
+        setAnn({ whats_new: j.whats_new ?? [], coming_soon: j.coming_soon ?? [] });
+        setFeatures(j.features ?? {
+          incidents: false,
+          findings: false,
+          reactions: false,
+          findingsRespond: false,
+        });
+      }
     }).catch(() => undefined);
   }, []);
   // Five-destination nav (R5): map destinations onto the existing tab keys.
@@ -255,7 +268,12 @@ export default function PortalHome() {
             </div>
           )}
 
-          {tab === "findings" && <FindingsForDoctor reactions={features.reactions} />}
+          {tab === "findings" && (
+            <FindingsForDoctor
+              reactions={features.reactions}
+              respond={features.findingsRespond}
+            />
+          )}
 
           {tab === "performance" && (
             perfLoading ? <div className="text-sm text-stone-500">Loading…</div> :
