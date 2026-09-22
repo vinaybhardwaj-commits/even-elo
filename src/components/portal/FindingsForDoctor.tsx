@@ -6,10 +6,8 @@ import { ADVISORY_FALLBACK, type PortalAuditSignal } from "@/lib/doctor-audits";
 /**
  * Portal "Findings" panel (WM2) — the governance findings routed to this physician.
  *
- * ⚠️ TWO PANELS IN ONE FILE, AND THE FLAG IS THE ONLY THING BETWEEN THEM. With `reactions` false
- * this renders exactly what v0 rendered: no buttons, no forms, and the v0 sentence pointing a
- * doctor at their care manager. With it true the card gains two rows, and the v0 sentence goes —
- * because "until in-portal responses ship" stops being true the moment they have.
+ * Private reactions and workflow responses have separate flags. PORTAL_FINDINGS_RESPOND can stay
+ * dark while the read-only Findings destination and private research reactions remain available.
  *
  * ⚠️ A PRIVATE REACTION AND A WORKFLOW RESPONSE ARE NOT THE SAME GESTURE, and the card must never
  * let them read as one. Row A is private, notifies nobody, and says so in its own header. Row B
@@ -84,15 +82,23 @@ function fmtDay(d: string | null | undefined) {
 
 /** The recorded response, read defensively. `response` is typed `unknown` upstream and this is the
  *  only place the portal looks inside it, so a shape change costs one missing line, not a crash. */
-function readResponse(r: unknown): { type: string; verdict: string; comment: string } | null {
+function readResponse(r: unknown): { verb: string; type: string; verdict: string; comment: string } | null {
   if (!r || typeof r !== "object") return null;
   const o = r as Record<string, unknown>;
+  const verb = typeof o.verb === "string" ? o.verb : "";
   const type = typeof o.type === "string" ? o.type : "";
   const verdict = typeof o.verdict === "string" ? o.verdict : "";
   const comment = typeof o.comment === "string" ? o.comment : "";
-  if (!type && !verdict && !comment) return null;
-  return { type, verdict, comment };
+  if (!verb && !type && !verdict && !comment) return null;
+  return { verb, type, verdict, comment };
 }
+
+const responseLabel = (verb: string) =>
+  verb === "needs_clarification"
+    ? "Needs clarification"
+    : verb
+      ? `${verb[0].toUpperCase()}${verb.slice(1)}`
+      : "";
 
 function Shell({ children, count }: { children: React.ReactNode; count?: number | "…" }) {
   return (
@@ -190,9 +196,8 @@ function ReactionRow({ s, onRefetch }: { s: PortalAuditSignal; onRefetch: () => 
 /**
  * Row B — the workflow response.
  *
- * Only on a `routed` thread that asked for one. An explanation cannot be sent empty (the buttons
- * stay dead until there is text) because "disagree" with no words is a rejection the care manager
- * cannot act on. The consequence of Disagree is stated under the buttons, before it is pressed.
+ * Only on a `routed` thread that asked for one. Disagree and Needs clarification require context;
+ * Agree may be sent without a comment. One in-flight submit locks every control.
  */
 function ResponseRow({
   s,
@@ -203,12 +208,12 @@ function ResponseRow({
   onRefetch: () => void;
   onReplace: (next: PortalAuditSignal) => void;
 }) {
-  const isExplanation = s.response_required === "explanation";
   const [comment, setComment] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  async function send(verdict: string | null) {
+  async function send(verb: "agree" | "disagree" | "needs_clarification") {
+    if (busy) return;
     setErr(null);
     setBusy(true);
     try {
@@ -217,8 +222,7 @@ function ResponseRow({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           signal_id: s.signal_id,
-          type: s.response_required,
-          verdict,
+          verb,
           comment,
         }),
       });
@@ -254,41 +258,40 @@ function ResponseRow({
       <textarea
         value={comment}
         onChange={(e) => setComment(e.target.value)}
+        disabled={busy}
         rows={3}
-        placeholder={isExplanation ? "Your explanation (required)" : "Comment (optional)"}
+        placeholder="Add context (required for disagree or clarification)"
         className="mt-1.5 w-full rounded-lg border border-stone-200 px-3 py-2.5 text-[16px] bg-white"
       />
       <div className="mt-1.5 flex flex-wrap gap-1.5">
-        {isExplanation ? (
-          <>
-            <button
-              type="button"
-              disabled={busy || empty}
-              onClick={() => send("agree")}
-              className={chipCls(true)}
-            >
-              Agree
-            </button>
-            <button
-              type="button"
-              disabled={busy || empty}
-              onClick={() => send("disagree")}
-              className={chipCls(false)}
-            >
-              Disagree
-            </button>
-          </>
-        ) : (
-          <button type="button" disabled={busy} onClick={() => send(null)} className={chipCls(true)}>
-            Acknowledge
-          </button>
-        )}
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => send("agree")}
+          className={chipCls(true)}
+        >
+          Agree
+        </button>
+        <button
+          type="button"
+          disabled={busy || empty}
+          onClick={() => send("disagree")}
+          className={chipCls(false)}
+        >
+          Disagree
+        </button>
+        <button
+          type="button"
+          disabled={busy || empty}
+          onClick={() => send("needs_clarification")}
+          className={chipCls(false)}
+        >
+          Needs clarification
+        </button>
       </div>
-      {isExplanation && (
-        <p className="mt-1.5 text-[12px] text-stone-500">
-          Disagree sends this finding back to your care manager.
-        </p>
-      )}
+      <p className="mt-1.5 text-[12px] text-stone-500">
+        Disagree or Needs clarification sends this finding back to your care manager.
+      </p>
       {err && <div className="mt-1.5 text-[12.5px] text-rose-600">{err}</div>}
     </div>
   );
@@ -297,11 +300,13 @@ function ResponseRow({
 function SignalCard({
   s,
   reactions,
+  respond,
   onRefetch,
   onReplace,
 }: {
   s: PortalAuditSignal;
   reactions: boolean;
+  respond: boolean;
   onRefetch: () => void;
   onReplace: (next: PortalAuditSignal) => void;
 }) {
@@ -320,7 +325,9 @@ function SignalCard({
             STATUS_TONE[s.status] ?? "bg-stone-100 text-stone-700"
           }`}
         >
-          {STATUS_LABEL[s.status] ?? s.status}
+          {respond && s.status === "routed"
+            ? "awaiting your response"
+            : STATUS_LABEL[s.status] ?? s.status}
         </span>
       </div>
 
@@ -371,19 +378,37 @@ function SignalCard({
         </div>
       )}
 
-      {reactions ? (
-        <>
-          <ReactionRow s={s} onRefetch={onRefetch} />
-          {recorded ? (
-            <div className={rowCls}>
-              <p className="text-[12px] text-stone-600 bg-stone-50 border border-stone-100 rounded-md px-3 py-2 leading-snug break-words">
-                You responded: {[recorded.type, recorded.verdict, recorded.comment].filter(Boolean).join(" · ")}
-              </p>
-            </div>
-          ) : canRespond ? (
-            <ResponseRow s={s} onRefetch={onRefetch} onReplace={onReplace} />
-          ) : null}
-        </>
+      {s.triage && (s.triage.rationale || s.triage.policy_version) && (
+        <div className={rowCls}>
+          <div className={rowHeadCls}>Triage context</div>
+          {s.triage.rationale && (
+            <p className="mt-1 text-[12.5px] text-stone-600 leading-snug break-words">
+              {s.triage.rationale}
+            </p>
+          )}
+          {s.triage.policy_version && (
+            <p className="mt-1 text-[11px] text-stone-400">
+              Policy {s.triage.policy_version}
+            </p>
+          )}
+        </div>
+      )}
+
+      {reactions && <ReactionRow s={s} onRefetch={onRefetch} />}
+      {respond ? (
+        recorded ? (
+          <div className={rowCls}>
+            <p className="text-[12px] text-stone-600 bg-stone-50 border border-stone-100 rounded-md px-3 py-2 leading-snug break-words">
+              You responded:{" "}
+              {[
+                responseLabel(recorded.verb || recorded.verdict),
+                recorded.comment,
+              ].filter(Boolean).join(" · ")}
+            </p>
+          </div>
+        ) : canRespond ? (
+          <ResponseRow s={s} onRefetch={onRefetch} onReplace={onReplace} />
+        ) : null
       ) : (
         /* The reply channel, stated in words because there is deliberately no control to press. */
         s.response_required !== "none" && (
@@ -396,7 +421,13 @@ function SignalCard({
   );
 }
 
-export function FindingsForDoctor({ reactions = false }: { reactions?: boolean }) {
+export function FindingsForDoctor({
+  reactions = false,
+  respond = false,
+}: {
+  reactions?: boolean;
+  respond?: boolean;
+}) {
   const [data, setData] = useState<FindingsData | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -416,7 +447,16 @@ export function FindingsForDoctor({ reactions = false }: { reactions?: boolean }
   // just answered.
   const replaceSignal = useCallback((next: PortalAuditSignal) => {
     setData((d) =>
-      d ? { ...d, signals: (d.signals ?? []).map((x) => (x.signal_id === next.signal_id ? next : x)) } : d,
+      d
+        ? {
+            ...d,
+            signals: (d.signals ?? []).map((x) =>
+              x.signal_id === next.signal_id
+                ? { ...next, triage: next.triage ?? x.triage }
+                : x,
+            ),
+          }
+        : d,
     );
   }, []);
 
@@ -471,6 +511,7 @@ export function FindingsForDoctor({ reactions = false }: { reactions?: boolean }
               key={s.signal_id}
               s={s}
               reactions={reactions}
+              respond={respond}
               onRefetch={load}
               onReplace={replaceSignal}
             />

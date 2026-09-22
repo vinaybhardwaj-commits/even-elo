@@ -17,9 +17,8 @@
  * knows how to say out loud. The routes then always answer HTTP 200 — a doctor pressing a button
  * must be told what happened in words, and a 502 in a fetch is not words.
  *
- * ⚠️ INFERRED NOTHING. Endpoints, payload keys, status codes and error strings below are the B2a
- * contract restated in the WM2 v1 kickoff. `doctor-response` is already live; `signal-reaction` is
- * built in parallel. Nothing here guesses a field.
+ * `doctor-response` uses the P2 doctor-verb contract: agree, disagree, or needs_clarification.
+ * The upstream owns the mapping from those verbs to its legacy type/verdict storage shape.
  *
  * Fetch idioms (x-api-key, GOV_API_BASE default, cache:'no-store', the 8s abort) match
  * src/lib/doctor-audits.ts.
@@ -33,10 +32,8 @@ const TIMEOUT_MS = 8000;
 export const REACTIONS = ["already_knew", "surprised", "dismiss"] as const;
 export type Reaction = (typeof REACTIONS)[number];
 
-/** The two workflow response types. Which one a thread wants is upstream's call, not the doctor's:
- *  it arrives on the signal as `response_required`. */
-export const RESPONSE_TYPES = ["acknowledgment", "explanation"] as const;
-export type ResponseType = (typeof RESPONSE_TYPES)[number];
+export const RESPONSE_VERBS = ["agree", "disagree", "needs_clarification"] as const;
+export type ResponseVerb = (typeof RESPONSE_VERBS)[number];
 
 /** CDMSS caps an explanation at 4000 characters. The portal trims and truncates to the same cap so
  *  a long paste is shortened here rather than rejected there. */
@@ -46,8 +43,8 @@ export function isReaction(v: unknown): v is Reaction {
   return typeof v === "string" && (REACTIONS as readonly string[]).includes(v);
 }
 
-export function isResponseType(v: unknown): v is ResponseType {
-  return typeof v === "string" && (RESPONSE_TYPES as readonly string[]).includes(v);
+export function isResponseVerb(v: unknown): v is ResponseVerb {
+  return typeof v === "string" && (RESPONSE_VERBS as readonly string[]).includes(v);
 }
 
 /**
@@ -126,13 +123,17 @@ export function mapRespondOutcome(o: CatOutcome): RespondResult {
 
 /** One POST to CDMSS, reduced to a CatOutcome. Never throws: a thrown fetch and a 500 are both
  *  things the card has to survive, so they are returned rather than raised. */
-async function postToCat(path: string, payload: unknown): Promise<CatOutcome> {
+async function postToCat(
+  path: string,
+  payload: unknown,
+  headers: Record<string, string> = {},
+): Promise<CatOutcome> {
   const key = process.env.GOV_API_KEY;
   if (!key) return { kind: "transport" };
   try {
     const res = await fetch(`${BASE}${path}`, {
       method: "POST",
-      headers: { "x-api-key": key, "content-type": "application/json" },
+      headers: { "x-api-key": key, "content-type": "application/json", ...headers },
       body: JSON.stringify(payload),
       cache: "no-store",
       signal: AbortSignal.timeout(TIMEOUT_MS),
@@ -164,24 +165,27 @@ export async function callReaction(input: {
 }
 
 /**
- * Send the workflow response. An acknowledgment carries `verdict: null` by contract — the caller
- * cannot opt out of that, it is forced here, so a stray "agree" on an acknowledgment can never
- * reach governance.
+ * Send the workflow response using the P2 doctor verb. CDMSS derives the legacy type/verdict from
+ * the signal's response_required field. The same request id is sent in the body and header.
  */
 export async function callResponse(input: {
   signalId: string;
   doctorUid: string;
-  type: ResponseType;
-  verdict: string | null;
+  verb: ResponseVerb;
   comment: string | null;
+  clientRequestId: string;
 }): Promise<CatOutcome> {
-  return postToCat("/api/governance/doctor-response", {
-    signal_id: input.signalId,
-    doctor_uid: input.doctorUid,
-    type: input.type,
-    verdict: input.type === "acknowledgment" ? null : input.verdict,
-    comment: input.comment,
-  });
+  return postToCat(
+    "/api/governance/doctor-response",
+    {
+      signal_id: input.signalId,
+      doctor_uid: input.doctorUid,
+      verb: input.verb,
+      comment: input.comment,
+      client_request_id: input.clientRequestId,
+    },
+    { "Idempotency-Key": input.clientRequestId },
+  );
 }
 
 /** PURE. Trim, then cut to the contract's cap. Empty becomes null so an untouched optional textarea
@@ -226,15 +230,11 @@ export function parseReactBody(raw: unknown): ReactBody {
 /**
  * PURE. The request body of POST /findings/respond, or the reason it is refused.
  *
- * Four fields are read and nothing else is copied, so no identity a client puts in a body can
- * travel any further than this function. `verdict` is passed through for an explanation and
- * discarded for an acknowledgment, which by contract carries `verdict: null`.
- *
- * Whether an explanation actually has the comment and verdict it needs is CDMSS's ruling, not the
- * portal's: it owns that rule, and a second copy here would drift from it.
+ * Three fields are accepted and no identity a client puts in a body can travel any further. The
+ * BFF creates the idempotency key; the browser can neither choose it nor name a doctor.
  */
 export type RespondBody =
-  | { ok: true; signalId: string; type: ResponseType; verdict: string | null; comment: string | null }
+  | { ok: true; signalId: string; verb: ResponseVerb; comment: string | null }
   | { ok: false; message: string };
 
 export function parseRespondBody(raw: unknown): RespondBody {
@@ -242,17 +242,23 @@ export function parseRespondBody(raw: unknown): RespondBody {
     return { ok: false, message: "body must be a JSON object" };
   }
   const o = raw as Record<string, unknown>;
+  const allowed: readonly string[] = ["signal_id", "verb", "comment"];
+  if (Object.keys(o).some((k) => !allowed.includes(k))) {
+    return { ok: false, message: "unexpected field in body" };
+  }
   const signalId = typeof o.signal_id === "string" ? o.signal_id.trim() : "";
   if (!signalId) return { ok: false, message: "signal_id is required" };
-  if (!isResponseType(o.type)) {
-    return { ok: false, message: "type must be acknowledgment or explanation" };
+  if (!isResponseVerb(o.verb)) {
+    return { ok: false, message: "verb must be agree, disagree or needs_clarification" };
   }
-  const type = o.type;
+  const comment = normalizeComment(o.comment);
+  if ((o.verb === "disagree" || o.verb === "needs_clarification") && !comment) {
+    return { ok: false, message: `${o.verb} requires a comment` };
+  }
   return {
     ok: true,
     signalId,
-    type,
-    verdict: type === "acknowledgment" ? null : typeof o.verdict === "string" ? o.verdict : null,
-    comment: normalizeComment(o.comment),
+    verb: o.verb,
+    comment,
   };
 }

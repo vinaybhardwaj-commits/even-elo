@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { randomUUID } from "node:crypto";
 import { getCurrentPhysician } from "@/lib/physician-auth";
 import { sql } from "@/lib/db";
 import {
@@ -20,8 +21,8 @@ export const runtime = "nodejs";
  * before the doctor presses anything, and `already_responded` says it again if they try twice.
  *
  * ⚠️ THE CLIENT NEVER NAMES A DOCTOR. `cdmss_doctor_uid` is looked up from the session's physician
- * id, and only four fields are read from the body — signal_id, type, verdict, comment. Nothing
- * else in a request can influence whose finding is answered.
+ * id, and only signal_id, verb and comment are accepted from the body. The BFF creates the
+ * client_request_id and sends it as both the payload field and Idempotency-Key.
  *
  * ⚠️ THE RETURNED SIGNAL GOES THROUGH THE SAME STRIP AS THE GET. CDMSS answers with a full signal,
  * which carries `doctor_uid`, `overdue` and `sla_due_at`. Handing that straight back would leak
@@ -38,6 +39,9 @@ export const runtime = "nodejs";
 export async function POST(request: NextRequest) {
   const p = await getCurrentPhysician();
   if (!p) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  if (process.env.PORTAL_FINDINGS_RESPOND !== "1") {
+    return NextResponse.json({ ok: false, error: "disabled" });
+  }
 
   let uid: string | null = null;
   try {
@@ -55,10 +59,17 @@ export async function POST(request: NextRequest) {
   if (!parsed.ok) {
     return NextResponse.json({ ok: false, error: "invalid", message: parsed.message });
   }
-  const { signalId, type, verdict, comment } = parsed;
+  const { signalId, verb, comment } = parsed;
+  const clientRequestId = randomUUID();
 
   const result = mapRespondOutcome(
-    await callResponse({ signalId, doctorUid: uid, type, verdict, comment }),
+    await callResponse({
+      signalId,
+      doctorUid: uid,
+      verb,
+      comment,
+      clientRequestId,
+    }),
   );
 
   if (!result.ok) return NextResponse.json(result);
@@ -69,7 +80,7 @@ export async function POST(request: NextRequest) {
   try {
     await sql`INSERT INTO audit_log_v2 (action, entity_type, entity_id, after_json)
               VALUES ('portal_response', 'physician', ${p.physicianId},
-              ${JSON.stringify({ signal_id: signalId, type, verdict })}::jsonb)`;
+              ${JSON.stringify({ signal_id: signalId, verb })}::jsonb)`;
   } catch {
     // Intentionally ignored: see above.
   }
