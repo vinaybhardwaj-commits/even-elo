@@ -17,6 +17,7 @@ import {
   preserveQueueItemRef,
   type LocalFindingKey,
 } from "../document-audit-ingest";
+import { buildDocumentAuditsExportUrl } from "../document-audit-ingest-db";
 
 const root = join(__dirname, "../../..");
 
@@ -295,6 +296,52 @@ describe("severity, keys, and PDF honesty", () => {
   });
 });
 
+describe("export URL builder", () => {
+  const base = "https://even-cdmss.vercel.app";
+  const path = "/api/governance/document-audits-export";
+
+  it("omits query string when no filters are set so CDMSS keeps its defaults", () => {
+    expect(buildDocumentAuditsExportUrl(base)).toBe(`${base}${path}`);
+    expect(buildDocumentAuditsExportUrl(`${base}/`, {})).toBe(`${base}${path}`);
+    expect(
+      buildDocumentAuditsExportUrl(base, {
+        window: "",
+        note_class: null,
+        from: "not-a-day",
+        to: "2026-9-1",
+      }),
+    ).toBe(`${base}${path}`);
+  });
+
+  it("forwards only provided window, note_class, from, and to", () => {
+    const url = buildDocumentAuditsExportUrl(base, {
+      window: 30,
+      note_class: "ot",
+      from: "2026-09-01",
+      to: "2026-09-21",
+    });
+    expect(url.startsWith(`${base}${path}?`)).toBe(true);
+    const qs = new URL(url).searchParams;
+    expect(qs.get("window")).toBe("30");
+    expect(qs.get("note_class")).toBe("ot");
+    expect(qs.get("from")).toBe("2026-09-01");
+    expect(qs.get("to")).toBe("2026-09-21");
+  });
+
+  it("drops invalid note_class and non-integer window", () => {
+    const url = buildDocumentAuditsExportUrl(base, {
+      window: "7.5",
+      note_class: "opd",
+      from: "2026-09-01",
+    });
+    const qs = new URL(url).searchParams;
+    expect(qs.has("window")).toBe(false);
+    expect(qs.has("note_class")).toBe(false);
+    expect(qs.get("from")).toBe("2026-09-01");
+    expect(Array.from(qs.keys()).sort()).toEqual(["from"]);
+  });
+});
+
 describe("ingest wiring", () => {
   it("schedules the cron and keeps the portal from inventing a PDF", () => {
     const vercel = readFileSync(join(root, "vercel.json"), "utf8");
@@ -303,6 +350,10 @@ describe("ingest wiring", () => {
     expect(cron).toContain("vercel-cron/");
     expect(cron).toContain("getCurrentUser");
     expect(cron).toContain("runDocumentAuditIngest");
+    expect(cron).toContain("maxDuration = 300");
+    expect(cron).toContain("?note_class=ot");
+    expect(cron).toContain("?window=30");
+    expect(cron).toMatch(/async function allowed\(/);
     const portal = readFileSync(join(root, "src/app/api/portal/document-audits/route.ts"), "utf8");
     expect(portal).toContain("portalPdfStatus");
     expect(portal).not.toContain("resolveAuditPdfUrl");
