@@ -10,12 +10,15 @@ import {
 import {
   acceptAuditPdfUrl,
   buildQueueItemRef,
+  hasAllPlannedFindings,
   mapFindingSeverity,
   matchRoutedFindings,
   planDocumentAuditIngest,
   preserveAuditReference,
   preserveQueueItemRef,
+  shouldProbeAuditPdf,
   type LocalFindingKey,
+  type PlannedAudit,
 } from "../document-audit-ingest";
 import { buildDocumentAuditsExportUrl } from "../document-audit-ingest-db";
 
@@ -258,6 +261,55 @@ describe("route match", () => {
       ],
     );
     expect(hits).toHaveLength(1);
+  });
+});
+
+describe("existing audit skip", () => {
+  const audit = {
+    external_ref: "ds:ds-1",
+    pdf_url: null,
+    pdf_probe_id: "ds-1",
+    findings: [{ finding_ref: "f-1" }, { finding_ref: "f-2" }],
+  } as PlannedAudit;
+
+  it("skips only when every planned finding ref already exists on the same audit", () => {
+    expect(
+      hasAllPlannedFindings(audit, {
+        external_ref: "ds:ds-1",
+        finding_refs: ["f-2", "older-extra", "f-1"],
+      }),
+    ).toBe(true);
+    expect(
+      hasAllPlannedFindings(audit, {
+        external_ref: "ds:ds-1",
+        finding_refs: ["f-1"],
+      }),
+    ).toBe(false);
+    expect(
+      hasAllPlannedFindings(audit, {
+        external_ref: "ds:other",
+        finding_refs: ["f-1", "f-2"],
+      }),
+    ).toBe(false);
+    expect(hasAllPlannedFindings(audit, undefined)).toBe(false);
+  });
+
+  it("treats an existing audit with no planned findings as complete", () => {
+    expect(
+      hasAllPlannedFindings(
+        { ...audit, findings: [] },
+        { external_ref: "ds:ds-1", finding_refs: [] },
+      ),
+    ).toBe(true);
+  });
+
+  it("probes PDFs only for new rows or existing rows missing a PDF", () => {
+    expect(shouldProbeAuditPdf(audit, undefined)).toBe(true);
+    expect(shouldProbeAuditPdf(audit, null)).toBe(true);
+    expect(shouldProbeAuditPdf(audit, "https://stored.example/a.pdf")).toBe(false);
+    expect(
+      shouldProbeAuditPdf({ ...audit, pdf_url: "https://export.example/a.pdf" }, null),
+    ).toBe(false);
   });
 });
 
