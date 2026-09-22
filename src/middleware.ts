@@ -123,6 +123,13 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // Cron routes self-auth (CRON_SECRET Bearer, vercel-cron User-Agent, or
+  // an active signed-in user). Skip the session cookie so Vercel Cron can
+  // reach the handlers; do not treat these as fully public.
+  if (pathname === "/api/cron" || pathname.startsWith("/api/cron/")) {
+    return NextResponse.next();
+  }
+
   // Session cookie
   const token = request.cookies.get(COOKIE_NAME)?.value;
   if (!token) {
