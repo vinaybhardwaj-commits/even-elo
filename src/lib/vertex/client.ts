@@ -8,9 +8,9 @@ const TIMEOUT_MS = 12_000;
 const CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform";
 
 /**
- * Server-only Vertex / Gemini client for Sprint 3.1.
- * Staff summary generation is not exposed here — only credentialed access
- * for the super-admin health probe, and a client factory for later sprints.
+ * Server-only Vertex client for Sprint 3.1.
+ * The super-admin health probe and later staff summary generation both use
+ * createVertexClient. Summary prompts are built outside this module.
  */
 export function createVertexClient(credentials: VertexCredentials): GoogleGenAI {
   return new GoogleGenAI({

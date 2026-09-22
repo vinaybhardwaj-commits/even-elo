@@ -1,19 +1,13 @@
 /**
- * Physician feedback detail (Sprint 1.2).
- * Summary copy is the empty state. This module does not call a model.
+ * Physician feedback detail (Sprint 1.2 + Sprint 3.2 summary aside).
+ * Summary generation lives under /api/incidents/physician/[id]/summary.
  */
 
-import { HEADLINE_SUMMARY_LABEL, SUMMARY_STATE_NONE, categoryLabel } from "./feedback-home";
+import { categoryLabel } from "./feedback-home";
 
 export const SUMMARY_PANEL_TITLE = "Summary";
-export const SUMMARY_EMPTY_TITLE = "No summary yet";
-export const SUMMARY_EMPTY_COPY =
-  "This physician has feedback, but no summary is stored. Gemini and Vertex are not wired yet, so this page will not invent one.";
+export const SUMMARY_PANEL_SUBTITLE = "Theme-level · count-based prompts";
 export const NO_FEEDBACK_COPY = "No feedback on file for this physician.";
-export const NO_FEEDBACK_SUMMARY_COPY = "There is no feedback to summarise, and no summary is stored.";
-export const REGENERATE_LABEL = "Regenerate summary";
-export const REGENERATE_HINT = "Available when Vertex is wired — Stage 3";
-export const STALE_HINT = "Nothing is stored to go stale. That check waits until a summary exists.";
 
 export interface FeedbackTimelineItem {
   id: string;
@@ -40,8 +34,6 @@ export interface FeedbackDetailHeadline {
   last_activity: string | null;
   negative_hint: string;
   positive_hint: string;
-  summaries: typeof SUMMARY_STATE_NONE;
-  summaries_label: typeof HEADLINE_SUMMARY_LABEL;
 }
 
 export interface FeedbackDetailPayload {
