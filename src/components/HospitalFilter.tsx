@@ -61,6 +61,7 @@ export function HospitalFilter() {
       if (res.ok) {
         setActive(code);
         router.refresh();
+        window.dispatchEvent(new Event("epi-hospital-filter"));
       }
     } finally {
       setBusy(false);

@@ -77,8 +77,9 @@ export function ShellV2() {
         { label: "OPD Governance", href: "/opd-governance" },
         { label: "IPD Governance", tag: "soon" },
         { label: "Surgical Governance", href: "/surgical-governance", show: isSuper },
-        { label: "Feedback", href: "/incidents" },
-        { label: "Incidents", href: "/safety", show: showIncidents },
+        { label: "Patient Feedback", href: "/incidents" },
+        { label: "Incidents (e-IRIS)", href: "/safety", show: showIncidents },
+        { label: "Safety Report", href: "/safety/report", show: showIncidents },
       ],
     },
     {
@@ -96,9 +97,13 @@ export function ShellV2() {
   ];
 
   const isActive = (href?: string) => {
-    if (!href) return false;
+    if (!href || href.includes("#")) return false;
     const base = href.split("#")[0];
-    if (base === "/overview") return (pathname === "/overview" || pathname === "/home") && !href.includes("#");
+    if (base === "/overview") return pathname === "/overview" || pathname === "/home";
+    // e-IRIS hub stays distinct from the Safety Report composer.
+    if (base === "/safety") {
+      return pathname === "/safety" || (pathname.startsWith("/safety/") && !pathname.startsWith("/safety/report"));
+    }
     return pathname === base || pathname.startsWith(base + "/");
   };
 
@@ -130,9 +135,9 @@ export function ShellV2() {
                   key={item.label}
                   href={item.href}
                   className={
-                    "flex items-center gap-2 rounded-lg px-2.5 py-[7px] text-[13.5px] font-medium transition " +
+                    "relative flex items-center gap-2 rounded-lg px-2.5 py-[7px] text-[13.5px] font-medium transition " +
                     (isActive(item.href)
-                      ? "bg-brand-softer font-semibold text-brand"
+                      ? "bg-brand-soft font-semibold text-[#0d5f58] before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-[3px] before:rounded-r before:bg-brand"
                       : "text-stone-600 hover:bg-stone-100 hover:text-stone-900")
                   }
                 >
@@ -160,9 +165,9 @@ export function ShellV2() {
           <Link
             href="/admin"
             className={
-              "flex items-center gap-2 rounded-lg px-2.5 py-[7px] text-[13.5px] font-medium transition " +
+              "relative flex items-center gap-2 rounded-lg px-2.5 py-[7px] text-[13.5px] font-medium transition " +
               (isActive("/admin")
-                ? "bg-brand-softer font-semibold text-brand"
+                ? "bg-brand-soft font-semibold text-[#0d5f58] before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-[3px] before:rounded-r before:bg-brand"
                 : "text-stone-600 hover:bg-stone-100 hover:text-stone-900")
             }
           >
