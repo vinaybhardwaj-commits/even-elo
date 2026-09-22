@@ -29,6 +29,8 @@ import {
   HIGH_SEV,
   formatAuditDate,
   ingestHonesty,
+  isSystemAuditAuthor,
+  SYSTEM_AUDIT_AUTHOR,
 } from "@/lib/document-audits";
 import { emptyAdherenceInputs, type AdherenceInputs } from "@/lib/adherence-stage4";
 
@@ -229,7 +231,9 @@ export async function loadRmoInbox(opts: {
         da.doc_type,
         f.authored_by_name,
         f.authored_at,
-        coalesce(f.recurrence_count, 1) AS recurrence_count
+        coalesce(f.recurrence_count, 1) AS recurrence_count,
+        coalesce(f.portal_visible, false) AS portal_visible,
+        f.signal_reference
       FROM document_audit_findings f
       JOIN document_audits da ON da.id = f.audit_id
       JOIN physicians p ON p.id = f.physician_id
@@ -251,6 +255,8 @@ export async function loadRmoInbox(opts: {
       authored_by_name: string;
       authored_at: unknown;
       recurrence_count: number;
+      portal_visible: boolean;
+      signal_reference: string | null;
     }>;
 
     const asOf = new Date();
@@ -280,6 +286,9 @@ export async function loadRmoInbox(opts: {
         open_age_days: age,
         recurrence_count: num(r.recurrence_count) || 1,
         remediator_note: remediatorLabel(r.physician_name),
+        portal_visible: Boolean(r.portal_visible),
+        author_pending: isSystemAuditAuthor(r.authored_by_name),
+        signal_reference: r.signal_reference,
       });
     }
 
@@ -478,6 +487,8 @@ export async function loadPortalRoutedFindings(physicianId: string): Promise<
     doctor_response_verb: string | null;
     doctor_response_comment: string | null;
     doctor_responded_at: string | null;
+    response_owner: string | null;
+    signal_reference: string | null;
   }>
 > {
   try {
@@ -496,7 +507,9 @@ export async function loadPortalRoutedFindings(physicianId: string): Promise<
         da.cdmss_pdf_url,
         f.doctor_response_verb,
         f.doctor_response_comment,
-        f.doctor_responded_at
+        f.doctor_responded_at,
+        f.response_owner,
+        f.signal_reference
       FROM document_audit_findings f
       JOIN document_audits da ON da.id = f.audit_id
       WHERE f.physician_id = ${physicianId}::uuid
@@ -518,6 +531,8 @@ export async function loadPortalRoutedFindings(physicianId: string): Promise<
       doctor_response_verb: string | null;
       doctor_response_comment: string | null;
       doctor_responded_at: unknown;
+      response_owner: string | null;
+      signal_reference: string | null;
     }>;
     return rows.map((r) => ({
       ...r,
@@ -618,5 +633,66 @@ export async function loadDocumentAuditVolumes(): Promise<{
     };
   } catch {
     return { auditCount: null, openFindingCount: null };
+  }
+}
+
+/** RMO confirms authorship. Profile id is the signed-in staff user; name is theirs or an edit. */
+export async function confirmFindingAuthor(opts: {
+  findingId: string;
+  profileId: string;
+  authoredByName: string;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const name = opts.authoredByName.trim();
+  if (!name || isSystemAuditAuthor(name) || name === SYSTEM_AUDIT_AUTHOR) {
+    return { ok: false, error: "author_name_required" };
+  }
+  try {
+    const rows = (await sql`
+      UPDATE document_audit_findings
+      SET
+        authored_by_profile_id = ${opts.profileId}::uuid,
+        authored_by_name = ${name},
+        authored_at = now(),
+        updated_at = now()
+      WHERE id = ${opts.findingId}::uuid
+      RETURNING id::text AS id
+    `) as unknown as Array<{ id: string }>;
+    if (!rows[0]) return { ok: false, error: "not_found" };
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "db_error" };
+  }
+}
+
+/**
+ * RMO release. Sets portal_visible. Pipe A keeps the doctor ask when response_owner is already pipe_a.
+ * Also stamps triage_routed_at when the audit has none yet.
+ */
+export async function releaseFindingToPortal(findingId: string): Promise<
+  { ok: true; response_owner: "pipe_a" | "local" } | { ok: false; error: string }
+> {
+  try {
+    const rows = (await sql`
+      UPDATE document_audit_findings
+      SET
+        portal_visible = true,
+        response_owner = CASE
+          WHEN response_owner = 'pipe_a' THEN 'pipe_a'
+          ELSE 'local'
+        END,
+        updated_at = now()
+      WHERE id = ${findingId}::uuid
+      RETURNING id::text AS id, audit_id::text AS audit_id, response_owner
+    `) as unknown as Array<{ id: string; audit_id: string; response_owner: string }>;
+    const row = rows[0];
+    if (!row) return { ok: false, error: "not_found" };
+    await sql`
+      UPDATE document_audits
+      SET triage_routed_at = COALESCE(triage_routed_at, now())
+      WHERE id = ${row.audit_id}::uuid
+    `;
+    return { ok: true, response_owner: row.response_owner === "pipe_a" ? "pipe_a" : "local" };
+  } catch {
+    return { ok: false, error: "db_error" };
   }
 }

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { TopNav } from "@/components/TopNav";
 import { HeadlineStrip, type HeadlineStat } from "@/components/shell/HeadlineStrip";
 import {
+  authorAttribution,
   PIPE_STATUSES,
   PIPE_STATUS_LABEL,
   type PipeStatus,
@@ -41,6 +42,27 @@ export function RmoInboxHome() {
   const [pipe, setPipe] = useState<PipeStatus>("open");
   const [role, setRole] = useState<"rmo" | "sgc">("rmo");
   const [query, setQuery] = useState("");
+  const [rev, setRev] = useState(0);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  async function postAction(path: string, findingId: string) {
+    setBusyId(findingId);
+    setError("");
+    try {
+      const r = await fetch(path, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ finding_id: findingId }),
+      });
+      const j = await r.json();
+      if (!j.ok) setError(j.error || "Could not update this finding");
+      else setRev((n) => n + 1);
+    } catch {
+      setError("Could not update this finding");
+    } finally {
+      setBusyId(null);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -72,7 +94,7 @@ export function RmoInboxHome() {
       cancelled = true;
       window.removeEventListener(HOSPITAL_EVENT, load);
     };
-  }, [pipe, role, query]);
+  }, [pipe, role, query, rev]);
 
   const headline = data?.headline;
   const stats: HeadlineStat[] = headline
@@ -268,9 +290,36 @@ export function RmoInboxHome() {
                       {item.open_age_days}d open
                     </div>
                     <div className="mt-1.5 text-[12px] text-stone-600">
-                      Authored by RMO <strong>{item.authored_by_name}</strong>
+                      <strong>{authorAttribution(item.authored_by_name)}</strong>
                       <span className="mx-1 text-stone-300">·</span>
                       {item.remediator_note}
+                      {item.signal_reference ? (
+                        <span className="ml-1 text-stone-500">· {item.signal_reference}</span>
+                      ) : null}
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={busyId === item.finding_id}
+                        onClick={() => postAction("/api/rmo-inbox/author", item.finding_id)}
+                        className="rounded-lg border border-stone-200 bg-white px-2.5 py-1 text-[12px] font-semibold text-stone-700 disabled:opacity-50"
+                      >
+                        {item.author_pending ? "Confirm author" : "Reconfirm author"}
+                      </button>
+                      {item.portal_visible ? (
+                        <span className="rounded-md bg-teal-50 px-1.5 py-0.5 text-[11px] font-semibold text-teal-800">
+                          On doctor portal
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={busyId === item.finding_id}
+                          onClick={() => postAction("/api/rmo-inbox/release", item.finding_id)}
+                          className="rounded-lg border border-brand bg-brand/10 px-2.5 py-1 text-[12px] font-semibold text-brand disabled:opacity-50"
+                        >
+                          Release to portal
+                        </button>
+                      )}
                     </div>
                   </li>
                 ))}
