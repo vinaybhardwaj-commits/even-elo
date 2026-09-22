@@ -69,6 +69,11 @@ export interface PlannedAudit {
   findings: PlannedFinding[];
 }
 
+export interface ExistingAuditKey {
+  external_ref: string;
+  finding_refs: ReadonlyArray<string | null>;
+}
+
 export interface RoutedSignal {
   note_class: string | null;
   doctor_uid: string | null;
@@ -424,6 +429,27 @@ export function planDocumentAuditIngest(payload: unknown): IngestPlan | IngestPl
     .filter((s): s is RoutedSignal => s !== null);
 
   return { ok: true, progress_supported: progressOk, audits, signals, skips };
+}
+
+/**
+ * A planned audit is already written only when its stable audit key matches and
+ * every planned stable finding key is present. Extra local findings are retained.
+ */
+export function hasAllPlannedFindings(
+  audit: Pick<PlannedAudit, "external_ref" | "findings">,
+  existing: ExistingAuditKey | null | undefined,
+): boolean {
+  if (!existing || existing.external_ref !== audit.external_ref) return false;
+  const existingRefs = new Set(existing.finding_refs.filter((ref): ref is string => !!ref));
+  return audit.findings.every((finding) => existingRefs.has(finding.finding_ref));
+}
+
+/** Probe only when the export has no audit PDF and the local row does not either. */
+export function shouldProbeAuditPdf(
+  audit: Pick<PlannedAudit, "pdf_url" | "pdf_probe_id">,
+  existingPdfUrl: string | null | undefined,
+): boolean {
+  return !audit.pdf_url && !!audit.pdf_probe_id && !existingPdfUrl;
 }
 
 function sameId(a: string | null, b: string | null): boolean {

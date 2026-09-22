@@ -9,8 +9,11 @@ import { SYSTEM_AUDIT_AUTHOR } from "@/lib/document-audits";
 import {
   countSkips,
   formatIngestNote,
+  hasAllPlannedFindings,
   matchRoutedFindings,
   planDocumentAuditIngest,
+  shouldProbeAuditPdf,
+  type ExistingAuditKey,
   type LocalFindingKey,
   type PlannedAudit,
   type RouteHit,
@@ -239,6 +242,42 @@ async function upsertFinding(auditId: string, physician: string, finding: Planne
   `;
 }
 
+interface ExistingAuditRow extends ExistingAuditKey {
+  audit_row_id: string;
+  source_audit_id: string | null;
+  last_synced_at: string | null;
+  cdmss_pdf_url: string | null;
+}
+
+async function loadExistingAuditKeys(audits: PlannedAudit[]): Promise<Map<string, ExistingAuditRow>> {
+  const externalRefs = audits.map((audit) => audit.external_ref);
+  if (!externalRefs.length) return new Map();
+  const rows = (await sql`
+    SELECT
+      da.id::text AS audit_row_id,
+      da.external_ref,
+      da.source_audit_id,
+      da.last_synced_at::text AS last_synced_at,
+      da.cdmss_pdf_url,
+      ARRAY(
+        SELECT f.finding_ref
+        FROM document_audit_findings f
+        WHERE f.audit_id = da.id AND f.finding_ref IS NOT NULL
+      ) AS finding_refs
+    FROM document_audits da
+    WHERE da.external_ref = ANY(${externalRefs}::text[])
+  `) as unknown as ExistingAuditRow[];
+  return new Map(rows.map((row) => [row.external_ref, row]));
+}
+
+async function storeExistingAuditPdf(auditRowId: string, pdfUrl: string): Promise<void> {
+  await sql`
+    UPDATE document_audits
+    SET cdmss_pdf_url = COALESCE(cdmss_pdf_url, ${pdfUrl})
+    WHERE id = ${auditRowId}::uuid
+  `;
+}
+
 async function loadLocalKeys(): Promise<LocalFindingKey[]> {
   const rows = (await sql`
     SELECT
@@ -294,16 +333,35 @@ export async function runDocumentAuditIngest(
   let pdfUnavailable = 0;
   let probes = 0;
 
+  const existingAudits = await loadExistingAuditKeys(plan.audits);
   for (const audit of plan.audits) {
+    const existing = existingAudits.get(audit.external_ref);
+    if (hasAllPlannedFindings(audit, existing)) {
+      if (!existing?.cdmss_pdf_url) {
+        let pdf = audit.pdf_url;
+        if (shouldProbeAuditPdf(audit, existing?.cdmss_pdf_url) && probes < PDF_PROBE_CAP) {
+          probes += 1;
+          pdf = await probeAuditPdf(audit.pdf_probe_id!);
+        }
+        if (pdf && existing) {
+          await storeExistingAuditPdf(existing.audit_row_id, pdf);
+          pdfStored += 1;
+        } else {
+          pdfUnavailable += 1;
+        }
+      }
+      continue;
+    }
+
     const physician = await physicianId(audit.doctor_uid, physicianCache);
     if (!physician) {
       unmapped += 1;
       continue;
     }
-    let pdf = audit.pdf_url;
-    if (!pdf && audit.pdf_probe_id && probes < PDF_PROBE_CAP) {
+    let pdf = audit.pdf_url ?? existing?.cdmss_pdf_url ?? null;
+    if (shouldProbeAuditPdf(audit, existing?.cdmss_pdf_url) && probes < PDF_PROBE_CAP) {
       probes += 1;
-      pdf = await probeAuditPdf(audit.pdf_probe_id);
+      pdf = await probeAuditPdf(audit.pdf_probe_id!);
     }
     if (pdf) pdfStored += 1;
     else pdfUnavailable += 1;
