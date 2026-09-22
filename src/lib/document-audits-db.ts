@@ -45,6 +45,65 @@ interface CountBundle {
   doctors_with_findings: number;
 }
 
+export interface DocumentAuditDetail {
+  audit: {
+    id: string;
+    external_ref: string | null;
+    source_audit_id: string | null;
+    hospital_code: string;
+    physician_id: string;
+    physician_name: string;
+    specialty: string;
+    doc_type: "progress" | "ot" | "discharge";
+    doc_type_label: string;
+    note_date: string | null;
+    ingested_at: string;
+    cdmss_pdf_url: string | null;
+  };
+  findings: Array<{
+    id: string;
+    finding_label: string;
+    finding_body: string | null;
+    severity: "critical" | "high" | "medium" | "low";
+    status: PipeStatus;
+    authored_by_name: string;
+    authored_at: string;
+    portal_visible: boolean;
+    response_owner: string | null;
+    signal_reference: string | null;
+    doctor_response_verb: string | null;
+    doctor_response_comment: string | null;
+    doctor_responded_at: string | null;
+  }>;
+}
+
+export interface DocumentAuditDetailRow {
+  id: string;
+  external_ref: string | null;
+  source_audit_id: string | null;
+  hospital_code: string;
+  physician_id: string;
+  physician_name: string;
+  specialty: string;
+  doc_type: string;
+  note_date: string | null;
+  ingested_at: unknown;
+  cdmss_pdf_url: string | null;
+  finding_id: string | null;
+  finding_label: string | null;
+  finding_body: string | null;
+  severity: string | null;
+  status: string | null;
+  authored_by_name: string | null;
+  authored_at: unknown;
+  portal_visible: boolean | null;
+  response_owner: string | null;
+  signal_reference: string | null;
+  doctor_response_verb: string | null;
+  doctor_response_comment: string | null;
+  doctor_responded_at: unknown;
+}
+
 function num(v: unknown): number {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
@@ -55,6 +114,111 @@ function iso(v: unknown): string | null {
   if (v instanceof Date) return v.toISOString();
   const d = new Date(String(v));
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+export function mapDocumentAuditDetailRows(rows: DocumentAuditDetailRow[]): DocumentAuditDetail | null {
+  const first = rows[0];
+  if (!first) return null;
+
+  const docType = normalizeDocType(first.doc_type);
+  const ingestedAt = iso(first.ingested_at);
+  if (!docType || !ingestedAt) {
+    throw new Error("Document audit contains invalid required fields");
+  }
+
+  const findings = rows.flatMap((row) => {
+    if (!row.finding_id) return [];
+    const severity = normalizeSeverity(row.severity);
+    const status = normalizePipeStatus(row.status);
+    const authoredAt = iso(row.authored_at);
+    if (
+      !row.finding_label ||
+      !severity ||
+      !status ||
+      !row.authored_by_name ||
+      !authoredAt
+    ) {
+      throw new Error("Document audit finding contains invalid required fields");
+    }
+    return [{
+      id: row.finding_id,
+      finding_label: row.finding_label,
+      finding_body: row.finding_body,
+      severity,
+      status,
+      authored_by_name: row.authored_by_name,
+      authored_at: authoredAt,
+      portal_visible: Boolean(row.portal_visible),
+      response_owner: row.response_owner,
+      signal_reference: row.signal_reference,
+      doctor_response_verb: row.doctor_response_verb,
+      doctor_response_comment: row.doctor_response_comment,
+      doctor_responded_at: iso(row.doctor_responded_at),
+    }];
+  });
+
+  return {
+    audit: {
+      id: first.id,
+      external_ref: first.external_ref,
+      source_audit_id: first.source_audit_id,
+      hospital_code: first.hospital_code,
+      physician_id: first.physician_id,
+      physician_name: first.physician_name,
+      specialty: first.specialty,
+      doc_type: docType,
+      doc_type_label: DOC_TYPE_LABEL[docType],
+      note_date: first.note_date,
+      ingested_at: ingestedAt,
+      cdmss_pdf_url: first.cdmss_pdf_url,
+    },
+    findings,
+  };
+}
+
+/**
+ * Staff detail read. Unlike queue/headline reads, this fails closed instead of
+ * presenting an empty audit when the record is missing or malformed.
+ */
+export async function loadDocumentAuditDetail(auditId: string): Promise<DocumentAuditDetail | null> {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(auditId)) {
+    return null;
+  }
+
+  const rows = (await sql`
+    SELECT
+      da.id::text AS id,
+      da.external_ref,
+      da.source_audit_id,
+      da.hospital_code,
+      da.physician_id::text AS physician_id,
+      coalesce(p.full_name, 'Unknown') AS physician_name,
+      coalesce(p.primary_specialty, '') AS specialty,
+      da.doc_type,
+      da.note_date::text AS note_date,
+      da.ingested_at,
+      da.cdmss_pdf_url,
+      f.id::text AS finding_id,
+      f.finding_label,
+      f.finding_body,
+      f.severity,
+      f.status,
+      f.authored_by_name,
+      f.authored_at,
+      f.portal_visible,
+      f.response_owner,
+      f.signal_reference,
+      f.doctor_response_verb,
+      f.doctor_response_comment,
+      f.doctor_responded_at
+    FROM document_audits da
+    JOIN physicians p ON p.id = da.physician_id
+    LEFT JOIN document_audit_findings f ON f.audit_id = da.id
+    WHERE da.id = ${auditId}::uuid
+    ORDER BY f.authored_at DESC NULLS LAST
+  `) as unknown as DocumentAuditDetailRow[];
+
+  return mapDocumentAuditDetailRows(rows);
 }
 
 export async function loadIngestMeta(): Promise<{ lastSuccessAt: string | null }> {

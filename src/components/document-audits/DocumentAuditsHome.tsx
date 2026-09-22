@@ -44,6 +44,11 @@ interface HomePayload {
   error?: string;
 }
 
+function auditDetailHref(row: DocumentAuditListItem): string {
+  const path = `/document-audits/${encodeURIComponent(row.id)}`;
+  return row.finding_id ? `${path}?finding=${encodeURIComponent(row.finding_id)}` : path;
+}
+
 export function DocumentAuditsHome() {
   const [data, setData] = useState<HomePayload | null>(null);
   const [loading, setLoading] = useState(true);
@@ -306,7 +311,12 @@ export function DocumentAuditsHome() {
                   {rows.map((row) => (
                     <tr key={row.finding_id ?? row.id} className="border-t border-stone-100 hover:bg-stone-50">
                       <td className="px-3.5 py-2.5 font-mono text-[12px] text-stone-600">
-                        {row.external_ref ?? "—"}
+                        <Link
+                          href={auditDetailHref(row)}
+                          className="font-semibold text-brand hover:underline"
+                        >
+                          {row.external_ref ?? "Open"}
+                        </Link>
                       </td>
                       <td className="px-3.5 py-2.5">
                         <Link
@@ -318,7 +328,11 @@ export function DocumentAuditsHome() {
                         <div className="text-[11.5px] text-stone-500">{row.specialty}</div>
                       </td>
                       <td className="px-3.5 py-2.5">{row.doc_type_label}</td>
-                      <td className="max-w-[220px] px-3.5 py-2.5 font-medium text-stone-800">{row.finding_label}</td>
+                      <td className="max-w-[220px] px-3.5 py-2.5 font-medium text-stone-800">
+                        <Link href={auditDetailHref(row)} className="hover:text-brand hover:underline">
+                          {row.finding_label}
+                        </Link>
+                      </td>
                       <td className="px-3.5 py-2.5">
                         {row.severity ? (
                           <span className={"rounded-md px-1.5 py-0.5 text-[11px] font-semibold " + SEV_PILL[row.severity]}>

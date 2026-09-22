@@ -208,16 +208,24 @@ export function PhysicianDocumentationSection({ physicianId }: { physicianId: st
                   Remediator = this physician via doctor portal. Raw <code className="text-[11px]">CDMSS</code>{" "}
                   payload is never dumped here.
                 </div>
-                {active.cdmss_pdf_url ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Link
+                    href={`/document-audits/${active.audit_id}?finding=${active.finding_id}`}
+                    className="inline-flex rounded-lg border border-stone-200 px-3 py-2 text-[12.5px] font-semibold text-brand hover:border-teal-300 hover:bg-teal-50"
+                  >
+                    Open full audit detail
+                  </Link>
+                  {active.cdmss_pdf_url ? (
                   <a
                     href={active.cdmss_pdf_url}
                     target="_blank"
                     rel="noreferrer"
-                    className="mt-3 inline-flex rounded-lg bg-brand px-3 py-2 text-[12.5px] font-semibold text-white hover:opacity-90"
+                    className="inline-flex rounded-lg bg-brand px-3 py-2 text-[12.5px] font-semibold text-white hover:opacity-90"
                   >
                     Download audit PDF
                   </a>
-                ) : null}
+                  ) : null}
+                </div>
               </>
             )}
           </div>

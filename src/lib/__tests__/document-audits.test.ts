@@ -19,6 +19,10 @@ import {
   computeAdherencePresentation,
   emptyAdherenceInputs,
 } from "../adherence-stage4";
+import {
+  mapDocumentAuditDetailRows,
+  type DocumentAuditDetailRow,
+} from "../document-audits-db";
 
 describe("document-audits shaping", () => {
   it("normalises doc types, severity, and pipe status aliases", () => {
@@ -122,6 +126,82 @@ describe("document-audits shaping", () => {
     expect(resolveAuditPdfUrl({ pdf_url: "https://cdn.example/a.pdf" })).toBe("https://cdn.example/a.pdf");
     expect(resolveAuditPdfUrl({ audit_id: "AUD-1" })).toContain("/audits/AUD-1/pdf");
     expect(resolveAuditPdfUrl({})).toBeNull();
+  });
+
+  it("maps an audit detail with all findings and doctor responses", () => {
+    const base: Omit<
+      DocumentAuditDetailRow,
+      | "finding_id"
+      | "finding_label"
+      | "finding_body"
+      | "severity"
+      | "status"
+      | "authored_by_name"
+      | "authored_at"
+      | "portal_visible"
+      | "response_owner"
+      | "signal_reference"
+      | "doctor_response_verb"
+      | "doctor_response_comment"
+      | "doctor_responded_at"
+    > = {
+      id: "a1",
+      external_ref: "DA-1",
+      source_audit_id: "CDMSS-1",
+      hospital_code: "EHRC",
+      physician_id: "p1",
+      physician_name: "Dr. Test",
+      specialty: "ENT",
+      doc_type: "progress",
+      note_date: "2026-09-18",
+      ingested_at: "2026-09-18T10:00:00.000Z",
+      cdmss_pdf_url: "https://example.test/audit.pdf",
+    };
+    const rows: DocumentAuditDetailRow[] = [
+      {
+        ...base,
+        finding_id: "f1",
+        finding_label: "Missing reassessment",
+        finding_body: "Timed reassessment not documented",
+        severity: "high",
+        status: "contested",
+        authored_by_name: "Sharma",
+        authored_at: "2026-09-18T11:00:00.000Z",
+        portal_visible: true,
+        response_owner: "local",
+        signal_reference: "EHRC-AUD-1",
+        doctor_response_verb: "disagree",
+        doctor_response_comment: "Reassessment is in the addendum.",
+        doctor_responded_at: "2026-09-19T11:00:00.000Z",
+      },
+      {
+        ...base,
+        finding_id: "f2",
+        finding_label: "Unsigned note",
+        finding_body: null,
+        severity: "medium",
+        status: "open",
+        authored_by_name: "Sharma",
+        authored_at: "2026-09-18T10:30:00.000Z",
+        portal_visible: false,
+        response_owner: "pipe_a",
+        signal_reference: null,
+        doctor_response_verb: null,
+        doctor_response_comment: null,
+        doctor_responded_at: null,
+      },
+    ];
+
+    const detail = mapDocumentAuditDetailRows(rows);
+    expect(detail?.audit.source_audit_id).toBe("CDMSS-1");
+    expect(detail?.audit.doc_type_label).toBe("Progress note");
+    expect(detail?.findings).toHaveLength(2);
+    expect(detail?.findings[0]).toMatchObject({
+      id: "f1",
+      doctor_response_verb: "disagree",
+      doctor_response_comment: "Reassessment is in the addendum.",
+      portal_visible: true,
+    });
   });
 });
 
