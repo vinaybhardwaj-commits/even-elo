@@ -1,7 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ADVISORY_FALLBACK, type PortalAuditSignal } from "@/lib/doctor-audits";
+import {
+  ADVISORY_FALLBACK,
+  noteClassLabel,
+  type NoteClass,
+  type PortalAuditSignal,
+} from "@/lib/doctor-audits";
 
 /**
  * Portal "Findings" panel (WM2) — the governance findings routed to this physician.
@@ -24,6 +29,10 @@ import { ADVISORY_FALLBACK, type PortalAuditSignal } from "@/lib/doctor-audits";
  * The advisory line is rendered at the top of every populated state and beside the empty one. It is
  * the framing that makes these findings readable as support rather than as a score, so it is not
  * conditional on there being anything to frame.
+ *
+ * note_class filter chips (All | OPD | Discharge summary | OT) re-fetch via the BFF with optional
+ * `note_class` so a mixed OPD+DS inbox is filterable on one Findings page. Selection is local
+ * state — Findings has no existing URL-query filter pattern.
  *
  * Card idioms follow src/components/v2/OpdSignalsSection.tsx; the chip buttons follow
  * src/components/portal/IncidentReporting.tsx.
@@ -75,6 +84,16 @@ const chipCls = (on: boolean) =>
   }`;
 const rowCls = "mt-3 pt-3 border-t border-stone-100";
 const rowHeadCls = "text-[12px] font-semibold text-stone-500";
+
+/** Filter chip values. `all` omits the query param so CDMSS returns the mixed inbox. */
+type NoteClassFilter = "all" | NoteClass;
+
+const NOTE_CLASS_FILTERS: ReadonlyArray<readonly [NoteClassFilter, string]> = [
+  ["all", "All"],
+  ["opd", "OPD"],
+  ["discharge_summary", "Discharge summary"],
+  ["ot", "OT"],
+];
 
 function fmtDay(d: string | null | undefined) {
   return d ? String(d).slice(0, 10) : "—";
@@ -320,6 +339,9 @@ function SignalCard({
           <div className="text-sm font-semibold break-words">{s.label}</div>
           <div className="text-[11.5px] text-stone-400 font-mono mt-0.5">{s.reference}</div>
         </div>
+        <span className="shrink-0 px-2 py-0.5 rounded-full text-[11px] font-medium bg-stone-100 text-stone-600">
+          {noteClassLabel(s.note_class)}
+        </span>
         <span
           className={`shrink-0 px-2 py-0.5 rounded-full text-[11px] font-medium ${
             STATUS_TONE[s.status] ?? "bg-stone-100 text-stone-700"
@@ -430,15 +452,22 @@ export function FindingsForDoctor({
 }) {
   const [data, setData] = useState<FindingsData | null>(null);
   const [failed, setFailed] = useState(false);
+  const [noteClassFilter, setNoteClassFilter] = useState<NoteClassFilter>("all");
 
   const load = useCallback(() => {
-    fetch("/api/portal/findings")
+    setFailed(false);
+    const qs =
+      noteClassFilter === "all"
+        ? ""
+        : `?note_class=${encodeURIComponent(noteClassFilter)}`;
+    fetch(`/api/portal/findings${qs}`)
       .then((r) => r.json())
       .then((j: FindingsData) => setData(j))
       .catch(() => setFailed(true));
-  }, []);
+  }, [noteClassFilter]);
 
   useEffect(() => {
+    setData(null);
     load();
   }, [load]);
 
@@ -452,7 +481,7 @@ export function FindingsForDoctor({
             ...d,
             signals: (d.signals ?? []).map((x) =>
               x.signal_id === next.signal_id
-                ? { ...next, triage: next.triage ?? x.triage }
+                ? { ...next, triage: next.triage ?? x.triage, note_class: next.note_class ?? x.note_class }
                 : x,
             ),
           }
@@ -460,11 +489,30 @@ export function FindingsForDoctor({
     );
   }, []);
 
+  const filterChips = (
+    <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter by note class">
+      {NOTE_CLASS_FILTERS.map(([value, label]) => (
+        <button
+          key={value}
+          type="button"
+          onClick={() => setNoteClassFilter(value)}
+          className={chipCls(noteClassFilter === value)}
+          aria-pressed={noteClassFilter === value}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+
   if (failed || (data && data.ok === false)) {
     // Reaching here means we could not get an answer — from the network or from upstream. Say so.
     return (
       <Shell>
-        <div className="px-5 py-6 text-sm text-stone-600">Findings are temporarily unavailable.</div>
+        <div className="px-5 py-4 space-y-3">
+          {filterChips}
+          <div className="text-sm text-stone-600">Findings are temporarily unavailable.</div>
+        </div>
       </Shell>
     );
   }
@@ -472,7 +520,10 @@ export function FindingsForDoctor({
   if (!data) {
     return (
       <Shell count="…">
-        <div className="px-5 py-6 text-center text-sm text-stone-400">Loading…</div>
+        <div className="px-5 py-4 space-y-3">
+          {filterChips}
+          <div className="text-center text-sm text-stone-400">Loading…</div>
+        </div>
       </Shell>
     );
   }
@@ -480,8 +531,11 @@ export function FindingsForDoctor({
   if (!data.mapped) {
     return (
       <Shell>
-        <div className="px-5 py-6 text-sm text-stone-600">
-          Your CAT profile is not yet linked. Findings appear once governance links your record.
+        <div className="px-5 py-4 space-y-3">
+          {filterChips}
+          <div className="text-sm text-stone-600">
+            Your CAT profile is not yet linked. Findings appear once governance links your record.
+          </div>
         </div>
       </Shell>
     );
@@ -493,7 +547,8 @@ export function FindingsForDoctor({
   if (signals.length === 0) {
     return (
       <Shell count={0}>
-        <div className="px-5 py-6 space-y-2">
+        <div className="px-5 py-4 space-y-3">
+          {filterChips}
           <div className="text-sm text-stone-600">No routed findings.</div>
           <Advisory text={advisory} />
         </div>
@@ -505,6 +560,7 @@ export function FindingsForDoctor({
     <Shell count={signals.length}>
       <div className="px-5 py-4 space-y-3">
         <Advisory text={advisory} />
+        {filterChips}
         <div className="space-y-2.5">
           {signals.map((s) => (
             <SignalCard

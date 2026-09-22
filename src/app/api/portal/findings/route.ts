@@ -1,9 +1,10 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getCurrentPhysician } from "@/lib/physician-auth";
 import { sql } from "@/lib/db";
 import {
   fetchDoctorAudits,
   fetchDoctorReactions,
+  parseNoteClassQuery,
   toPortalPayload,
   type ReactionMap,
 } from "@/lib/doctor-audits";
@@ -17,6 +18,10 @@ export const runtime = "nodejs";
  * READ-ONLY. The two write paths are separate routes (./react and ./respond) with independent
  * flags; this one only ever reads. What it gained in v1 is `my_reaction` on each signal — the
  * doctor's own private reaction, read back so the card can show what they recorded.
+ *
+ * Optional query `note_class=opd|discharge_summary|ot` is passed through to Even-CDMSS
+ * doctor-audits so a mixed OPD+DS inbox can be filtered server-side. Omit (or `all`) for the
+ * full list. Invalid values are ignored the same way as omit.
  *
  * ⚠️ THREE FAILURES, THREE DIFFERENT ANSWERS — and none of them is an empty list ────────────────
  *
@@ -45,7 +50,7 @@ export const runtime = "nodejs";
  * ship report. It mirrors the existing lookup in api/physicians/[id]/opd-signals, tagged-template
  * form, and reads exactly one column.
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
   const p = await getCurrentPhysician();
   if (!p) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
 
@@ -63,8 +68,14 @@ export async function GET() {
   }
   if (!uid) return NextResponse.json({ ok: true, mapped: false, signals: [] });
 
+  const noteClass = parseNoteClassQuery(request.nextUrl.searchParams.get("note_class"));
+
   try {
-    const upstream = await fetchDoctorAudits(uid, { window: 90, status: "all" });
+    const upstream = await fetchDoctorAudits(uid, {
+      window: 90,
+      status: "all",
+      ...(noteClass ? { note_class: noteClass } : {}),
+    });
     let reactions: ReactionMap | null = null;
     try {
       reactions = await fetchDoctorReactions(uid, p.physicianId);

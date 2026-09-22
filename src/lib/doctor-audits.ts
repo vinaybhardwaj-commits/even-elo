@@ -66,6 +66,34 @@ export interface DoctorSafeTriage {
 
 export type AuditStatus = "routed" | "responded" | "escalated" | "ruled" | "closed";
 
+/** Canonical note class from Even-CDMSS. Older payloads omit it — treat as OPD. */
+export type NoteClass = "opd" | "discharge_summary" | "ot";
+
+export const NOTE_CLASSES: readonly NoteClass[] = ["opd", "discharge_summary", "ot"];
+
+/** PURE. Unknown / missing → `opd` so a mixed inbox stays scannable for older signals. */
+export function normalizeNoteClass(raw: unknown): NoteClass {
+  if (raw === "opd" || raw === "discharge_summary" || raw === "ot") return raw;
+  return "opd";
+}
+
+/** Human labels for the per-card badge (Discharge, not the chip's longer "Discharge summary"). */
+export function noteClassLabel(nc: NoteClass): string {
+  if (nc === "discharge_summary") return "Discharge";
+  if (nc === "ot") return "OT";
+  return "OPD";
+}
+
+/**
+ * PURE. Query string → filter value for the CDMSS call.
+ * `all` / empty / invalid → null (omit the param so upstream returns the mixed inbox).
+ */
+export function parseNoteClassQuery(raw: string | null | undefined): NoteClass | null {
+  if (!raw || raw === "all") return null;
+  if (raw === "opd" || raw === "discharge_summary" || raw === "ot") return raw;
+  return null;
+}
+
 /** One signal exactly as upstream sends it. */
 export interface DoctorAuditSignal {
   reference: string;              // EHRC-AUD-YYYY-NNNN
@@ -85,6 +113,8 @@ export interface DoctorAuditSignal {
   response: unknown | null;
   ruling: unknown | null;
   triage?: DoctorSafeTriage | null;
+  /** Optional on older CDMSS payloads; portal normalises missing → `opd`. */
+  note_class?: NoteClass | string | null;
 }
 
 /** The upstream envelope. `metrics` is typed so the strip is visible, never so it can be rendered. */
@@ -106,9 +136,13 @@ export type ReactionMap = Record<string, PortalReaction | undefined>;
 
 /** A signal as the portal is allowed to see it — the lateness instruments and the CDMSS join key
  *  removed, the doctor's own reaction added. Omitting the three in the TYPE is what makes the strip
- *  enforceable rather than habitual. */
-export type PortalAuditSignal = Omit<DoctorAuditSignal, "overdue" | "sla_due_at" | "doctor_uid"> & {
+ *  enforceable rather than habitual. `note_class` is always present after normalisation. */
+export type PortalAuditSignal = Omit<
+  DoctorAuditSignal,
+  "overdue" | "sla_due_at" | "doctor_uid" | "note_class"
+> & {
   my_reaction: PortalReaction | null;
+  note_class: NoteClass;
 };
 
 export interface PortalFindingsPayload {
@@ -127,7 +161,7 @@ export interface PortalFindingsPayload {
  */
 export async function fetchDoctorAudits(
   doctorUid: string,
-  params: { window: number; status: string },
+  params: { window: number; status: string; note_class?: NoteClass },
 ): Promise<DoctorAuditsUpstream> {
   const key = process.env.GOV_API_KEY;
   if (!key) throw new Error("GOV_API_KEY not configured");
@@ -136,6 +170,7 @@ export async function fetchDoctorAudits(
     window: String(params.window),
     status: params.status,
   });
+  if (params.note_class) qs.set("note_class", params.note_class);
   const res = await fetch(`${BASE}/api/governance/doctor-audits?${qs.toString()}`, {
     headers: { "x-api-key": key },
     cache: "no-store",
@@ -230,6 +265,7 @@ export function toPortalSignal(
             typeof s.triage.policy_version === "string" ? s.triage.policy_version : null,
         }
       : null,
+    note_class: normalizeNoteClass(s.note_class),
     my_reaction: myReaction,
   };
 }

@@ -12,7 +12,10 @@ import {
   type CatOutcome,
 } from "../findings-actions";
 import {
+  normalizeNoteClass,
   normalizeReactions,
+  noteClassLabel,
+  parseNoteClassQuery,
   toPortalPayload,
   toPortalSignal,
   type DoctorAuditSignal,
@@ -127,6 +130,44 @@ describe("toPortalPayload: the strip still holds, and now carries my_reaction", 
       rationale: "Route for physician review",
       policy_version: "triage-v2",
     });
+  });
+
+  it("defaults missing note_class to opd and preserves a known class", () => {
+    expect(toPortalSignal(signal()).note_class).toBe("opd");
+    expect(toPortalSignal(signal({ note_class: null })).note_class).toBe("opd");
+    expect(toPortalSignal(signal({ note_class: "bogus" })).note_class).toBe("opd");
+    expect(toPortalSignal(signal({ note_class: "discharge_summary" })).note_class).toBe(
+      "discharge_summary",
+    );
+    expect(toPortalSignal(signal({ note_class: "ot" })).note_class).toBe("ot");
+  });
+});
+
+describe("note_class helpers", () => {
+  it("normalizeNoteClass treats missing and unknown as opd", () => {
+    expect(normalizeNoteClass(undefined)).toBe("opd");
+    expect(normalizeNoteClass(null)).toBe("opd");
+    expect(normalizeNoteClass("")).toBe("opd");
+    expect(normalizeNoteClass("OPD")).toBe("opd");
+    expect(normalizeNoteClass("opd")).toBe("opd");
+    expect(normalizeNoteClass("discharge_summary")).toBe("discharge_summary");
+    expect(normalizeNoteClass("ot")).toBe("ot");
+  });
+
+  it("parseNoteClassQuery only passes the three canonical values", () => {
+    expect(parseNoteClassQuery(null)).toBeNull();
+    expect(parseNoteClassQuery("")).toBeNull();
+    expect(parseNoteClassQuery("all")).toBeNull();
+    expect(parseNoteClassQuery("bogus")).toBeNull();
+    expect(parseNoteClassQuery("opd")).toBe("opd");
+    expect(parseNoteClassQuery("discharge_summary")).toBe("discharge_summary");
+    expect(parseNoteClassQuery("ot")).toBe("ot");
+  });
+
+  it("noteClassLabel uses the short badge labels", () => {
+    expect(noteClassLabel("opd")).toBe("OPD");
+    expect(noteClassLabel("discharge_summary")).toBe("Discharge");
+    expect(noteClassLabel("ot")).toBe("OT");
   });
 });
 
@@ -418,5 +459,47 @@ describe("with the respond flag off the card shows no workflow controls", () => 
     expect(route).toContain("const clientRequestId = randomUUID()");
     expect(actions).toContain("client_request_id: input.clientRequestId");
     expect(actions).toContain('"Idempotency-Key": input.clientRequestId');
+  });
+});
+
+describe("note_class filter chip, BFF pass-through, and badge", () => {
+  it("the findings GET parses note_class and forwards it to fetchDoctorAudits", () => {
+    const src = SRC(FINDINGS_ROUTE);
+    expect(src).toContain("parseNoteClassQuery");
+    expect(src).toContain('request.nextUrl.searchParams.get("note_class")');
+    expect(src).toContain("note_class: noteClass");
+    expect(src).toContain("fetchDoctorAudits");
+  });
+
+  it("fetchDoctorAudits only appends note_class when a class is selected", () => {
+    const src = SRC("src/lib/doctor-audits.ts");
+    expect(src).toContain("if (params.note_class) qs.set(\"note_class\", params.note_class)");
+    expect(src).toContain("note_class: normalizeNoteClass(s.note_class)");
+  });
+
+  it("the Findings panel has All / OPD / Discharge summary / OT chips and refetches with note_class", () => {
+    const src = SRC(CARD);
+    expect(src).toContain('["all", "All"]');
+    expect(src).toContain('["opd", "OPD"]');
+    expect(src).toContain('["discharge_summary", "Discharge summary"]');
+    expect(src).toContain('["ot", "OT"]');
+    expect(src).toContain("noteClassFilter");
+    expect(src).toContain("`?note_class=${encodeURIComponent(noteClassFilter)}`");
+    expect(src).toContain("fetch(`/api/portal/findings${qs}`)");
+  });
+
+  it("each SignalCard renders the note_class badge via noteClassLabel", () => {
+    const src = SRC(CARD);
+    const card = src.slice(src.indexOf("function SignalCard"), src.indexOf("export function FindingsForDoctor"));
+    expect(card).toContain("noteClassLabel(s.note_class)");
+    expect(SRC("src/lib/doctor-audits.ts")).toContain('return "Discharge"');
+  });
+
+  it("respond verbs and Row B are unchanged by the note_class work", () => {
+    const src = SRC(CARD);
+    expect(src).toContain('send("agree")');
+    expect(src).toContain('send("disagree")');
+    expect(src).toContain('send("needs_clarification")');
+    expect(src).toContain("Response · goes to your care manager");
   });
 });
