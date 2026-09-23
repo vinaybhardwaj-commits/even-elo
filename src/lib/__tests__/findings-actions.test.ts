@@ -12,10 +12,12 @@ import {
   type CatOutcome,
 } from "../findings-actions";
 import {
+  doctorSafeTriageText,
   normalizeNoteClass,
   normalizeReactions,
   noteClassLabel,
   parseNoteClassQuery,
+  toDoctorSafeTriage,
   toPortalPayload,
   toPortalSignal,
   type DoctorAuditSignal,
@@ -130,6 +132,52 @@ describe("toPortalPayload: the strip still holds, and now carries my_reaction", 
       rationale: "Route for physician review",
       policy_version: "triage-v2",
     });
+  });
+
+  it("omits bot triage rationale and shadow-policy ids, and keeps clinical copy", () => {
+    expect(doctorSafeTriageText("")).toBeNull();
+    expect(doctorSafeTriageText("   ")).toBeNull();
+    expect(doctorSafeTriageText("jev:route conf=0.82; hard_bar=1; should_route=true")).toBeNull();
+    expect(doctorSafeTriageText("  jev:route")).toBeNull();
+    expect(doctorSafeTriageText("note should_route=yes")).toBeNull();
+    expect(doctorSafeTriageText("blocked on hard_bar")).toBeNull();
+    expect(doctorSafeTriageText("conf=0.4")).toBeNull();
+    expect(doctorSafeTriageText("triage-shadow-policy/0.1.3")).toBeNull();
+    expect(doctorSafeTriageText("triage-shadow-policy/0.1.x")).toBeNull();
+    expect(doctorSafeTriageText("triage_shadow_policy/0.2.0")).toBeNull();
+    expect(doctorSafeTriageText("Route for physician review")).toBe("Route for physician review");
+    expect(doctorSafeTriageText("  triage-v2  ")).toBe("triage-v2");
+
+    const hidden = toPortalSignal(
+      signal({
+        triage: {
+          rationale: "jev:route conf=0.9; hard_bar; should_route=1",
+          policy_version: "triage-shadow-policy/0.1.4",
+        },
+      }),
+    );
+    expect(hidden.triage).toBeNull();
+    expect(JSON.stringify(hidden)).not.toContain("jev:");
+    expect(JSON.stringify(hidden)).not.toContain("triage-shadow-policy");
+
+    const mixed = toPortalSignal(
+      signal({
+        triage: {
+          rationale: "Route for physician review",
+          policy_version: "triage-shadow-policy/0.1.x",
+        },
+      }),
+    );
+    expect(mixed.triage).toEqual({
+      rationale: "Route for physician review",
+      policy_version: null,
+    });
+    expect(
+      toDoctorSafeTriage({
+        rationale: "jev:route",
+        policy_version: "triage-v2",
+      }),
+    ).toEqual({ rationale: null, policy_version: "triage-v2" });
   });
 
   it("defaults missing note_class to opd and preserves a known class", () => {
@@ -493,6 +541,18 @@ describe("note_class filter chip, BFF pass-through, and badge", () => {
     const card = src.slice(src.indexOf("function SignalCard"), src.indexOf("export function FindingsForDoctor"));
     expect(card).toContain("noteClassLabel(s.note_class)");
     expect(SRC("src/lib/doctor-audits.ts")).toContain('return "Discharge"');
+  });
+
+  it("SignalCard shows triage only after doctorSafeTriageText", () => {
+    const src = SRC(CARD);
+    const card = src.slice(src.indexOf("function SignalCard"), src.indexOf("export function FindingsForDoctor"));
+    expect(card).toContain("doctorSafeTriageText(s.triage?.rationale)");
+    expect(card).toContain("doctorSafeTriageText(s.triage?.policy_version)");
+    expect(card).toContain("{triageRationale}");
+    expect(card).toContain("Policy {triagePolicy}");
+    expect(card).not.toContain("{s.triage.rationale}");
+    expect(card).not.toContain("{s.triage.policy_version}");
+    expect(card).toContain("(triageRationale || triagePolicy)");
   });
 
   it("respond verbs and Row B are unchanged by the note_class work", () => {
