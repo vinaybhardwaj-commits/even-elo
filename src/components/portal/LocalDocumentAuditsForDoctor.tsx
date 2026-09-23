@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { authorAttribution } from "@/lib/document-audits";
+import { localCardPdfHref } from "@/lib/findings-pdf";
 
 interface LocalFinding {
   finding_id: string;
@@ -88,69 +89,72 @@ export function LocalDocumentAuditsForDoctor() {
         {advisory ? <p className="mt-1 text-[12.5px] text-stone-500 leading-snug">{advisory}</p> : null}
       </div>
       <div className="divide-y divide-stone-100 px-5">
-        {findings.map((f) => (
-          <div key={f.finding_id} className="py-4">
-            <div className="text-sm font-semibold text-stone-900">{f.finding_label}</div>
-            <div className="mt-1 text-[12px] text-stone-500">
-              {f.doc_type_label}
-              {f.external_ref ? ` · ${f.external_ref}` : ""}
-              {` · ${authorAttribution(f.authored_by_name)}`}
-            </div>
-            {f.finding_body ? (
-              <p className="mt-2 text-[13px] text-stone-600 leading-snug">{f.finding_body}</p>
-            ) : null}
-            {f.pdf_status === "available" && f.pdf_url ? (
-              <a
-                href={f.pdf_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="mt-3 inline-flex rounded-lg border border-brand bg-brand/10 px-3 py-1.5 text-[12.5px] font-semibold text-brand hover:bg-brand hover:text-white"
-              >
-                Download audit findings PDF
-              </a>
-            ) : (
-              <p className="mt-3 text-[12px] text-stone-500">Audit findings PDF is not available from CDMSS yet.</p>
-            )}
-            {f.response_owner === "pipe_a" ? (
-              <p className="mt-3 text-[12px] text-stone-600 bg-stone-50 border border-stone-100 rounded-md px-3 py-2">
-                This issue is on your Findings list
-                {f.signal_reference ? ` (${f.signal_reference})` : ""}. Respond there so you are not asked twice.
-              </p>
-            ) : f.doctor_response_verb ? (
-              <p className="mt-3 text-[12px] text-stone-600 bg-stone-50 border border-stone-100 rounded-md px-3 py-2">
-                You responded: {f.doctor_response_verb}
-                {f.doctor_response_comment ? ` · ${f.doctor_response_comment}` : ""}
-              </p>
-            ) : (
-              <div className="mt-3 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  disabled={busyId === f.finding_id}
-                  onClick={() => respond(f.finding_id, "agree")}
-                  className="px-3 py-2 rounded-lg text-[12.5px] font-medium border bg-white border-stone-200 text-stone-700 disabled:opacity-50"
-                >
-                  Agree
-                </button>
-                <button
-                  type="button"
-                  disabled={busyId === f.finding_id}
-                  onClick={() => respond(f.finding_id, "disagree")}
-                  className="px-3 py-2 rounded-lg text-[12.5px] font-medium border bg-white border-stone-200 text-stone-700 disabled:opacity-50"
-                >
-                  Disagree
-                </button>
-                <button
-                  type="button"
-                  disabled={busyId === f.finding_id}
-                  onClick={() => respond(f.finding_id, "needs_clarification")}
-                  className="px-3 py-2 rounded-lg text-[12.5px] font-medium border bg-white border-stone-200 text-stone-700 disabled:opacity-50"
-                >
-                  Needs clarification
-                </button>
+        {findings.map((f) => {
+          const pdfHref = localCardPdfHref(f.pdf_url, f.pdf_status);
+          return (
+            <div key={f.finding_id} className="py-4">
+              <div className="text-sm font-semibold text-stone-900">{f.finding_label}</div>
+              <div className="mt-1 text-[12px] text-stone-500">
+                {f.doc_type_label}
+                {f.external_ref ? ` · ${f.external_ref}` : ""}
+                {` · ${authorAttribution(f.authored_by_name)}`}
               </div>
-            )}
-          </div>
-        ))}
+              {f.finding_body ? (
+                <p className="mt-2 text-[13px] text-stone-600 leading-snug">{f.finding_body}</p>
+              ) : null}
+              {pdfHref ? (
+                <a
+                  href={pdfHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-3 inline-flex rounded-lg border border-brand bg-brand/10 px-3 py-1.5 text-[12.5px] font-semibold text-brand hover:bg-brand hover:text-white"
+                >
+                  Download audit findings PDF
+                </a>
+              ) : (
+                <p className="mt-3 text-[12px] text-stone-500">Audit findings PDF is not available from CDMSS yet.</p>
+              )}
+              {f.response_owner === "pipe_a" ? (
+                <p className="mt-3 text-[12px] text-stone-600 bg-stone-50 border border-stone-100 rounded-md px-3 py-2">
+                  This issue is on your Findings list
+                  {f.signal_reference ? ` (${f.signal_reference})` : ""}. Respond there so you are not asked twice.
+                </p>
+              ) : f.doctor_response_verb ? (
+                <p className="mt-3 text-[12px] text-stone-600 bg-stone-50 border border-stone-100 rounded-md px-3 py-2">
+                  You responded: {f.doctor_response_verb}
+                  {f.doctor_response_comment ? ` · ${f.doctor_response_comment}` : ""}
+                </p>
+              ) : (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={busyId === f.finding_id}
+                    onClick={() => respond(f.finding_id, "agree")}
+                    className="px-3 py-2 rounded-lg text-[12.5px] font-medium border bg-white border-stone-200 text-stone-700 disabled:opacity-50"
+                  >
+                    Agree
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busyId === f.finding_id}
+                    onClick={() => respond(f.finding_id, "disagree")}
+                    className="px-3 py-2 rounded-lg text-[12.5px] font-medium border bg-white border-stone-200 text-stone-700 disabled:opacity-50"
+                  >
+                    Disagree
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busyId === f.finding_id}
+                    onClick={() => respond(f.finding_id, "needs_clarification")}
+                    className="px-3 py-2 rounded-lg text-[12.5px] font-medium border bg-white border-stone-200 text-stone-700 disabled:opacity-50"
+                  >
+                    Needs clarification
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
       {err ? <div className="px-5 pb-4 text-[12.5px] text-rose-600">{err}</div> : null}
     </section>

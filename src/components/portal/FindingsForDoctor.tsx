@@ -7,6 +7,7 @@ import {
   type NoteClass,
   type PortalAuditSignal,
 } from "@/lib/doctor-audits";
+import { findingsCardPdfHref, hasAttachedInstances } from "@/lib/findings-pdf";
 
 /**
  * Portal "Findings" panel (WM2) — the governance findings routed to this physician.
@@ -316,6 +317,34 @@ function ResponseRow({
   );
 }
 
+function PdfDownload({
+  href,
+  missingNote,
+  bordered = false,
+}: {
+  href: string | null;
+  missingNote: boolean;
+  bordered?: boolean;
+}) {
+  const body = href ? (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="mt-3 inline-flex rounded-lg border border-brand bg-brand/10 px-3 py-1.5 text-[12.5px] font-semibold text-brand hover:bg-brand hover:text-white"
+    >
+      Download audit findings PDF
+    </a>
+  ) : missingNote ? (
+    <p className="mt-3 text-[12px] text-stone-500">
+      Audit findings PDF is not available for this finding.
+    </p>
+  ) : null;
+  if (!body) return null;
+  if (!bordered) return body;
+  return <div className="mt-3 pt-3 border-t border-stone-100">{body}</div>;
+}
+
 function SignalCard({
   s,
   reactions,
@@ -331,7 +360,12 @@ function SignalCard({
 }) {
   const rep = s.representative;
   const recorded = readResponse(s.response);
-  const canRespond = RESPONDABLE.includes(s.response_required) && s.status === "routed";
+  const pdfHref = findingsCardPdfHref(s);
+  const attached = hasAttachedInstances(s.instances);
+  const canRespond =
+    RESPONDABLE.includes(s.response_required) && s.status === "routed" && attached;
+  const orphanShell =
+    RESPONDABLE.includes(s.response_required) && s.status === "routed" && !attached;
   return (
     <div className="border border-stone-200 rounded-lg px-4 py-3.5">
       <div className="flex flex-wrap items-start gap-x-3 gap-y-1.5">
@@ -347,7 +381,7 @@ function SignalCard({
             STATUS_TONE[s.status] ?? "bg-stone-100 text-stone-700"
           }`}
         >
-          {respond && s.status === "routed"
+          {respond && s.status === "routed" && attached
             ? "awaiting your response"
             : STATUS_LABEL[s.status] ?? s.status}
         </span>
@@ -397,31 +431,11 @@ function SignalCard({
               )}
             </div>
           )}
-          {s.pdf_url ? (
-            <a
-              href={s.pdf_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-3 inline-flex rounded-lg border border-brand bg-brand/10 px-3 py-1.5 text-[12.5px] font-semibold text-brand hover:bg-brand hover:text-white"
-            >
-              Download audit findings PDF
-            </a>
-          ) : null}
+          <PdfDownload href={pdfHref} missingNote={!attached} />
         </div>
       )}
 
-      {!rep && s.pdf_url ? (
-        <div className="mt-3 pt-3 border-t border-stone-100">
-          <a
-            href={s.pdf_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex rounded-lg border border-brand bg-brand/10 px-3 py-1.5 text-[12.5px] font-semibold text-brand hover:bg-brand hover:text-white"
-          >
-            Download audit findings PDF
-          </a>
-        </div>
-      ) : null}
+      {!rep ? <PdfDownload href={pdfHref} missingNote={!attached} bordered /> : null}
 
       {s.triage && (s.triage.rationale || s.triage.policy_version) && (
         <div className={rowCls}>
@@ -453,6 +467,10 @@ function SignalCard({
           </div>
         ) : canRespond ? (
           <ResponseRow s={s} onRefetch={onRefetch} onReplace={onReplace} />
+        ) : orphanShell ? (
+          <p className="mt-3 text-[12px] text-stone-600 bg-stone-50 border border-stone-100 rounded-md px-3 py-2 leading-snug">
+            This finding has no attached instances yet, so a response cannot be recorded here.
+          </p>
         ) : null
       ) : (
         /* The reply channel, stated in words because there is deliberately no control to press. */
