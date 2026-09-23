@@ -64,6 +64,42 @@ export interface DoctorSafeTriage {
   policy_version: string | null;
 }
 
+/**
+ * PURE. Doctor-visible triage copy, or null.
+ *
+ * Empty strings are not clinical context. Jev route dumps (`jev:…`, `should_route=`,
+ * `hard_bar`, `conf=`) and bot policy ids (`triage-shadow-policy/…` and the same
+ * shadow-policy family) are internals. Those values are omitted. This does not
+ * invent replacement copy and does not write upstream.
+ */
+export function doctorSafeTriageText(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const text = raw.trim();
+  if (!text) return null;
+  const lower = text.toLowerCase();
+  if (lower.includes("jev:")) return null;
+  if (
+    lower.includes("should_route=") ||
+    lower.includes("hard_bar") ||
+    lower.includes("conf=")
+  ) {
+    return null;
+  }
+  if (/triage[-_\s]?shadow|shadow[-_\s]?policy/i.test(lower)) return null;
+  return text;
+}
+
+/** PURE. Keep only doctor-safe triage fields. Null when nothing safe remains. */
+export function toDoctorSafeTriage(
+  triage: { rationale?: unknown; policy_version?: unknown } | null | undefined,
+): DoctorSafeTriage | null {
+  if (!triage) return null;
+  const rationale = doctorSafeTriageText(triage.rationale);
+  const policy_version = doctorSafeTriageText(triage.policy_version);
+  if (!rationale && !policy_version) return null;
+  return { rationale, policy_version };
+}
+
 export type AuditStatus = "routed" | "responded" | "escalated" | "ruled" | "closed";
 
 /** Canonical note class from Even-CDMSS. Older payloads omit it — treat as OPD. */
@@ -240,7 +276,9 @@ export function toReaction(v: unknown): PortalReaction | null {
  *
  * `overdue`, `sla_due_at` and `doctor_uid` never appear because they are never copied. `my_reaction`
  * is supplied by the caller — it comes from a different endpoint, so it is a parameter rather than
- * a field read off `s`.
+ * a field read off `s`. Triage is copied only after `toDoctorSafeTriage`: bot rationale and
+ * shadow-policy ids are dropped here so they never reach the browser. The card applies the same
+ * check again at render.
  */
 export function toPortalSignal(
   s: DoctorAuditSignal,
@@ -281,13 +319,7 @@ export function toPortalSignal(
     routed_at: s.routed_at ?? null,
     response: s.response ?? null,
     ruling: s.ruling ?? null,
-    triage: s.triage
-      ? {
-          rationale: typeof s.triage.rationale === "string" ? s.triage.rationale : null,
-          policy_version:
-            typeof s.triage.policy_version === "string" ? s.triage.policy_version : null,
-        }
-      : null,
+    triage: toDoctorSafeTriage(s.triage),
     note_class: normalizeNoteClass(s.note_class),
     my_reaction: myReaction,
     pdf_url,

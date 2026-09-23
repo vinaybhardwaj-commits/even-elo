@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   ADVISORY_FALLBACK,
+  doctorSafeTriageText,
   noteClassLabel,
   type NoteClass,
   type PortalAuditSignal,
@@ -332,6 +333,10 @@ function SignalCard({
   const rep = s.representative;
   const recorded = readResponse(s.response);
   const canRespond = RESPONDABLE.includes(s.response_required) && s.status === "routed";
+  // Same omit-when-unsafe check as the BFF map. Already-minted cards and any residual
+  // leak still must not show Jev route dumps or shadow-policy ids.
+  const triageRationale = doctorSafeTriageText(s.triage?.rationale);
+  const triagePolicy = doctorSafeTriageText(s.triage?.policy_version);
   return (
     <div className="border border-stone-200 rounded-lg px-4 py-3.5">
       <div className="flex flex-wrap items-start gap-x-3 gap-y-1.5">
@@ -423,17 +428,17 @@ function SignalCard({
         </div>
       ) : null}
 
-      {s.triage && (s.triage.rationale || s.triage.policy_version) && (
+      {(triageRationale || triagePolicy) && (
         <div className={rowCls}>
           <div className={rowHeadCls}>Triage context</div>
-          {s.triage.rationale && (
+          {triageRationale && (
             <p className="mt-1 text-[12.5px] text-stone-600 leading-snug break-words">
-              {s.triage.rationale}
+              {triageRationale}
             </p>
           )}
-          {s.triage.policy_version && (
+          {triagePolicy && (
             <p className="mt-1 text-[11px] text-stone-400">
-              Policy {s.triage.policy_version}
+              Policy {triagePolicy}
             </p>
           )}
         </div>
