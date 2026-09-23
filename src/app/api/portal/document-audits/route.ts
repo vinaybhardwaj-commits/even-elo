@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getCurrentPhysician } from "@/lib/physician-auth";
 import { loadPortalRoutedFindings } from "@/lib/document-audits-db";
 import { portalPdfStatus, portalResponseOwner, DOC_TYPE_LABEL, normalizeDocType } from "@/lib/document-audits";
+import { presentPortalPdf } from "@/lib/findings-pdf";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -29,7 +30,7 @@ export async function GET() {
       authored_at: r.authored_at,
       doc_type: docType,
       doc_type_label: docType ? DOC_TYPE_LABEL[docType] : r.doc_type,
-      ...portalPdfStatus(r.cdmss_pdf_url),
+      ...presentPortalPdf(portalPdfStatus(r.cdmss_pdf_url).pdf_url),
       response_owner: portalResponseOwner(r.response_owner, r.signal_reference),
       signal_reference: r.signal_reference,
       doctor_response_verb: r.doctor_response_verb,

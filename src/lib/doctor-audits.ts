@@ -40,6 +40,8 @@
  * to the governance snapshot store's lifecycle.
  */
 
+import { findingsCardPdfHref } from "@/lib/findings-pdf";
+
 const BASE = process.env.GOV_API_BASE || "https://even-cdmss.vercel.app";
 
 /** The advisory framing, verbatim (§3). Used only as a fallback when upstream omits it — the
@@ -143,7 +145,10 @@ export type PortalAuditSignal = Omit<
 > & {
   my_reaction: PortalReaction | null;
   note_class: NoteClass;
-  /** CDMSS audit-findings PDF when available (Stage 4 lock). */
+  /**
+   * Same-origin portal proxy for the audit-findings PDF, or null when this
+   * signal has no real audit UUID or no instances. Never a CDMSS URL.
+   */
   pdf_url: string | null;
 };
 
@@ -235,37 +240,57 @@ export function toReaction(v: unknown): PortalReaction | null {
   return { reaction: o.reaction, at: typeof o.at === "string" ? o.at : "" };
 }
 
+/** Representative fields the card renders. Drops a nested CDMSS `pdf_url`. */
+function representativeForPortal(rep: AuditRepresentative | null): AuditRepresentative | null {
+  if (!rep || typeof rep !== "object") return null;
+  const citations = Array.isArray(rep.citations)
+    ? rep.citations
+        .filter((c) => c && typeof c === "object")
+        .map((c) => ({
+          n: typeof c.n === "number" ? c.n : 0,
+          title: typeof c.title === "string" ? c.title : "",
+          url: typeof c.url === "string" ? c.url : "",
+        }))
+    : [];
+  return {
+    audit_id: typeof rep.audit_id === "string" ? rep.audit_id : "",
+    finding_ref: typeof rep.finding_ref === "string" ? rep.finding_ref : "",
+    subject: typeof rep.subject === "string" ? rep.subject : "",
+    verdict: typeof rep.verdict === "string" ? rep.verdict : "",
+    rationale: typeof rep.rationale === "string" ? rep.rationale : "",
+    note_date: rep.note_date ?? null,
+    citations,
+  };
+}
+
 /**
  * PURE. One upstream signal → the portal's view of it, built by whitelist.
  *
  * `overdue`, `sla_due_at` and `doctor_uid` never appear because they are never copied. `my_reaction`
  * is supplied by the caller — it comes from a different endpoint, so it is a parameter rather than
- * a field read off `s`.
+ * a field read off `s`. `pdf_url` is the portal proxy, never the CDMSS host.
  */
 export function toPortalSignal(
   s: DoctorAuditSignal,
   myReaction: PortalReaction | null = null,
 ): PortalAuditSignal {
-  const rep = s.representative ?? null;
+  const rawRep = s.representative ?? null;
+  const rep = representativeForPortal(rawRep);
   const pdfFromRep =
-    rep && typeof (rep as unknown as { pdf_url?: unknown }).pdf_url === "string"
-      ? ((rep as unknown as { pdf_url: string }).pdf_url as string)
+    rawRep && typeof (rawRep as unknown as { pdf_url?: unknown }).pdf_url === "string"
+      ? ((rawRep as unknown as { pdf_url: string }).pdf_url as string)
       : null;
   const pdfFromSignal =
     typeof (s as unknown as { pdf_url?: unknown }).pdf_url === "string"
       ? ((s as unknown as { pdf_url: string }).pdf_url as string)
       : null;
-  const base = process.env.GOV_API_BASE || "https://even-cdmss.vercel.app";
-  const pdfBuilt =
-    rep?.audit_id
-      ? `${base}/api/governance/audits/${encodeURIComponent(rep.audit_id)}/pdf`
-      : s.reference
-        ? `${base}/api/governance/audits/${encodeURIComponent(s.reference)}/pdf`
-        : null;
-  const pdf_url =
-    (pdfFromSignal && pdfFromSignal.startsWith("http") ? pdfFromSignal : null) ||
-    (pdfFromRep && pdfFromRep.startsWith("http") ? pdfFromRep : null) ||
-    pdfBuilt;
+  // Portal proxy only. A signal reference is not an audit id, and a
+  // zero-instance shell has nothing to download. The CDMSS URL 401s in the browser.
+  const pdf_url = findingsCardPdfHref({
+    instances: s.instances,
+    representative: rep,
+    pdf_url: pdfFromSignal || pdfFromRep,
+  });
 
   return {
     reference: s.reference,
