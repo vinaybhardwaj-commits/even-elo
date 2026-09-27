@@ -30,6 +30,7 @@ export function TopNav(props: { nav?: NavItem[] } = {}) {
 
 function TopNavV1({ nav }: { nav?: NavItem[] } = {}) {
   const [user, setUser] = useState<UserSummary | null>(null);
+  const [captureOn, setCaptureOn] = useState(false);
   useEffect(() => {
     fetch("/api/auth/me")
       .then((r) => r.json())
@@ -37,12 +38,18 @@ function TopNavV1({ nav }: { nav?: NavItem[] } = {}) {
         if (j.ok && j.user) setUser(j.user as UserSummary);
       })
       .catch(() => undefined);
+    fetch("/api/capture/status")
+      .then((r) => r.json())
+      .then((j: { ok?: boolean; enabled?: boolean }) => {
+        if (j.ok && j.enabled) setCaptureOn(true);
+      })
+      .catch(() => undefined);
   }, []);
 
   const showElo = !!user && user.is_super_admin; // Surgical Governance is super_admin-only (Users PRD #18)
   const showAdmin = !!user && user.is_super_admin;
   const showSafety = !!user && (user.is_super_admin || user.is_sgc_member);
-  const navItems: NavItem[] = nav ?? defaultNav(showElo, showAdmin, showSafety);
+  const navItems: NavItem[] = nav ?? defaultNav(showElo, showAdmin, showSafety, showElo && captureOn);
 
   return (
     <header className="bg-white border-b border-stone-200 sticky top-0 z-40">
@@ -85,7 +92,7 @@ function TopNavV1({ nav }: { nav?: NavItem[] } = {}) {
   );
 }
 
-function defaultNav(showElo: boolean, showAdmin: boolean, showSafety: boolean): NavItem[] {
+function defaultNav(showElo: boolean, showAdmin: boolean, showSafety: boolean, showCapture: boolean): NavItem[] {
   const items: NavItem[] = [
     { label: "Home", href: "/home" },
     { label: "Physician DB", href: "/physicians" },
@@ -96,6 +103,8 @@ function defaultNav(showElo: boolean, showAdmin: boolean, showSafety: boolean): 
   if (showSafety) items.push({ label: "Safety Report", href: "/safety/report" });
   if (showSafety) items.push({ label: "M&M", href: "/mm" }); // same SGC/super predicate (M&M PRD decision 13)
   if (showElo) items.push({ label: "Surgical ELO", href: "/surgical-governance" });
+  if (showCapture) items.push({ label: "Capture queue", href: "/surgical-governance/capture-queue" });
+  if (showCapture) items.push({ label: "OT sheets", href: "/surgical-governance/ot-sheets" });
   if (showAdmin) items.push({ label: "Admin", href: "/admin" });
   items.push({ label: "Guide", href: "/guide" });
   return items;

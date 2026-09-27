@@ -1348,5 +1348,51 @@ export const MIGRATIONS: Migration[] = [
       END $$;
     `,
   },
+  {
+    id: "032_gov_document_captures",
+    description:
+      "Stage 1 OT sheet capture — store-only queue. Images live in private Vercel Blob; this table keeps provenance and status. OCR columns stay null until Stage 2. Does not write surgical_cases.",
+    sql: `
+      CREATE TABLE IF NOT EXISTS gov_document_captures (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        hospital_code text NOT NULL DEFAULT 'EHRC',
+        uploaded_by text,
+        uploaded_at timestamptz NOT NULL DEFAULT now(),
+        user_agent text,
+        ip_hash text,
+        blob_url text,
+        blob_pathname text NOT NULL,
+        content_type text NOT NULL,
+        bytes integer NOT NULL CHECK (bytes >= 0),
+        original_filename text,
+        batch_id uuid,
+        photo_index integer,
+        status text NOT NULL DEFAULT 'queued'
+          CHECK (status IN (
+            'queued','stored','processing','classified','extracted','needs_review','failed','voided'
+          )),
+        doc_type text,
+        classify_confidence numeric,
+        extract_json jsonb,
+        extract_confidence numeric,
+        error text,
+        processed_at timestamptz,
+        linked_entity_type text,
+        linked_entity_id text,
+        voided_at timestamptz,
+        voided_by_profile_id uuid REFERENCES profiles(id) ON DELETE SET NULL,
+        void_reason text,
+        created_at timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_gov_doc_captures_status
+        ON gov_document_captures (status, uploaded_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_gov_doc_captures_hospital
+        ON gov_document_captures (hospital_code, uploaded_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_gov_doc_captures_batch
+        ON gov_document_captures (batch_id);
+      CREATE INDEX IF NOT EXISTS idx_gov_doc_captures_ip_recent
+        ON gov_document_captures (ip_hash, uploaded_at DESC);
+    `,
+  },
 ];
 

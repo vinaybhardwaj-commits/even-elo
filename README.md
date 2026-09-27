@@ -39,6 +39,24 @@ npm run dev
 
 Open <http://localhost:3000>.
 
+## OT sheet capture (Stage 1)
+
+Phone capture has no login. Staff review uses the existing Governance session (super admin), same as the rest of Surgical Governance.
+
+- Path, works before DNS: `/capture` on `governance.evenos.app` (and on Preview).
+- Host, when DNS points at this Vercel project: `upload.governance.evenos.app` rewrites `/` to the same capture page. Optional extra hostnames: `OT_CAPTURE_UPLOAD_HOSTS` (comma-separated).
+
+`FEATURE_OT_CAPTURE` defaults **off**. It is on only when the value is exactly `true`. Do not set that on Production until a separate go-ahead.
+
+Preview smoke:
+
+1. On the Preview environment set `FEATURE_OT_CAPTURE=true` and `BLOB_READ_WRITE_TOKEN` (private blob store). Optional `CAPTURE_IP_HASH_SALT`; otherwise the IP hash uses `JWT_SECRET`.
+2. Redeploy Preview. Apply the additive migration: `POST /api/admin/migrate`.
+3. Open `/capture`, submit one image. Expect a `gov_document_captures` row with status `queued` and a private blob. The response does not include a public blob URL. Staff open `/surgical-governance/capture-queue` (image bytes come from the authenticated proxy).
+4. With the flag unset or any value other than `true`, `POST /api/capture/upload` is rejected and the staff queue shows a flag-off state.
+
+Stage 1 does not call Vertex, does not create `gov_ot_tracking_sheets`, and does not write `surgical_cases`. `/surgical-governance/ot-sheets` stays an empty Stage 2 state.
+
 ## Database migrations
 
 ```bash

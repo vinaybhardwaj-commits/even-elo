@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { jwtVerify } from "jose";
+import { isPublicCaptureApi, isPublicCapturePage, isUploadCaptureHost } from "@/lib/capture/access";
 
 const COOKIE_NAME = "epi_session";
 
@@ -79,10 +80,23 @@ export async function middleware(request: NextRequest) {
   // doctors.evenos.app  → Doctor Portal (root redirects to /portal, which then
   //                       cascades to /portal/login if there's no physician session).
   // governance.evenos.app → Admin app served at root by default (no rewrite needed).
+  // upload.governance.evenos.app → phone capture shell (no auth). /capture remains
+  // the path fallback on the governance host before that DNS exists.
   // even-elo.vercel.app stays fully path-addressable for both surfaces.
   const host = (request.headers.get("host") || "").toLowerCase();
+  if (isUploadCaptureHost(host) && pathname === "/") {
+    const url = request.nextUrl.clone();
+    url.pathname = "/capture";
+    return NextResponse.rewrite(url);
+  }
   if (host.startsWith("doctors.") && pathname === "/") {
     return NextResponse.redirect(new URL("/portal", request.url));
+  }
+
+  // Phone capture: shared staff link, no Governance session.
+  // Staff queue, image proxy, and void stay behind the session below.
+  if (isPublicCapturePage(pathname) || isPublicCaptureApi(pathname)) {
+    return NextResponse.next();
   }
 
   // -- Physician portal: separate auth surface (epi_physician_session) --

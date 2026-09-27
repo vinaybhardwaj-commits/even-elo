@@ -74,6 +74,7 @@ function HonestyPill({ kind }: { kind: HonestyBadge }) {
 export function ShellV2() {
   const [user, setUser] = useState<UserSummary | null>(null);
   const [honesty, setHonesty] = useState<ShellHonesty | null>(null);
+  const [captureOn, setCaptureOn] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const pathname = usePathname();
 
@@ -88,6 +89,12 @@ export function ShellV2() {
       .then((r) => r.json())
       .then((j: ShellHonesty) => {
         if (j.ok) setHonesty(j);
+      })
+      .catch(() => undefined);
+    fetch("/api/capture/status")
+      .then((r) => r.json())
+      .then((j: { ok?: boolean; enabled?: boolean }) => {
+        if (j.ok && j.enabled) setCaptureOn(true);
       })
       .catch(() => undefined);
   }, []);
@@ -133,6 +140,9 @@ export function ShellV2() {
           show: isSuper,
           badge: honesty?.elo?.empty ? "empty" : undefined,
         },
+        { label: "Capture queue", href: "/surgical-governance/capture-queue", show: isSuper && captureOn },
+        { label: "OT sheets", href: "/surgical-governance/ot-sheets", show: isSuper && captureOn },
+        { label: "Phone capture", href: "/capture", show: isSuper && captureOn },
         { label: "Patient Feedback", href: "/incidents" },
         { label: "Incidents (e-IRIS)", href: "/safety", show: showIncidents },
         { label: "Safety Report", href: "/safety/report", show: showIncidents },
