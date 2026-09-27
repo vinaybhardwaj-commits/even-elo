@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { SurgicalCaptureNav } from "@/components/capture/SurgicalCaptureNav";
 import { TopNav } from "@/components/TopNav";
 import { HeadlineStrip, type HeadlineStat } from "@/components/shell/HeadlineStrip";
 import { adherencePresentation, outcomesLabContext, type EloCounts } from "@/lib/overview-modules";
@@ -37,6 +38,7 @@ export function SurgicalEloEmpty({ counts }: { counts: EloCounts | null }) {
           <span className="text-stone-400">/</span>
           <span className="font-semibold text-stone-900">Surgical ELO</span>
         </div>
+        <SurgicalCaptureNav current="home" />
 
         <h1 className="flex flex-wrap items-center gap-2 text-[1.55rem] font-bold tracking-tight text-stone-900">
           Surgical ELO
