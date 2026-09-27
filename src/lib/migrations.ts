@@ -1394,5 +1394,64 @@ export const MIGRATIONS: Migration[] = [
         ON gov_document_captures (ip_hash, uploaded_at DESC);
     `,
   },
+  {
+    id: "033_gov_ot_tracking_sheets",
+    description:
+      "Stage 2 OT sheet OCR. gov_ot_tracking_sheets linked by capture_id. Human review_status starts pending_human. surgical_case_id stays null until Stage 3 drops gov_ot_sheets_no_case_link_stage2. Does not write surgical_cases or OT stream cells.",
+    sql: `
+      ALTER TABLE gov_document_captures
+        ADD COLUMN IF NOT EXISTS prompt_version text,
+        ADD COLUMN IF NOT EXISTS model_id text;
+
+      CREATE TABLE IF NOT EXISTS gov_ot_tracking_sheets (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        capture_id uuid NOT NULL UNIQUE REFERENCES gov_document_captures(id) ON DELETE CASCADE,
+        hospital_code text NOT NULL,
+        uhid text,
+        ip_no text,
+        patient_name text,
+        surgery_date date,
+        ot_no text,
+        anesthesia text,
+        surgery_name text,
+        surgeon_name text,
+        asst_surgeon text,
+        anesthetist text,
+        antibiotic text,
+        antibiotic_at text,
+        scrub_nurse text,
+        technician text,
+        circulating_nurse text,
+        scheduled_at text,
+        wheel_in text,
+        sign_in text,
+        induction text,
+        time_out text,
+        incision text,
+        closure text,
+        sign_out text,
+        wheel_out text,
+        equipment_json jsonb,
+        notes_json jsonb,
+        surgical_case_id uuid,
+        review_status text NOT NULL DEFAULT 'pending_human'
+          CHECK (review_status IN ('auto', 'pending_human', 'approved', 'rejected')),
+        classify_confidence numeric,
+        extract_confidence numeric,
+        prompt_version text NOT NULL,
+        reviewed_by_profile_id uuid REFERENCES profiles(id) ON DELETE SET NULL,
+        reviewed_at timestamptz,
+        review_note text,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        CONSTRAINT gov_ot_sheets_no_case_link_stage2 CHECK (surgical_case_id IS NULL)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_gov_ot_sheets_hospital_review
+        ON gov_ot_tracking_sheets (hospital_code, review_status, surgery_date DESC);
+      CREATE INDEX IF NOT EXISTS idx_gov_ot_sheets_created
+        ON gov_ot_tracking_sheets (created_at DESC);
+    `,
+  },
 ];
 

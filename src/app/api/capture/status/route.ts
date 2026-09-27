@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
-import { isOtCaptureEnabled } from "@/lib/capture/access";
+import { isOtCaptureEnabled, isOtCaptureOcrEnabled } from "@/lib/capture/access";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -11,8 +11,10 @@ export async function GET() {
   if (!user || user.status !== "active") {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
+  const enabled = isOtCaptureEnabled() && user.is_super_admin === true;
   return NextResponse.json({
     ok: true,
-    enabled: isOtCaptureEnabled() && user.is_super_admin === true,
+    enabled,
+    ocr: enabled && isOtCaptureOcrEnabled(),
   });
 }

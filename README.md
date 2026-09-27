@@ -55,7 +55,21 @@ Preview smoke:
 3. Open `/capture`, submit one image. Expect a `gov_document_captures` row with status `queued` and a private blob. The response does not include a public blob URL. Staff open the queue from inside Surgical Governance (`/surgical-governance`, then Capture queue). It is not a link on the main Governance home or sidebar. Image bytes come from the authenticated proxy.
 4. With the flag unset or any value other than `true`, `POST /api/capture/upload` is rejected and the staff queue shows a flag-off state.
 
-Stage 1 does not call Vertex, does not create `gov_ot_tracking_sheets`, and does not write `surgical_cases`. `/surgical-governance/ot-sheets` stays an empty Stage 2 state.
+With `FEATURE_OT_CAPTURE_OCR` unset, Stage 1 behavior holds: upload does not call Vertex and does not write `surgical_cases`.
+
+## OT sheet OCR (Stage 2)
+
+`FEATURE_OT_CAPTURE_OCR` defaults **off**. It is on only when the value is exactly `true`. Do not set it on Production in this stage. `FEATURE_OT_CAPTURE` is unchanged.
+
+Preview smoke:
+
+1. On Preview set `FEATURE_OT_CAPTURE=true`, `FEATURE_OT_CAPTURE_OCR=true`, `BLOB_READ_WRITE_TOKEN`, and the existing Vertex secrets (`GOOGLE_VERTEX_PROJECT`, `GOOGLE_VERTEX_LOCATION`, `GOOGLE_VERTEX_MODEL`, `VERTEX_CLIENT_EMAIL`, `VERTEX_PRIVATE_KEY`). Leave `FEATURE_VERTEX_SUMMARIES` as it is — OCR does not use that flag.
+2. Redeploy Preview. Apply the additive migration: `POST /api/admin/migrate` (adds `gov_ot_tracking_sheets`).
+3. Open `/capture` and submit one JPEG of an OT tracking sheet. The response stays `queued`. Within about five minutes Vercel Cron calls `/api/cron/ot-capture-ocr`, or a super admin opens Surgical Governance → Capture queue and clicks **Process queued**.
+4. A classified OT sheet appears at `/surgical-governance/ot-sheets` with `review_status` `pending_human`. Open it, edit a field, Save, then Approve or Reject. The image is the authenticated capture proxy. The case link stays “not linked (Stage 3)”.
+5. With `FEATURE_OT_CAPTURE_OCR` unset, `POST /api/capture/process` and the cron both no-op (`skipped: flag_off`) and queued rows stay queued.
+
+OCR does not mint `surgical_cases` and does not fill OT stream cells.
 
 ## Database migrations
 

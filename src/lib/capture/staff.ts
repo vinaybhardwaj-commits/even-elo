@@ -37,3 +37,14 @@ export function migrationRequiredResponse(): NextResponse {
     { status: 503 },
   );
 }
+
+export function sheetMigrationRequiredResponse(): NextResponse {
+  return NextResponse.json(
+    {
+      ok: false,
+      error: "gov_ot_tracking_sheets is not migrated yet. POST /api/admin/migrate on this deployment.",
+      code: "migration_required",
+    },
+    { status: 503 },
+  );
+}

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { isOtCaptureEnabled } from "@/lib/capture/access";
+import { kickOcrAfterUpload } from "@/lib/capture/ocr/run";
 import { deleteCaptureBlob, storeCaptureBlob } from "@/lib/capture/blob-store";
 import {
   assertCaptureStore,
@@ -153,6 +154,8 @@ export async function POST(request: NextRequest) {
     await rollbackBlobs();
     return captureDbFailure(error);
   }
+
+  kickOcrAfterUpload(stored.map((blob) => blob.id));
 
   return NextResponse.json({
     ok: true,

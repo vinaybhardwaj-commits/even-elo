@@ -1,8 +1,8 @@
-export function CaptureBanner({ kicker = "Stage 1" }: { kicker?: string }) {
+export function CaptureBanner({ kicker = "Stage 1", note = "store only" }: { kicker?: string; note?: string }) {
   return (
     <div className="bg-stone-900 px-3 py-2 text-center text-[11px] font-semibold uppercase tracking-[0.08em] text-stone-50">
       <span className="text-teal-300">{kicker}</span>
-      <span> · OT Sheet Capture · store only</span>
+      <span> · OT Sheet Capture · {note}</span>
     </div>
   );
 }

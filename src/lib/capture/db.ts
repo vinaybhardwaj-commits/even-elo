@@ -91,6 +91,9 @@ export async function listCaptures(filter: string, hospital: string): Promise<Ca
       c.void_reason,
       c.voided_at,
       c.blob_pathname,
+      c.doc_type,
+      c.classify_confidence,
+      c.error,
       COALESCE(b.batch_size, 1) AS batch_size
     FROM gov_document_captures c
     LEFT JOIN (
@@ -141,6 +144,9 @@ export async function getCapture(id: string): Promise<CaptureRow | null> {
       c.void_reason,
       c.voided_at,
       c.blob_pathname,
+      c.doc_type,
+      c.classify_confidence,
+      c.error,
       COALESCE(b.batch_size, 1) AS batch_size
     FROM gov_document_captures c
     LEFT JOIN (
