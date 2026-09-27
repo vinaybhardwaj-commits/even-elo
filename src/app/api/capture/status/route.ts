@@ -5,7 +5,7 @@ import { isOtCaptureEnabled } from "@/lib/capture/access";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-/** Staff shell asks this so Capture queue links appear only when the flag is on. */
+/** Surgical Governance submodule asks this so capture links stay off the main dashboard. */
 export async function GET() {
   const user = await getCurrentUser();
   if (!user || user.status !== "active") {

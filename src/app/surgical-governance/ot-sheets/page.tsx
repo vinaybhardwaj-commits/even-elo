@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { TopNav } from "@/components/TopNav";
 import { CaptureBanner } from "@/components/capture/CaptureChrome";
+import { SurgicalCaptureNav } from "@/components/capture/SurgicalCaptureNav";
 import { CaptureFlagOff } from "@/components/capture/CaptureFlagOff";
 import { isOtCaptureEnabled } from "@/lib/capture/access";
 
@@ -23,6 +24,7 @@ export default function OtSheetsPage() {
           <span>/</span>
           <span className="font-semibold text-stone-900">OT sheets</span>
         </div>
+        <SurgicalCaptureNav current="sheets" />
         <h1 className="flex flex-wrap items-center gap-2 text-[1.55rem] font-bold tracking-tight">
           OT sheets
           <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-violet-800">

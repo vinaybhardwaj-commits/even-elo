@@ -52,7 +52,7 @@ Preview smoke:
 
 1. On the Preview environment set `FEATURE_OT_CAPTURE=true` and `BLOB_READ_WRITE_TOKEN` (private blob store). Optional `CAPTURE_IP_HASH_SALT`; otherwise the IP hash uses `JWT_SECRET`.
 2. Redeploy Preview. Apply the additive migration: `POST /api/admin/migrate`.
-3. Open `/capture`, submit one image. Expect a `gov_document_captures` row with status `queued` and a private blob. The response does not include a public blob URL. Staff open `/surgical-governance/capture-queue` (image bytes come from the authenticated proxy).
+3. Open `/capture`, submit one image. Expect a `gov_document_captures` row with status `queued` and a private blob. The response does not include a public blob URL. Staff open the queue from inside Surgical Governance (`/surgical-governance`, then Capture queue). It is not a link on the main Governance home or sidebar. Image bytes come from the authenticated proxy.
 4. With the flag unset or any value other than `true`, `POST /api/capture/upload` is rejected and the staff queue shows a flag-off state.
 
 Stage 1 does not call Vertex, does not create `gov_ot_tracking_sheets`, and does not write `surgical_cases`. `/surgical-governance/ot-sheets` stays an empty Stage 2 state.

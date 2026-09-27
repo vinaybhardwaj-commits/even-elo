@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { SurgicalCaptureNav } from "@/components/capture/SurgicalCaptureNav";
 import { TopNav } from "@/components/TopNav";
 import { TierChip, Tier, TIER_ORDER, TIER_TEXT_COLOR } from "@/components/TierChip";
 import { ScoreBar } from "@/components/ScoreBar";
@@ -166,6 +167,7 @@ export function SurgicalLeaderboard() {
     <>
       <TopNav />
       <main className="max-w-[1400px] mx-auto px-8 py-8">
+        <SurgicalCaptureNav current="home" />
         {/* Hero */}
         <div className="flex items-end justify-between mb-6">
           <div>

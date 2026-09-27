@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { TopNav } from "@/components/TopNav";
 import { CaptureBanner, HospitalSwitcher, StatusChip } from "@/components/capture/CaptureChrome";
+import { SurgicalCaptureNav } from "@/components/capture/SurgicalCaptureNav";
 
 interface CaptureItem {
   id: string;
@@ -92,6 +93,7 @@ export function QueueClient() {
           <span>/</span>
           <span className="font-semibold text-stone-900">Capture queue</span>
         </div>
+        <SurgicalCaptureNav current="queue" />
         <h1 className="flex flex-wrap items-center gap-2 text-[1.55rem] font-bold tracking-tight">
           Capture queue
           <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-violet-800">

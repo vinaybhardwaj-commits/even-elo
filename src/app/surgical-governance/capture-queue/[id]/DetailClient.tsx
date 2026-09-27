@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { TopNav } from "@/components/TopNav";
 import { CaptureBanner, StatusChip } from "@/components/capture/CaptureChrome";
+import { SurgicalCaptureNav } from "@/components/capture/SurgicalCaptureNav";
 
 interface CaptureItem {
   id: string;
@@ -82,6 +83,7 @@ export function DetailClient({ id }: { id: string }) {
           <span>/</span>
           <span className="font-semibold text-stone-900">Image</span>
         </div>
+        <SurgicalCaptureNav current="detail" />
         <h1 className="flex flex-wrap items-center gap-2 text-[1.45rem] font-bold tracking-tight">
           {row?.title || "Capture"}
           {row && <StatusChip status={row.status} />}
