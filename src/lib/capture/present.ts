@@ -63,12 +63,14 @@ export function captureSubtitle(input: {
   uploadedAt: string;
   hospitalCode: string;
   status: string;
+  docType?: string | null;
 }): string {
   const when = formatCaptureWhen(input.uploadedAt);
-  if (input.status === "queued" || input.status === "stored") {
+  const doc = input.docType ? ` · ${input.docType}` : "";
+  if ((input.status === "queued" || input.status === "stored") && !input.docType) {
     return `Uploaded ${when} · ${input.hospitalCode} · doc_type pending`;
   }
-  return `Uploaded ${when} · ${input.hospitalCode} · ${input.status}`;
+  return `Uploaded ${when} · ${input.hospitalCode} · ${input.status}${doc}`;
 }
 
 export function captureProvenance(input: {
@@ -98,6 +100,9 @@ const PUBLIC_KEYS = [
   "image_path",
   "void_reason",
   "voided_at",
+  "doc_type",
+  "classify_confidence",
+  "ocr_error",
 ] as const;
 
 export interface CapturePublicItem {
@@ -117,6 +122,9 @@ export interface CapturePublicItem {
   image_path: string;
   void_reason: string | null;
   voided_at: string | null;
+  doc_type: string | null;
+  classify_confidence: number | null;
+  ocr_error: string | null;
 }
 
 export interface CaptureRow {
@@ -137,6 +145,23 @@ export interface CaptureRow {
   blob_url?: string | null;
   void_reason?: string | null;
   voided_at?: Date | string | null;
+  doc_type?: string | null;
+  classify_confidence?: number | string | null;
+  error?: string | null;
+}
+
+function asConfidence(value: number | string | null | undefined): number | null {
+  if (value == null || value === "") return null;
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  return Math.round(parsed * 1000) / 1000;
+}
+
+function clipError(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const cleaned = value.replace(/\s+/g, " ").trim();
+  if (!cleaned) return null;
+  return cleaned.slice(0, 180);
 }
 
 function asIso(value: Date | string | null | undefined): string | null {
@@ -169,6 +194,7 @@ export function toPublicCapture(row: CaptureRow): CapturePublicItem {
       uploadedAt,
       hospitalCode: row.hospital_code,
       status: row.status,
+      docType: row.doc_type,
     }),
     provenance: captureProvenance({
       userAgent: row.user_agent,
@@ -177,6 +203,9 @@ export function toPublicCapture(row: CaptureRow): CapturePublicItem {
     image_path: `/api/capture/${row.id}/image`,
     void_reason: row.void_reason ?? null,
     voided_at: asIso(row.voided_at),
+    doc_type: row.doc_type ?? null,
+    classify_confidence: asConfidence(row.classify_confidence),
+    ocr_error: clipError(row.error),
   };
   for (const key of Object.keys(item)) {
     if (!(PUBLIC_KEYS as readonly string[]).includes(key)) {

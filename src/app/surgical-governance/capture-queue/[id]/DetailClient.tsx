@@ -19,6 +19,8 @@ interface CaptureItem {
   uploaded_by: string | null;
   void_reason: string | null;
   voided_at: string | null;
+  doc_type: string | null;
+  ocr_error: string | null;
 }
 
 export function DetailClient({ id }: { id: string }) {
@@ -27,16 +29,18 @@ export function DetailClient({ id }: { id: string }) {
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [imageFailed, setImageFailed] = useState(false);
+  const [sheetId, setSheetId] = useState<string | null>(null);
 
   useEffect(() => {
     fetch(`/api/capture/${id}`)
       .then((response) => response.json())
-      .then((json: { ok?: boolean; error?: string; capture?: CaptureItem }) => {
+      .then((json: { ok?: boolean; error?: string; capture?: CaptureItem; sheet_id?: string | null }) => {
         if (!json.ok || !json.capture) {
           setError(json.error || "Capture not found.");
           return;
         }
         setRow(json.capture);
+        setSheetId(json.sheet_id ?? null);
       })
       .catch(() => setError("Could not load the capture."));
   }, [id]);
@@ -88,11 +92,19 @@ export function DetailClient({ id }: { id: string }) {
           {row?.title || "Capture"}
           {row && <StatusChip status={row.status} />}
         </h1>
-        <p className="mb-4 mt-1 text-sm text-stone-500">{row?.subtitle || "Stored image. No extracted fields in Stage 1."}</p>
+        <p className="mb-4 mt-1 text-sm text-stone-500">{row?.subtitle || "Stored image."}</p>
 
         <div className="mb-4 rounded-xl border border-teal-200 bg-teal-50 px-4 py-3 text-sm leading-relaxed text-teal-900">
-          Stage 1 stores the image only. Extracted fields, approve, and reject of an OCR result arrive in Stage 2.
-          Void here only drops a junk upload. Nothing is written to a surgical case.
+          Void here only drops a junk upload that is still queued. Extracted fields are reviewed on OT sheets.
+          Nothing is written to a surgical case.
+          {sheetId && (
+            <>
+              {" "}
+              <Link href={`/surgical-governance/ot-sheets/${sheetId}`} className="font-semibold text-brand hover:underline">
+                Open the extracted sheet
+              </Link>
+            </>
+          )}
         </div>
 
         {error && <p className="mb-4 text-sm text-red-800">{error}</p>}
@@ -141,6 +153,13 @@ export function DetailClient({ id }: { id: string }) {
               <div>
                 <dt className="text-[11px] font-semibold uppercase tracking-wide text-stone-500">Bytes</dt>
                 <dd>{row ? row.bytes.toLocaleString("en-IN") : "—"}</dd>
+              </div>
+              <div>
+                <dt className="text-[11px] font-semibold uppercase tracking-wide text-stone-500">OCR</dt>
+                <dd>
+                  {row?.doc_type || "—"}
+                  {row?.ocr_error ? ` · ${row.ocr_error}` : ""}
+                </dd>
               </div>
               {row?.void_reason && (
                 <div>

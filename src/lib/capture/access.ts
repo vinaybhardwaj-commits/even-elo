@@ -3,6 +3,7 @@
 // the way a direct process.env.FEATURE_OT_CAPTURE read can.
 
 export const OT_CAPTURE_FLAG = "FEATURE_OT_CAPTURE";
+export const OT_CAPTURE_OCR_FLAG = "FEATURE_OT_CAPTURE_OCR";
 
 export const DEFAULT_UPLOAD_HOST = "upload.governance.evenos.app";
 
@@ -19,6 +20,14 @@ function readRaw(env: EnvSource, name: string): string {
  */
 export function isOtCaptureEnabled(env: EnvSource = process.env): boolean {
   return readRaw(env, OT_CAPTURE_FLAG).trim() === "true";
+}
+
+/**
+ * Vertex classify + extract stays off unless FEATURE_OT_CAPTURE_OCR is exactly
+ * "true". Unset, "false", "1", and "TRUE" do not call Vertex.
+ */
+export function isOtCaptureOcrEnabled(env: EnvSource = process.env): boolean {
+  return readRaw(env, OT_CAPTURE_OCR_FLAG).trim() === "true";
 }
 
 export function uploadCaptureHosts(env: EnvSource = process.env): string[] {

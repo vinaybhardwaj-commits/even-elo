@@ -199,8 +199,8 @@ export function CaptureClient({ initialHostLabel }: { initialHostLabel: string }
               In queue · OCR soon
             </div>
             <p className="max-w-[280px] text-sm leading-relaxed text-stone-400">
-              {sent} photo{sent === 1 ? "" : "s"} stored for Governance review. Status stays{" "}
-              <strong className="text-teal-300">queued</strong>. OCR is Stage 2.
+              {sent} photo{sent === 1 ? "" : "s"} stored for Governance review. Status starts{" "}
+              <strong className="text-teal-300">queued</strong>. Staff OCR runs when it is switched on.
             </p>
             <button
               type="button"
