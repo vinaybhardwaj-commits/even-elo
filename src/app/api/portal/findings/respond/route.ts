@@ -3,8 +3,7 @@ import { randomUUID } from "node:crypto";
 import { getCurrentPhysician } from "@/lib/physician-auth";
 import { sql } from "@/lib/db";
 import { disabledWrite, respondEnabled } from "@/lib/portal-flags";
-import { fetchDoctorReactions, type PortalReaction } from "@/lib/doctor-audits";
-import { toLiveCard } from "@/lib/doctor-card";
+import { toResponseState } from "@/lib/doctor-card";
 import { friendlyError } from "@/lib/finding-labels";
 import { callResponse, mapRespondOutcome, parseRespondBody } from "@/lib/findings-actions";
 
@@ -22,10 +21,11 @@ export const runtime = "nodejs";
  * id, and only signal_id, verb and comment are accepted from the body. The BFF creates the
  * client_request_id and sends it as both the payload field and Idempotency-Key.
  *
- * ⚠️ THE RETURNED SIGNAL GOES THROUGH THE SAME ALLOWLIST AS THE GET. CDMSS answers with a full
- * signal (uid, triage, timers). Handing that straight back would leak through the write path what
- * the read path spends an allowlist keeping out — so it is rebuilt as a card by `toLiveCard`.
- * The doctor's reaction is re-read here so the card that is swapped in does not lose it.
+ * ⚠️ NOTHING FROM THE CDMSS BODY IS FORWARDED. CDMSS answers with a governance signal (uid, triage,
+ * ruling, importance, possibly a null representative). The answer here is `{ ok, state }` where
+ * `state` is `toResponseState(body)`: the new status and the recorded response (verb, comment,
+ * time) and nothing else. If CDMSS sent no response, the doctor's own submission stands in for it.
+ * The browser MERGES `state` into the card it already holds; it never replaces the card.
  *
  * ⚠️ ALWAYS HTTP 200 (except 401). See ../react for why.
  *
@@ -84,22 +84,10 @@ export async function POST(request: NextRequest) {
     // Intentionally ignored: see above.
   }
 
-  // The doctor's own reaction is not part of the response contract, so it is re-read rather than
-  // assumed. Best-effort: a reaction we could not confirm is rendered as none, never as stale.
-  let myReaction: PortalReaction | null = null;
-  try {
-    const reactions = await fetchDoctorReactions(uid, p.physicianId);
-    myReaction = reactions[signalId] ?? null;
-  } catch {
-    myReaction = null;
+  const state = toResponseState(result.signal);
+  if (!state.response) {
+    // Upstream said yes but sent no readable response: the doctor's own submission is the record.
+    state.response = { verb, comment, at: new Date().toISOString() };
   }
-
-  const s = result.signal;
-  if (!s || typeof s !== "object") {
-    // Upstream said yes but sent nothing renderable. Answer ok so the card does not report a
-    // failure that did not happen; it refetches rather than swapping in a signal we do not have.
-    return NextResponse.json({ ok: true, card: null });
-  }
-  // A signal that cannot be rebuilt as a card is answered as null: the browser refetches.
-  return NextResponse.json({ ok: true, card: toLiveCard(s, myReaction) });
+  return NextResponse.json({ ok: true, state });
 }

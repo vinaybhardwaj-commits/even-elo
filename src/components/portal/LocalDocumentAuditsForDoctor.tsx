@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { DoctorCard } from "@/lib/doctor-card";
+import type { CardResponse, DoctorCard } from "@/lib/doctor-card";
 import { FindingCard } from "@/components/portal/FindingCard";
 
 /**
@@ -24,10 +24,8 @@ export function LocalDocumentAuditsForDoctor({ respond = false }: { respond?: bo
   }, [load]);
 
   // Only the response line changes; the rest of the card stays as listed.
-  const replaceCard = useCallback((next: DoctorCard) => {
-    setCards((cs) =>
-      cs ? cs.map((x) => (x.id === next.id ? { ...x, response: next.response, can_respond: false } : x)) : cs,
-    );
+  const markResponded = useCallback((id: string, response: CardResponse) => {
+    setCards((cs) => (cs ? cs.map((x) => (x.id === id ? { ...x, response, can_respond: false } : x)) : cs));
   }, []);
 
   if (cards === null || cards.length === 0) return null;
@@ -49,7 +47,7 @@ export function LocalDocumentAuditsForDoctor({ respond = false }: { respond?: bo
             card={c}
             respond={respond}
             onChanged={load}
-            onReplace={replaceCard}
+            onResponded={markResponded}
           />
         ))}
       </div>

@@ -97,6 +97,7 @@ import { POST as respondPOST } from "@/app/api/portal/findings/respond/route";
 import { POST as reactPOST } from "@/app/api/portal/findings/react/route";
 import { GET as docsGET } from "@/app/api/portal/document-audits/route";
 import { POST as docsRespondPOST } from "@/app/api/portal/document-audits/respond/route";
+import { callReaction, callResponse } from "@/lib/findings-actions";
 import { loadPortalRoutedFindings, recordDoctorFindingResponse } from "@/lib/document-audits-db";
 import {
   CARD_KEYS,
@@ -108,6 +109,7 @@ import {
   toDocumentCards,
   toLiveCard,
   toLiveCardsPayload,
+  toResponseState,
   type DocumentFindingRow,
 } from "@/lib/doctor-card";
 import {
@@ -606,7 +608,7 @@ describe("the doctor-facing components print no pipeline wording", () => {
     const src = code("src/components/portal/FindingCard.tsx");
     // card.id is only ever used to build a POST body.
     const uses = src.match(/card\.id/g) ?? [];
-    expect(uses.length).toBe(3);
+    expect(uses.length).toBe(4);
     expect(src).not.toMatch(/\{\s*card\.id\s*\}/);
   });
 });
@@ -637,14 +639,117 @@ describe("routes answer cards only", () => {
     for (const banned of BANNED_WORDS) expect(text).not.toContain(banned);
   });
 
-  it("POST respond answers a card (not a raw signal) and relays no upstream internals", async () => {
+  it("POST respond answers response state only (never a card or a raw signal) and relays no upstream internals", async () => {
     const res = await respondPOST(req("https://portal.test/api/portal/findings/respond", { signal_id: "sig-777", verb: "agree" }));
     const text = await res.text();
     const body = JSON.parse(text);
+    expect(Object.keys(body).sort()).toEqual(["ok", "state"]);
     expect(body.ok).toBe(true);
-    expect(Object.keys(body.card).sort()).toEqual([...CARD_KEYS].sort());
-    expect(body.card.response.verb).toBe("agree");
+    expect(Object.keys(body.state).sort()).toEqual(["response", "status"]);
+    expect(Object.keys(body.state.response).sort()).toEqual(["at", "comment", "verb"]);
+    expect(body.state.status).toBe("responded");
+    expect(body.state.response.verb).toBe("agree");
+    expect(body).not.toHaveProperty("card");
     for (const banned of BANNED_WORDS) expect(text).not.toContain(banned);
+    for (const leak of ["importance", "ruling", "triage", "reference", "doctor_uid", "signal_id", "representative", "jev", "model"]) {
+      expect(text).not.toContain(leak);
+    }
+  });
+
+  it("POST respond survives a CDMSS body with governance fields and representative:null: only response state goes out", async () => {
+    vi.mocked(callResponse).mockResolvedValueOnce({
+      kind: "http",
+      status: 200,
+      body: {
+        ok: true,
+        governance: { importance: "high", ruling: "upheld", triage: "route to RMO" },
+        signal: {
+          ...h.hostileSignal,
+          importance: "critical",
+          ruling: { by: "council", outcome: "upheld" },
+          triage: { rationale: "Triage engine says route to RMO" },
+          representative: null,
+          status: "responded",
+          response: {
+            verb: "disagree",
+            comment: "Dose was split across the day.",
+            responded_at: "2026-10-03T08:00:00Z",
+            ruling: "overturned",
+            importance: "high",
+            doctor_uid: "cdmss-uid-secret",
+          },
+        },
+      },
+    });
+    const res = await respondPOST(req("https://portal.test/api/portal/findings/respond", { signal_id: "sig-777", verb: "disagree", comment: "Dose was split across the day." }));
+    const text = await res.text();
+    expect(JSON.parse(text)).toEqual({
+      ok: true,
+      state: {
+        status: "responded",
+        response: { verb: "disagree", comment: "Dose was split across the day.", at: "2026-10-03T08:00:00Z" },
+      },
+    });
+    for (const banned of [...BANNED_WORDS, "importance", "ruling", "overturned", "governance", "representative", "doctor_uid", "reference", "signal_id"]) {
+      expect(text).not.toContain(banned);
+    }
+  });
+
+  it("POST respond falls back to the doctor's own submission when CDMSS sent no readable response", async () => {
+    vi.mocked(callResponse).mockResolvedValueOnce({
+      kind: "http",
+      status: 200,
+      body: { ok: true, signal: { status: "responded", representative: null, triage: { rationale: "x" }, response: null } },
+    });
+    const res = await respondPOST(req("https://portal.test/api/portal/findings/respond", { signal_id: "sig-777", verb: "agree" }));
+    const body = await res.json();
+    expect(Object.keys(body).sort()).toEqual(["ok", "state"]);
+    expect(body.state.status).toBe("responded");
+    expect(body.state.response.verb).toBe("agree");
+    expect(body.state.response.comment).toBeNull();
+    expect(typeof body.state.response.at).toBe("string");
+
+    vi.mocked(callResponse).mockResolvedValueOnce({ kind: "http", status: 200, body: { ok: true } });
+    const bare = await (await respondPOST(req("https://portal.test/api/portal/findings/respond", { signal_id: "sig-777", verb: "agree" }))).json();
+    expect(bare.state.status).toBeNull();
+    expect(bare.state.response.verb).toBe("agree");
+  });
+
+  it("toResponseState reads status and response only, and refuses a status that is not a plain word", () => {
+    expect(toResponseState(null)).toEqual({ status: null, response: null });
+    expect(toResponseState("junk")).toEqual({ status: null, response: null });
+    expect(toResponseState({ status: "Triage: RMO!", importance: "high", response: { verb: "agree", at: "2026-10-03T08:00:00Z" } })).toEqual({
+      status: null,
+      response: { verb: "agree", comment: null, at: "2026-10-03T08:00:00Z" },
+    });
+    const s = toResponseState({
+      status: "responded",
+      ruling: "upheld",
+      representative: null,
+      response: { verb: "agree", comment: "Fine, see EHRC-AUD-2026-0042.", responded_at: "2026-10-03T08:00:00Z", triage: "x" },
+    });
+    expect(Object.keys(s).sort()).toEqual(["response", "status"]);
+    expect(Object.keys(s.response ?? {}).sort()).toEqual(["at", "comment", "verb"]);
+    expect(JSON.stringify(s)).not.toContain("EHRC-AUD");
+    expect(JSON.stringify(s)).not.toContain("upheld");
+  });
+
+  it("the browser merges response state into the card it already has and never replaces the card", () => {
+    const code = (p: string) =>
+      readFileSync(join(process.cwd(), p), "utf8")
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/(^|[^:])\/\/.*$/gm, "$1");
+    const card = code("src/components/portal/FindingCard.tsx");
+    const live = code("src/components/portal/FindingsForDoctor.tsx");
+    const docs = code("src/components/portal/LocalDocumentAuditsForDoctor.tsx");
+    expect(card).toContain("onResponded");
+    expect(card).not.toContain("onReplace");
+    for (const src of [live, docs]) {
+      expect(src).toContain("markResponded");
+      expect(src).not.toContain("replaceCard");
+      expect(src).not.toContain("onReplace");
+      expect(src).toMatch(/\.\.\.x,\s*response,\s*can_respond:\s*false/);
+    }
   });
 
   it("POST respond with a bad body answers a plain sentence, not the parser's developer text", async () => {
@@ -659,6 +764,25 @@ describe("routes answer cards only", () => {
     expect(body.ok).toBe(false);
     expect(body.error).toBe("already_recorded");
     expect(body.message).toBe("You have already recorded a reaction for this finding.");
+  });
+
+  it("POST react forwards nothing from a governance-laden CDMSS body", async () => {
+    vi.mocked(callReaction).mockResolvedValueOnce({
+      kind: "http",
+      status: 200,
+      body: {
+        ok: true,
+        replay: false,
+        reaction: { reaction: "dismiss", doctor_uid: "cdmss-uid-secret" },
+        signal: { ...h.hostileSignal, representative: null, importance: "critical", ruling: "upheld", triage: { rationale: "route to RMO" } },
+      },
+    });
+    const res = await reactPOST(req("https://portal.test/api/portal/findings/react", { signal_id: "sig-777", reaction: "dismiss" }));
+    const text = await res.text();
+    expect(JSON.parse(text)).toEqual({ ok: true, replay: false });
+    for (const leak of [...BANNED_WORDS, "importance", "ruling", "representative", "doctor_uid", "reference", "signal"]) {
+      expect(text).not.toContain(leak);
+    }
   });
 
   it("GET /api/portal/document-audits returns cards built from rows, and hides rows owned by the live list", async () => {

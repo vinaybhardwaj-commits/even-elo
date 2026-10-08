@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { NoteClass } from "@/lib/doctor-audits";
-import type { DoctorCard } from "@/lib/doctor-card";
+import type { CardResponse, DoctorCard } from "@/lib/doctor-card";
 import { UNLINKED_TEXT } from "@/lib/finding-labels";
 import { FindingCard } from "@/components/portal/FindingCard";
 
@@ -93,16 +93,12 @@ export function FindingsForDoctor({
 
   // After a response only the response line changes: the card keeps its context line, Basis section
   // and note link (the card the server hands back after a write can be thinner than the listed one).
-  const replaceCard = useCallback((next: DoctorCard) => {
+  const markResponded = useCallback((id: string, response: CardResponse) => {
     setData((d) =>
       d
         ? {
             ...d,
-            cards: (d.cards ?? []).map((x) =>
-              x.id === next.id
-                ? { ...x, response: next.response, can_respond: false, reaction: next.reaction ?? x.reaction }
-                : x,
-            ),
+            cards: (d.cards ?? []).map((x) => (x.id === id ? { ...x, response, can_respond: false } : x)),
           }
         : d,
     );
@@ -180,7 +176,7 @@ export function FindingsForDoctor({
               reactions={reactions}
               respond={respond}
               onChanged={load}
-              onReplace={replaceCard}
+              onResponded={markResponded}
             />
           ))}
         </div>

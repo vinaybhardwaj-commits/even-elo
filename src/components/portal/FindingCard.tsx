@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { contextLine, type DoctorCard } from "@/lib/doctor-card";
+import { contextLine, type CardResponse, type DoctorCard } from "@/lib/doctor-card";
 import {
   askText,
   friendlyError,
@@ -37,7 +37,8 @@ interface ActionResult {
   ok?: boolean;
   error?: string;
   message?: string;
-  card?: DoctorCard | null;
+  /** The new state of the finding (status + recorded response). Merged into the existing card. */
+  state?: { status: string | null; response: CardResponse | null } | null;
 }
 
 function sentence(j: ActionResult | null): string {
@@ -100,11 +101,11 @@ function ReactionRow({ card, onChanged }: { card: DoctorCard; onChanged: () => v
 function ResponseControls({
   card,
   onChanged,
-  onReplace,
+  onResponded,
 }: {
   card: DoctorCard;
   onChanged: () => void;
-  onReplace: (next: DoctorCard) => void;
+  onResponded: (id: string, response: CardResponse) => void;
 }) {
   const [comment, setComment] = useState("");
   const [busy, setBusy] = useState(false);
@@ -131,7 +132,7 @@ function ResponseControls({
       const j = (await r.json()) as ActionResult;
       if (j.ok) {
         // Stay busy: this block is about to be replaced by the recorded response either way.
-        if (j.card && j.card.response) onReplace(j.card);
+        if (j.state?.response) onResponded(card.id, j.state.response);
         else onChanged();
         return;
       }
@@ -192,13 +193,13 @@ export function FindingCard({
   reactions = false,
   respond = false,
   onChanged,
-  onReplace,
+  onResponded,
 }: {
   card: DoctorCard;
   reactions?: boolean;
   respond?: boolean;
   onChanged: () => void;
-  onReplace: (next: DoctorCard) => void;
+  onResponded: (id: string, response: CardResponse) => void;
 }) {
   const ctx = contextLine(card);
   const hasEvidence = Boolean(card.excerpt) || card.citations.length > 0;
@@ -269,7 +270,7 @@ export function FindingCard({
         <div className={rowCls}>
           <div className="text-[13px] font-semibold text-stone-800">{ask}</div>
           {respond && card.can_respond ? (
-            <ResponseControls card={card} onChanged={onChanged} onReplace={onReplace} />
+            <ResponseControls card={card} onChanged={onChanged} onResponded={onResponded} />
           ) : (
             !respond && (
               <p className="mt-1 text-[12px] text-stone-500">

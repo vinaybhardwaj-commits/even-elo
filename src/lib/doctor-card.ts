@@ -349,6 +349,27 @@ export function toLiveCard(raw: unknown, reaction: LiveReaction | null = null): 
   });
 }
 
+/** What a response write may hand back to the browser: the new state of one finding, nothing else. */
+export interface ResponseState {
+  status: string | null;
+  response: CardResponse | null;
+}
+
+/**
+ * PURE. CDMSS's answer to a doctor-response/signal-reaction write → the only fields the browser may
+ * receive: `status` (a short lowercase word) and the recorded response (verb, comment, time). The
+ * body can carry governance fields, a null representative or anything else; none of it is read, so
+ * none of it can be forwarded. The browser merges this into the card it already has.
+ */
+export function toResponseState(signal: unknown): ResponseState {
+  const s = rec(signal);
+  const status = str(s?.status, 24);
+  return {
+    status: status && /^[a-z_]{1,24}$/.test(status) ? status : null,
+    response: readResponse(s?.response),
+  };
+}
+
 /** The portal's reaction map shape, structurally (kept here so this module has no dependency cycle). */
 export type CardReactionMap = Record<string, { reaction: string } | undefined>;
 
