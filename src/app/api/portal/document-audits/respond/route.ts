@@ -4,6 +4,7 @@ import { recordDoctorFindingResponse } from "@/lib/document-audits-db";
 import { disabledWrite, respondEnabled } from "@/lib/portal-flags";
 import { friendlyError } from "@/lib/finding-labels";
 import { normalizeComment } from "@/lib/findings-actions";
+import { forwardResponseNow } from "@/lib/response-sync";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -16,6 +17,11 @@ const VERBS = new Set(["agree", "disagree", "needs_clarification"]);
  * Body: `{ finding_id, verb, comment? }`. A disagreement or a request for clarification needs a
  * comment (the same rule as the live Findings response). A finding can be answered once. Every
  * failure is a plain sentence in `message`; the code in `error` is for the client's logic only.
+ *
+ * When the finding is one CDMSS routed (it has a signal reference) the answer is also forwarded to
+ * CDMSS after it is saved here (src/lib/response-sync.ts). That is a bounded, best-effort attempt:
+ * the doctor's submit never waits on it beyond a few seconds and never fails because of it. A failed
+ * delivery is stored and retried by the nightly cron.
  */
 export async function POST(request: NextRequest) {
   const p = await getCurrentPhysician();
@@ -54,5 +60,6 @@ export async function POST(request: NextRequest) {
       { status: conflict ? 409 : 200 },
     );
   }
+  await forwardResponseNow(findingId);
   return NextResponse.json({ ok: true });
 }

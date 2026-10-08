@@ -42,7 +42,8 @@ function TopNavV1({ nav }: { nav?: NavItem[] } = {}) {
   const showElo = !!user && user.is_super_admin; // Surgical Governance is super_admin-only (Users PRD #18)
   const showAdmin = !!user && user.is_super_admin;
   const showSafety = !!user && (user.is_super_admin || user.is_sgc_member);
-  const navItems: NavItem[] = nav ?? defaultNav(showElo, showAdmin, showSafety);
+  const showAuditFindings = !!user && (user.is_super_admin || user.is_sgc_member || !!user.is_site_medical_head);
+  const navItems: NavItem[] = nav ?? defaultNav(showElo, showAdmin, showSafety, showAuditFindings);
 
   return (
     <header className="bg-white border-b border-stone-200 sticky top-0 z-40">
@@ -85,13 +86,14 @@ function TopNavV1({ nav }: { nav?: NavItem[] } = {}) {
   );
 }
 
-function defaultNav(showElo: boolean, showAdmin: boolean, showSafety: boolean): NavItem[] {
+function defaultNav(showElo: boolean, showAdmin: boolean, showSafety: boolean, showAuditFindings: boolean): NavItem[] {
   const items: NavItem[] = [
     { label: "Home", href: "/home" },
     { label: "Physician DB", href: "/physicians" },
     { label: "Credentialing", href: "/onboarding" },
     { label: "Patient Feedback", href: "/incidents" },
   ];
+  if (showAuditFindings) items.push({ label: "Audit findings", href: "/audit-findings" });
   if (showSafety) items.push({ label: "Incidents (e-IRIS)", href: "/safety" });
   if (showSafety) items.push({ label: "Safety Report", href: "/safety/report" });
   if (showSafety) items.push({ label: "M&M", href: "/mm" }); // same SGC/super predicate (M&M PRD decision 13)

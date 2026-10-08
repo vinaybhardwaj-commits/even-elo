@@ -105,6 +105,8 @@ export function ShellV2() {
 
   const isSuper = !!user?.is_super_admin;
   const showIncidents = !!user && (user.is_super_admin || user.is_sgc_member);
+  // Audit findings (Round 2): super_admin, Site Medical Head or Site Governance Officer; the API enforces it too.
+  const showAuditFindings = !!user && (user.is_super_admin || user.is_sgc_member || !!user.is_site_medical_head);
 
   const groups: NavGroup[] = [
     { items: [{ label: "Overview", href: "/overview" }] },
@@ -120,6 +122,7 @@ export function ShellV2() {
       label: "Governance",
       items: [
         { label: "Document Audits", href: "/document-audits", badge: honesty?.documentAudits?.chip === "live" ? "live" : "empty" },
+        { label: "Audit findings", href: "/audit-findings", show: showAuditFindings },
         {
           label: "OPD Governance",
           href: "/opd-governance",

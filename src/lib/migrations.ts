@@ -1498,5 +1498,92 @@ export const MIGRATIONS: Migration[] = [
         ADD COLUMN IF NOT EXISTS cdmss_alias_uids text[];
     `,
   },
+  {
+    id: "037_gov_interventions_ruling_keys",
+    description:
+      "Round 2 / F3: governance rulings on routed audit threads. gov_interventions gains the ruling action, an idempotency key (one row per thread + action, so a retried ruling never creates a second row) and the state of the matching CDMSS signal-action call.",
+    sql: `
+      ALTER TABLE gov_interventions
+        ADD COLUMN IF NOT EXISTS action text,
+        ADD COLUMN IF NOT EXISTS idempotency_key text,
+        ADD COLUMN IF NOT EXISTS cdmss_sync_state text
+          CHECK (cdmss_sync_state IS NULL OR cdmss_sync_state IN ('pending', 'synced')),
+        ADD COLUMN IF NOT EXISTS cdmss_sync_error text;
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_gov_interventions_idem
+        ON gov_interventions (idempotency_key);
+    `,
+  },
+  {
+    id: "038_document_audit_response_sync",
+    description:
+      "Round 2 / F3: a doctor's response to a CDMSS-routed document-audit finding is forwarded to CDMSS. Sync state (pending / synced / failed), last error, attempt count and a permanent flag (a 4xx is not retried) are kept per finding; the nightly cron retries the rest.",
+    sql: `
+      ALTER TABLE document_audit_findings
+        ADD COLUMN IF NOT EXISTS cdmss_sync_state text
+          CHECK (cdmss_sync_state IS NULL OR cdmss_sync_state IN ('pending', 'synced', 'failed')),
+        ADD COLUMN IF NOT EXISTS cdmss_sync_error text,
+        ADD COLUMN IF NOT EXISTS cdmss_sync_attempts integer NOT NULL DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS cdmss_sync_permanent boolean NOT NULL DEFAULT false,
+        ADD COLUMN IF NOT EXISTS cdmss_sync_at timestamptz;
+
+      CREATE INDEX IF NOT EXISTS idx_daf_cdmss_sync
+        ON document_audit_findings (cdmss_sync_state)
+        WHERE cdmss_sync_state IN ('pending', 'failed');
+    `,
+  },
+  {
+    id: "039_cdmss_mapping_decisions",
+    description:
+      "Round 2 / F3: staff decisions on weak doctor-mapping matches. Every confirm (which writes physicians.cdmss_doctor_uid) and reject is recorded with who decided and when; rejected pairs stay off the review list.",
+    sql: `
+      CREATE TABLE IF NOT EXISTS cdmss_mapping_decisions (
+        id                     uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        decision               text NOT NULL CHECK (decision IN ('confirm', 'reject')),
+        cdmss_uid              text NOT NULL,
+        cdmss_name             text,
+        physician_id           uuid REFERENCES physicians(id) ON DELETE SET NULL,
+        physician_name         text,
+        reason                 text,
+        note                   text,
+        decided_by_profile_id  uuid REFERENCES profiles(id) ON DELETE SET NULL,
+        decided_by_email       text NOT NULL,
+        decided_at             timestamptz NOT NULL DEFAULT now()
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_cdmss_mapping_decisions_pair
+        ON cdmss_mapping_decisions (decision, cdmss_uid, physician_id);
+      CREATE INDEX IF NOT EXISTS idx_cdmss_mapping_decisions_time
+        ON cdmss_mapping_decisions (decided_at DESC);
+    `,
+  },
+  {
+    id: "040_ruling_retry_and_legacy_responses",
+    description:
+      "Round 2 / F3 refuter fixes. (1) gov_interventions keeps the raw ruling note, the thread version the ruling was made against and a retry counter, so a ruling CDMSS did not confirm can be retried by the nightly cron with the same actor and note; a retry CDMSS refuses is marked 'refused'. (2) Every doctor response that exists when this runs is marked 'legacy': it is never forwarded to CDMSS. Only responses recorded after this migration are.",
+    sql: `
+      ALTER TABLE gov_interventions
+        ADD COLUMN IF NOT EXISTS ruling_note text,
+        ADD COLUMN IF NOT EXISTS thread_version text,
+        ADD COLUMN IF NOT EXISTS cdmss_sync_attempts integer NOT NULL DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS cdmss_sync_at timestamptz;
+
+      ALTER TABLE gov_interventions
+        DROP CONSTRAINT IF EXISTS gov_interventions_cdmss_sync_state_check;
+      ALTER TABLE gov_interventions
+        ADD CONSTRAINT gov_interventions_cdmss_sync_state_check
+        CHECK (cdmss_sync_state IS NULL OR cdmss_sync_state IN ('pending', 'synced', 'refused'));
+
+      ALTER TABLE document_audit_findings
+        DROP CONSTRAINT IF EXISTS document_audit_findings_cdmss_sync_state_check;
+      ALTER TABLE document_audit_findings
+        ADD CONSTRAINT document_audit_findings_cdmss_sync_state_check
+        CHECK (cdmss_sync_state IS NULL OR cdmss_sync_state IN ('pending', 'synced', 'failed', 'legacy'));
+
+      UPDATE document_audit_findings
+        SET cdmss_sync_state = 'legacy'
+        WHERE cdmss_sync_state IS NULL AND doctor_responded_at IS NOT NULL;
+    `,
+  },
 ];
 

@@ -28,6 +28,10 @@ const PUBLIC_API_ROUTES = [
 
 // Admin-bootstrap routes — URL-gated like v1 (no auth required so we can run
 // migrate + seed during deploys). Keep this list short and explicit.
+// Every route below EXCEPT portal-welcome (which checks MCP_BEARER_TOKEN itself) is listed only so
+// a deploy script can reach it with `Authorization: Bearer ${ADMIN_OPS_TOKEN}` and no cookie. The
+// handler is the gate: each one calls requireOps() (src/lib/ops-auth.ts), which wants that bearer
+// or a super_admin session and answers 401 otherwise. A route added here MUST gate itself.
 const ADMIN_BOOTSTRAP_ROUTES = [
   "/api/admin/migrate",
   "/api/admin/portal-welcome",
@@ -40,6 +44,7 @@ const ADMIN_BOOTSTRAP_ROUTES = [
   "/api/admin/oppe-kickstart",
   "/api/admin/bulk-import-physicians",
   "/api/admin/dedupe-physicians",
+  "/api/admin/map-cdmss-doctors",
 ];
 
 function getJwtSecret() {

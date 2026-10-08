@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getCurrentUser } from "@/lib/auth";
+import { requireOps } from "@/lib/ops-auth";
 import { sql } from "@/lib/db";
-import { fetchDoctorDirectory } from "@/lib/cdmss-doctor-directory";
-import { matchDirectory, type MappingResult, type PhysicianRow } from "@/lib/cdmss-doctor-mapping";
+import { computeMapping } from "@/lib/cdmss-mapping-service";
+import type { MappingResult } from "@/lib/cdmss-doctor-mapping";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -20,15 +20,8 @@ export const runtime = "nodejs";
  * staff to resolve; they are never applied and never doctor-facing. super_admin only.
  */
 
-async function loadPhysicians(): Promise<PhysicianRow[]> {
-  return (await sql`
-    SELECT id::text AS id, full_name, phone, cdmss_doctor_uid, cdmss_alias_uids
-    FROM physicians WHERE current_status = 'active'`) as unknown as PhysicianRow[];
-}
-
 async function compute(): Promise<MappingResult & { directory_count: number }> {
-  const [directory, physicians] = await Promise.all([fetchDoctorDirectory(), loadPhysicians()]);
-  return { ...matchDirectory(directory, physicians), directory_count: directory.length };
+  return computeMapping();
 }
 
 function view(r: MappingResult & { directory_count: number }) {
@@ -43,13 +36,9 @@ function view(r: MappingResult & { directory_count: number }) {
   };
 }
 
-async function forbidden() {
-  const u = await getCurrentUser();
-  return !u || !u.is_super_admin;
-}
-
-export async function GET() {
-  if (await forbidden()) return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+export async function GET(req: Request) {
+  const denied = await requireOps(req);
+  if (denied) return denied;
   try {
     return NextResponse.json({ ok: true, mode: "dry_run", ...view(await compute()) });
   } catch (e) {
@@ -61,7 +50,8 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  if (await forbidden()) return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+  const denied = await requireOps(req);
+  if (denied) return denied;
   let r: MappingResult & { directory_count: number };
   try {
     r = await compute();

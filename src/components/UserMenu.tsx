@@ -10,6 +10,7 @@ export interface UserSummary {
   hospital_code: string;
   is_super_admin: boolean;
   is_sgc_member: boolean;
+  is_site_medical_head?: boolean;
 }
 
 const AVATAR_COLORS = [

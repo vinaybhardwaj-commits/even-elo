@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
 const h = vi.hoisted(() => ({
-  user: { is_super_admin: true } as null | { is_super_admin: boolean },
+  user: { profileId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", status: "active", is_super_admin: true } as null | { profileId?: string; status?: string; is_super_admin: boolean },
   physicians: [] as Array<Record<string, unknown>>,
   writes: [] as Array<{ q: string; values: unknown[] }>,
 }));
@@ -17,6 +17,11 @@ vi.mock("@/lib/db", () => ({
     return [];
   },
 }));
+vi.mock("@/lib/staff-live", async (orig) => {
+  const real = await orig<typeof import("@/lib/staff-live")>();
+  const { liveFromClaims } = await import("./helpers/fixtures");
+  return { ...real, loadLiveStaff: vi.fn(async () => liveFromClaims(h.user)) };
+});
 
 import {
   last4,
@@ -305,7 +310,7 @@ describe("coverage before/after (the dry-run report)", () => {
 describe("admin route: dry run writes nothing, apply writes only auto links", () => {
   const fetchMock = vi.fn();
   beforeEach(() => {
-    h.user = { is_super_admin: true };
+    h.user = { profileId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", status: "active", is_super_admin: true };
     h.writes.length = 0;
     process.env.GOV_API_KEY = "k";
     h.physicians = [
@@ -331,9 +336,10 @@ describe("admin route: dry run writes nothing, apply writes only auto links", ()
   afterEach(() => vi.unstubAllGlobals());
 
   const req = (qs = "") => new NextRequest(`https://gov.test/api/admin/map-cdmss-doctors${qs}`, { method: "POST" });
+  const getReq = () => new Request("https://gov.test/api/admin/map-cdmss-doctors");
 
   it("GET is a dry run with coverage and a review list, and issues no write", async () => {
-    const res = await GET();
+    const res = await GET(getReq());
     const body = await res.json();
     expect(body.mode).toBe("dry_run");
     expect(body.would_link.map((a: { uid: string }) => a.uid)).toEqual(["U1"]);
@@ -362,12 +368,12 @@ describe("admin route: dry run writes nothing, apply writes only auto links", ()
     expect(body.review).toHaveLength(1);
   });
 
-  it("is super_admin only", async () => {
+  it("is super_admin (or the ops bearer) only; see ops-auth.test.ts for the bearer paths", async () => {
     h.user = { is_super_admin: false };
-    expect((await GET()).status).toBe(403);
-    expect((await POST(req())).status).toBe(403);
+    expect((await GET(getReq())).status).toBe(401);
+    expect((await POST(req())).status).toBe(401);
     h.user = null;
-    expect((await GET()).status).toBe(403);
+    expect((await GET(getReq())).status).toBe(401);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

@@ -35,6 +35,7 @@ vi.mock("@/lib/findings-actions", async () => {
     callResponse: vi.fn(async () => ({ kind: "http", status: 200, body: { ok: true, signal: null } })),
   };
 });
+vi.mock("@/lib/response-sync", () => ({ forwardResponseNow: vi.fn(async () => undefined) }));
 vi.mock("@/lib/document-audits-db", () => ({
   loadPortalRoutedFindings: vi.fn(async () => []),
   recordDoctorFindingResponse: vi.fn(async () => ({ ok: true })),

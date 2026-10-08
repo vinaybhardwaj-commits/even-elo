@@ -3,6 +3,8 @@ import { redirect } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
 import { getCurrentUser } from "@/lib/auth";
 import { sql } from "@/lib/db";
+import { loadPendingRulings } from "@/lib/audit-ruling";
+import { actionLabel } from "@/lib/audit-findings";
 import {
   fetchOpdSignals,
   getSeries,
@@ -182,10 +184,23 @@ export default async function OpdGovernancePage({
   const ages = computeAges(series);
   const resolved = computeResolved(series);
 
-  const interventions = (await sql`
-    SELECT i.id, i.signal_key, i.signal_label, i.kind, i.note, i.done_on::text AS done_on, i.actor_email, p.full_name
-    FROM gov_interventions i LEFT JOIN physicians p ON p.id=i.physician_id
-    ORDER BY i.done_on DESC, i.created_at DESC LIMIT 100`) as unknown as InterventionRow[];
+  // A governance ruling counts as done only once CDMSS confirmed it: unconfirmed ones are listed apart
+  // below as "Pending sync" and kept out of this list and the trend markers. (Before migration 037 the
+  // sync column does not exist, so fall back to the plain list.)
+  let interventions: InterventionRow[];
+  try {
+    interventions = (await sql`
+      SELECT i.id, i.signal_key, i.signal_label, i.kind, i.note, i.done_on::text AS done_on, i.actor_email, p.full_name
+      FROM gov_interventions i LEFT JOIN physicians p ON p.id=i.physician_id
+      WHERE i.cdmss_sync_state IS NULL OR i.cdmss_sync_state = 'synced'
+      ORDER BY i.done_on DESC, i.created_at DESC LIMIT 100`) as unknown as InterventionRow[];
+  } catch {
+    interventions = (await sql`
+      SELECT i.id, i.signal_key, i.signal_label, i.kind, i.note, i.done_on::text AS done_on, i.actor_email, p.full_name
+      FROM gov_interventions i LEFT JOIN physicians p ON p.id=i.physician_id
+      ORDER BY i.done_on DESC, i.created_at DESC LIMIT 100`) as unknown as InterventionRow[];
+  }
+  const pendingRulings = await loadPendingRulings(25);
   const ivBySignal = new Map<string, InterventionRow[]>();
   for (const iv of interventions) {
     if (!ivBySignal.has(iv.signal_key)) ivBySignal.set(iv.signal_key, []);
@@ -378,6 +393,28 @@ export default async function OpdGovernancePage({
             </div>
           </>
         ) : null}
+
+        {pendingRulings.length > 0 && (
+          <section role="status" className="mt-6 rounded-xl border border-violet-200 bg-violet-50 px-5 py-3.5">
+            <div className="mb-1.5 flex items-center gap-2">
+              <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-violet-700">Pending sync</span>
+              <span className="text-[13px] font-semibold text-violet-950">
+                {pendingRulings.length} governance {pendingRulings.length === 1 ? "ruling is" : "rulings are"} saved but not confirmed by CDMSS
+              </span>
+            </div>
+            <p className="mb-2 text-[12px] text-violet-900">
+              These are not done yet: the audit thread still shows its old status in CDMSS. They are retried every night.
+            </p>
+            <ul className="space-y-0.5 text-[12.5px]">
+              {pendingRulings.map((r) => (
+                <li key={r.id}>
+                  <Link href={`/audit-findings/${encodeURIComponent(r.reference)}`} className="font-medium text-brand hover:underline">{r.reference}</Link>
+                  <span className="text-stone-600"> · {actionLabel(r.action)}{r.actor_email ? ` · ${r.actor_email}` : ""}{r.attempts > 0 ? ` · ${r.attempts} retr${r.attempts === 1 ? "y" : "ies"}` : ""}</span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
 
         {/* Trend chart */}
         <section className="mt-6 min-w-0 rounded-xl border border-stone-200 bg-white p-5">
