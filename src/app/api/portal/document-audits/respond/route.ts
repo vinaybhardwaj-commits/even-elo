@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentPhysician } from "@/lib/physician-auth";
 import { recordDoctorFindingResponse } from "@/lib/document-audits-db";
+import { disabledWrite, respondEnabled } from "@/lib/portal-flags";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -13,6 +14,7 @@ const VERBS = new Set(["agree", "disagree", "needs_clarification"]);
 export async function POST(request: NextRequest) {
   const p = await getCurrentPhysician();
   if (!p) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  if (!respondEnabled()) return disabledWrite();
 
   let body: { finding_id?: unknown; verb?: unknown; comment?: unknown };
   try {

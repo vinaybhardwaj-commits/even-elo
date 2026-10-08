@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentPhysician } from "@/lib/physician-auth";
 import { sql } from "@/lib/db";
+import { disabledRead, findingsEnabled } from "@/lib/portal-flags";
 import { fetchDoctorAudits, type DoctorAuditSignal } from "@/lib/doctor-audits";
 import { doctorMayFetchAuditPdf, isAuditUuid, type AuditPdfSignal } from "@/lib/findings-pdf";
 
@@ -85,6 +86,7 @@ async function fetchCdmssAuditPdf(auditId: string): Promise<Response> {
 export async function GET(request: NextRequest) {
   const p = await getCurrentPhysician();
   if (!p) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  if (!findingsEnabled()) return disabledRead();
 
   const ref = (request.nextUrl.searchParams.get("ref") || "").trim();
   if (!isAuditUuid(ref)) {

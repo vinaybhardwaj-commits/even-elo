@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { getCurrentPhysician } from "@/lib/physician-auth";
 import { sql } from "@/lib/db";
+import { disabledWrite, respondEnabled } from "@/lib/portal-flags";
 import {
   fetchDoctorReactions,
   toPortalSignal,
@@ -39,9 +40,7 @@ export const runtime = "nodejs";
 export async function POST(request: NextRequest) {
   const p = await getCurrentPhysician();
   if (!p) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  if (process.env.PORTAL_FINDINGS_RESPOND !== "1") {
-    return NextResponse.json({ ok: false, error: "disabled" });
-  }
+  if (!respondEnabled()) return disabledWrite();
 
   let uid: string | null = null;
   try {

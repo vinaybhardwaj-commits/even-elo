@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentPhysician } from "@/lib/physician-auth";
 import { sql } from "@/lib/db";
+import { disabledRead, findingsEnabled } from "@/lib/portal-flags";
 import {
   fetchDoctorAudits,
   fetchDoctorReactions,
@@ -53,6 +54,7 @@ export const runtime = "nodejs";
 export async function GET(request: NextRequest) {
   const p = await getCurrentPhysician();
   if (!p) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  if (!findingsEnabled()) return disabledRead();
 
   // The JWT does not carry the CDMSS identifier — it is looked up per request, never cached into
   // the token, so a governance re-link takes effect on the next page load rather than the next login.

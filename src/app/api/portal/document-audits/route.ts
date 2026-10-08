@@ -3,6 +3,7 @@ import { getCurrentPhysician } from "@/lib/physician-auth";
 import { loadPortalRoutedFindings } from "@/lib/document-audits-db";
 import { portalPdfStatus, portalResponseOwner, DOC_TYPE_LABEL, normalizeDocType } from "@/lib/document-audits";
 import { presentPortalPdf } from "@/lib/findings-pdf";
+import { disabledRead, findingsEnabled } from "@/lib/portal-flags";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -14,6 +15,7 @@ export const runtime = "nodejs";
 export async function GET() {
   const p = await getCurrentPhysician();
   if (!p) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  if (!findingsEnabled()) return disabledRead();
 
   const rows = await loadPortalRoutedFindings(p.physicianId);
   const findings = rows.map((r) => {

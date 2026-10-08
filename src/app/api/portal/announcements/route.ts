@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCurrentPhysician } from "@/lib/physician-auth";
 import { sql } from "@/lib/db";
+import { portalFlags } from "@/lib/portal-flags";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -25,13 +26,7 @@ export async function GET() {
     coming_soon: rows.filter((r) => r.kind === "coming_soon"),
     // WM2: the Findings flag is evaluated HERE and nowhere else — server-side, so the portal
     // bundle never carries the env name, and one fetch decides both panels' visibility.
-    features: {
-      incidents: process.env.PORTAL_INCIDENTS === "1",
-      findings: process.env.PORTAL_FINDINGS === "1",
-      // WM2 v1: private research reactions remain independently gated.
-      reactions: process.env.PORTAL_REACTIONS === "1",
-      // P2: workflow writes are independent of private research reactions and default dark.
-      findingsRespond: process.env.PORTAL_FINDINGS_RESPOND === "1",
-    },
+    // A2: the same module gates the API routes, so UI visibility and endpoint access cannot drift.
+    features: portalFlags(),
   });
 }

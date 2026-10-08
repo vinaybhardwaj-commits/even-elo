@@ -224,6 +224,7 @@ describe("GET /api/portal/findings/pdf", () => {
   beforeEach(() => {
     process.env.GOV_API_KEY = GOV_KEY;
     process.env.GOV_API_BASE = "https://cdmss.test";
+    process.env.PORTAL_FINDINGS = "1";
     vi.mocked(getCurrentPhysician).mockReset();
     vi.mocked(sql).mockReset();
     fetchMock.mockReset();
@@ -232,6 +233,7 @@ describe("GET /api/portal/findings/pdf", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    delete process.env.PORTAL_FINDINGS;
   });
 
   function mockSql(opts: { uid: string | null; local: boolean }) {

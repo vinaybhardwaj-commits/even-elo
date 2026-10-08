@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentPhysician } from "@/lib/physician-auth";
 import { sql } from "@/lib/db";
+import { disabledWrite, reactionsEnabled } from "@/lib/portal-flags";
 import { callReaction, mapReactOutcome, parseReactBody } from "@/lib/findings-actions";
 
 export const dynamic = "force-dynamic";
@@ -32,6 +33,7 @@ export const runtime = "nodejs";
 export async function POST(request: NextRequest) {
   const p = await getCurrentPhysician();
   if (!p) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  if (!reactionsEnabled()) return disabledWrite();
 
   // Same fail-safe as the findings GET: a lookup that throws lands on UNMAPPED rather than a 500.
   // Unmapped hides the reaction row, which is the right outcome whenever we cannot establish the

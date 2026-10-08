@@ -447,10 +447,9 @@ describe("with the respond flag off the card shows no workflow controls", () => 
   it("the independent flag reaches the card and defaults false", () => {
     expect(SRC(CARD)).toContain("respond = false");
     expect(SRC("src/app/portal/page.tsx")).toContain("respond={features.findingsRespond}");
-    expect(SRC("src/app/api/portal/announcements/route.ts")).toContain(
-      'findingsRespond: process.env.PORTAL_FINDINGS_RESPOND === "1"',
-    );
-    expect(SRC(RESPOND_ROUTE)).toContain('process.env.PORTAL_FINDINGS_RESPOND !== "1"');
+    expect(SRC("src/app/api/portal/announcements/route.ts")).toContain("portalFlags()");
+    expect(SRC("src/lib/portal-flags.ts")).toContain('findingsRespond: on("PORTAL_FINDINGS_RESPOND")');
+    expect(SRC(RESPOND_ROUTE)).toContain("respondEnabled()");
   });
 
   it("the BFF generates and forwards one idempotency key per submit", () => {
