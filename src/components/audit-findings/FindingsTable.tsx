@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import type { FindingRow } from "@/lib/audit-findings";
+import { syncFlagText, type FindingRow } from "@/lib/audit-findings";
 
 /** "2026-10-08T05:30:00Z" -> "8 Oct 2026". Empty for a missing or unreadable date. */
 export function formatDay(iso: string | null | undefined): string {
@@ -42,6 +42,17 @@ export function StatusChips({ row }: { row: FindingRow }) {
       {row.awaiting_ruling ? (
         <span className="rounded-full bg-violet-50 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-violet-700">
           Awaiting ruling
+        </span>
+      ) : null}
+      {row.sync ? (
+        <span
+          title={syncFlagText(row.sync)}
+          className={
+            "rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide " +
+            (row.sync.permanent ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-800")
+          }
+        >
+          Not yet synced
         </span>
       ) : null}
     </div>

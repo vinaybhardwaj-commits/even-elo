@@ -3,8 +3,10 @@ import {
   actionLabel,
   actorText,
   allowedActions,
+  annotateSync,
   applyFilters,
   countBuckets,
+  countNotSynced,
   describeEvents,
   parseFilters,
   parseRuling,
@@ -12,6 +14,7 @@ import {
   rowsFromRoster,
   sortRows,
   statusText,
+  syncFlagText,
   toFindingRow,
   type DoctorLookup,
 } from "@/lib/audit-findings";
@@ -190,5 +193,34 @@ describe("rulings and timeline", () => {
     expect(actorText("doctor:D-1")).toBe("The doctor");
     expect(actorText("cm:x")).toBe("Care manager x");
     expect(actorText(undefined)).toBe("System");
+  });
+});
+
+describe("sync flags", () => {
+  const rows = () => rowsFromRoster(roster([signalObject(), signalObject({ reference: "EHRC-AUD-2026-0043", signal_id: "s-2" })]), lookup);
+
+  it("annotateSync attaches a flag by reference and leaves other rows untouched", () => {
+    const flagged = annotateSync(rows(), new Map([["EHRC-AUD-2026-0043", { state: "failed" as const, permanent: false, attempts: 1 }]]));
+    expect(flagged.find((r) => r.reference === "EHRC-AUD-2026-0043")?.sync).toEqual({ state: "failed", permanent: false, attempts: 1 });
+    expect(flagged.find((r) => r.reference !== "EHRC-AUD-2026-0043")?.sync).toBeUndefined();
+  });
+
+  it("countNotSynced counts flagged rows and the failed subset", () => {
+    const flagged = annotateSync(
+      rows(),
+      new Map([
+        ["EHRC-AUD-2026-0042", { state: "pending" as const, permanent: false, attempts: 0 }],
+        ["EHRC-AUD-2026-0043", { state: "failed" as const, permanent: true, attempts: 8 }],
+      ]),
+    );
+    expect(countNotSynced(flagged)).toEqual({ not_synced: 2, failed: 1 });
+    expect(countNotSynced(rows())).toEqual({ not_synced: 0, failed: 0 });
+  });
+
+  it("syncFlagText says what happened in plain words", () => {
+    expect(syncFlagText({ state: "failed", permanent: false, attempts: 1 })).toMatch(/1 attempt so far.*every night/);
+    expect(syncFlagText({ state: "failed", permanent: false, attempts: 3 })).toMatch(/3 attempts/);
+    expect(syncFlagText({ state: "failed", permanent: true, attempts: 1 })).toMatch(/refused/);
+    expect(syncFlagText({ state: "pending", permanent: false, attempts: 0 })).toMatch(/waiting/);
   });
 });

@@ -237,6 +237,19 @@ export interface FindingRow {
   awaiting_ruling: boolean;
   needs_attention: boolean;
   attention_reasons: string[];
+  /**
+   * Set by the worklist route when the doctor's answer to this thread is not in CDMSS yet (the
+   * forward failed or is still waiting for its retry). Absent when the answer is synced or none was given.
+   */
+  sync?: SyncFlag | null;
+}
+
+/** The forward of a doctor's answer to CDMSS has not completed. */
+export interface SyncFlag {
+  state: "pending" | "failed";
+  /** CDMSS refused the answer; retries stop and someone has to look at it. */
+  permanent: boolean;
+  attempts: number;
 }
 
 export interface RawSignal {
@@ -371,6 +384,35 @@ export interface BucketCounts {
 
 export function isAwaitingDoctor(r: FindingRow): boolean {
   return r.status === "routed" && r.response_required !== "none";
+}
+
+/** PURE. Plain-words hover text for the "Not yet synced" badge. */
+export function syncFlagText(flag: SyncFlag): string {
+  if (flag.permanent) return "CDMSS refused the doctor's answer, so it will not be retried. Governance needs to look at it.";
+  if (flag.state === "failed") {
+    return `The doctor's answer has not reached CDMSS yet (${flag.attempts} ${flag.attempts === 1 ? "attempt" : "attempts"} so far). It is retried every night.`;
+  }
+  return "The doctor's answer is waiting to be sent to CDMSS.";
+}
+
+/** PURE. Rows with their sync flag attached, matched by thread reference. Rows with no flag are left untouched. */
+export function annotateSync(rows: readonly FindingRow[], flags: ReadonlyMap<string, SyncFlag>): FindingRow[] {
+  return rows.map((r) => {
+    const f = flags.get(r.reference);
+    return f ? { ...r, sync: f } : r;
+  });
+}
+
+/** PURE. How many threads carry a sync flag, and how many of those have actually failed. */
+export function countNotSynced(rows: readonly FindingRow[]): { not_synced: number; failed: number } {
+  let notSynced = 0;
+  let failed = 0;
+  for (const r of rows) {
+    if (!r.sync) continue;
+    notSynced += 1;
+    if (r.sync.state === "failed") failed += 1;
+  }
+  return { not_synced: notSynced, failed };
 }
 
 /** PURE. Counts per bucket over the rows given (the unfiltered set, so the tiles never lie). */

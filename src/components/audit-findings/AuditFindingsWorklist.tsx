@@ -23,6 +23,7 @@ interface Options {
 interface Payload {
   ok: boolean;
   counts?: BucketCounts;
+  sync?: { not_synced: number; failed: number };
   rows?: FindingRow[];
   options?: Options;
   message?: string;
@@ -111,6 +112,18 @@ export function AuditFindingsWorklist() {
             Doctor mapping review
           </Link>
         </div>
+
+        {data?.sync && data.sync.not_synced > 0 ? (
+          <div
+            role="status"
+            className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-[13px] text-amber-950"
+          >
+            <span className="num font-semibold">{data.sync.not_synced}</span>{" "}
+            {data.sync.not_synced === 1 ? "doctor answer is" : "doctor answers are"} not yet synced to CDMSS
+            {data.sync.failed > 0 ? ` (${data.sync.failed} failed to send)` : ""}. They are marked{" "}
+            <span className="font-semibold">Not yet synced</span> below and retried every night.
+          </div>
+        ) : null}
 
         <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
           {TILE_ORDER.map((b) => {

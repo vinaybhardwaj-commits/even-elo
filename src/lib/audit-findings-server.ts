@@ -13,6 +13,7 @@ import {
   type DoctorLookup,
   type FindingRow,
   type Instance,
+  type SyncFlag,
   type TimelineEntry,
 } from "@/lib/audit-findings";
 import { fetchAuditSignal, fetchRosterAudits, upstreamError, type CatOutcome } from "@/lib/cdmss-governance";
@@ -40,6 +41,44 @@ export async function loadDoctorLookup(): Promise<DoctorLookup> {
     // Names fall back to what CDMSS sends; the worklist still works.
   }
   return { byUid };
+}
+
+interface SyncRow {
+  reference: string | null;
+  state: string | null;
+  permanent: boolean | null;
+  attempts: number | null;
+}
+
+/**
+ * Threads whose doctor answer has not reached CDMSS: document_audit_findings.cdmss_sync_state is
+ * 'failed', or still 'pending' (the inline attempt did not finish and the nightly retry has not run).
+ * Keyed by CDMSS thread reference. Best effort: if the sync columns are not there yet (migration 038
+ * unapplied) or the read fails, the worklist simply shows no badges.
+ */
+export async function loadSyncFlags(): Promise<Map<string, SyncFlag>> {
+  const out = new Map<string, SyncFlag>();
+  try {
+    const rows = (await sql`
+      SELECT btrim(signal_reference) AS reference,
+             cdmss_sync_state AS state,
+             coalesce(cdmss_sync_permanent, false) AS permanent,
+             coalesce(cdmss_sync_attempts, 0)::int AS attempts
+      FROM document_audit_findings
+      WHERE coalesce(btrim(signal_reference), '') <> ''
+        AND doctor_response_verb IS NOT NULL
+        AND cdmss_sync_state IN ('pending', 'failed')`) as unknown as SyncRow[];
+    for (const r of Array.isArray(rows) ? rows : []) {
+      if (!r.reference || (r.state !== "pending" && r.state !== "failed")) continue;
+      const flag: SyncFlag = { state: r.state, permanent: r.permanent === true, attempts: Number(r.attempts) || 0 };
+      const have = out.get(r.reference);
+      // A failure outranks a pending row for the same thread.
+      if (!have || (have.state === "pending" && flag.state === "failed")) out.set(r.reference, flag);
+    }
+  } catch {
+    // No badges rather than no worklist.
+  }
+  return out;
 }
 
 export type LoadFailure = { kind: "unavailable" } | { kind: "upstream"; status: number; message: string };

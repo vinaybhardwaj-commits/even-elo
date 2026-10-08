@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireStaff } from "@/lib/staff-guard";
-import { loadWorklistRows } from "@/lib/audit-findings-server";
-import { applyFilters, countBuckets, parseFilters, sortRows, NOTE_CLASS_LABEL, STATUSES } from "@/lib/audit-findings";
+import { loadSyncFlags, loadWorklistRows } from "@/lib/audit-findings-server";
+import { annotateSync, applyFilters, countBuckets, countNotSynced, parseFilters, sortRows, NOTE_CLASS_LABEL, STATUSES } from "@/lib/audit-findings";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -16,6 +16,8 @@ export const maxDuration = 30;
  * Query: view=attention|overdue|disagreed|awaiting_ruling|awaiting_doctor|all (default attention),
  * status, importance, response_required, note_class, doctor_uid, from, to (routed date, YYYY-MM-DD).
  * Counts are over the whole set, so the bucket tiles do not change when a filter is applied.
+ * `sync` = { not_synced, failed }: threads whose doctor answer has not reached CDMSS (each such row
+ * carries `sync` too). Empty when migration 038 is not applied.
  */
 export async function GET(req: NextRequest) {
   const gate = await requireStaff("view");
@@ -28,7 +30,8 @@ export async function GET(req: NextRequest) {
       { status: 502 },
     );
   }
-  const all = loaded.rows;
+  // Doctor answers that CDMSS does not have yet are flagged per thread and counted over the whole set.
+  const all = annotateSync(loaded.rows, await loadSyncFlags());
   const filters = parseFilters(req.nextUrl.searchParams);
   const rows = sortRows(applyFilters(all, filters));
 
@@ -46,6 +49,7 @@ export async function GET(req: NextRequest) {
     ok: true,
     filters,
     counts: countBuckets(all),
+    sync: countNotSynced(all),
     rows,
     options: {
       doctors: Array.from(doctors.entries())

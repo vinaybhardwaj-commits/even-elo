@@ -206,3 +206,61 @@ describe("source guard", () => {
     }
   });
 });
+
+describe("worklist route: Not yet synced", () => {
+  const syncRow = (over: Record<string, unknown> = {}) => ({ reference: REF, state: "failed", permanent: false, attempts: 2, ...over });
+  const withSync = (rows: unknown[] | Error) => {
+    h.sql = fakeSql((text) => {
+      if (text.includes("document_audit_findings")) {
+        if (rows instanceof Error) throw rows;
+        return rows;
+      }
+      return [];
+    });
+  };
+
+  it("flags the thread and counts it at the top when its forward failed", async () => {
+    h.user = staff.sgo;
+    withSync([syncRow()]);
+    const body = await (await worklistGET(req("/api/audit-findings"))).json();
+    expect(body.sync).toEqual({ not_synced: 1, failed: 1 });
+    expect(body.rows[0].sync).toEqual({ state: "failed", permanent: false, attempts: 2 });
+  });
+
+  it("a pending forward is flagged too but not counted as failed; a failure outranks pending on the same thread", async () => {
+    h.user = staff.sgo;
+    withSync([syncRow({ state: "pending", attempts: 0 })]);
+    let body = await (await worklistGET(req("/api/audit-findings"))).json();
+    expect(body.sync).toEqual({ not_synced: 1, failed: 0 });
+    withSync([syncRow({ state: "pending", attempts: 0 }), syncRow({ state: "failed", permanent: true, attempts: 3 })]);
+    body = await (await worklistGET(req("/api/audit-findings"))).json();
+    expect(body.rows[0].sync).toEqual({ state: "failed", permanent: true, attempts: 3 });
+    expect(body.sync.not_synced).toBe(1);
+  });
+
+  it("counts over the whole set, not the filtered view, and ignores references that are not on the roster", async () => {
+    h.user = staff.sgo;
+    withSync([syncRow(), syncRow({ reference: "EHRC-AUD-2026-9999" })]);
+    const body = await (await worklistGET(req("/api/audit-findings?view=overdue"))).json();
+    expect(body.rows).toHaveLength(0);
+    expect(body.sync).toEqual({ not_synced: 1, failed: 1 });
+  });
+
+  it("shows no badge and no count when everything is synced", async () => {
+    h.user = staff.sgo;
+    withSync([]);
+    const body = await (await worklistGET(req("/api/audit-findings"))).json();
+    expect(body.sync).toEqual({ not_synced: 0, failed: 0 });
+    expect(body.rows[0].sync).toBeUndefined();
+  });
+
+  it("still serves the worklist when the sync columns do not exist yet (migration 038 unapplied)", async () => {
+    h.user = staff.sgo;
+    withSync(new Error('column "cdmss_sync_state" does not exist'));
+    const res = await worklistGET(req("/api/audit-findings"));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.sync).toEqual({ not_synced: 0, failed: 0 });
+    expect(body.rows).toHaveLength(1);
+  });
+});
