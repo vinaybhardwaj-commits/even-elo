@@ -18,10 +18,11 @@ vi.mock("@/lib/staff-live", async (orig) => {
 });
 
 import { POST } from "@/app/api/audit-findings/[reference]/ruling/route";
-import { parseRulingBody, rulingKey, threadVersion } from "@/lib/audit-ruling";
+import { appliedRulingIndex, parseRulingBody, rulingKey, threadVersion } from "@/lib/audit-ruling";
 
 interface Row {
   id: string;
+  reference: string;
   key: string;
   action: string;
   note: string;
@@ -35,12 +36,13 @@ interface Row {
 let rows: Map<string, Row>;
 let audits: Array<{ action: string; entity: string }>;
 let inserts: number;
+let pendingLookups: number;
 let cdmssStatus: string; // the thread's CURRENT status as CDMSS holds it
 let events: Array<Record<string, unknown>>; // the thread's CURRENT event log as CDMSS holds it
 let linkedDoctor: boolean; // is the CDMSS doctor linked to a physician profile
 let engagedAtA: boolean; // is that physician engaged at HOSPITAL_A
 let signalActionCalls: Array<Record<string, unknown>>;
-let signalActionMode: "ok" | "replay" | "conflict" | "down" | "bad_request";
+let signalActionMode: "ok" | "replay" | "conflict" | "down" | "bad_request" | "applied_then_timeout";
 const fetchMock = vi.fn();
 
 function installSql() {
@@ -67,6 +69,7 @@ function installSql() {
       }
       const row: Row = {
         id: `iv-${rows.size + 1}`,
+        reference: String(v[0]),
         key,
         action: String(v[5]),
         note: String(v[2]),
@@ -78,6 +81,13 @@ function installSql() {
       };
       rows.set(key, row);
       return [{ id: row.id, cdmss_sync_state: row.state, actor_email: row.actor, ruling_note: row.ruling_note }];
+    }
+    if (text.includes("FROM gov_interventions") && text.includes("WHERE signal_key =") && text.includes("cdmss_sync_state = 'pending'")) {
+      pendingLookups += 1;
+      const hit = Array.from(rows.values())
+        .filter((r) => r.reference === v[0] && r.action === v[1] && r.state === "pending")
+        .pop();
+      return hit ? [{ id: hit.id, idempotency_key: hit.key }] : [];
     }
     if (text.includes("FROM gov_interventions WHERE idempotency_key")) {
       const r = rows.get(String(v[0]));
@@ -109,6 +119,7 @@ beforeEach(() => {
   rows = new Map();
   audits = [];
   inserts = 0;
+  pendingLookups = 0;
   cdmssStatus = "escalated";
   events = EVENTS.map((e) => ({ ...e }));
   linkedDoctor = true;
@@ -128,6 +139,21 @@ beforeEach(() => {
       const body = JSON.parse(String(init?.body));
       signalActionCalls.push(body);
       if (signalActionMode === "down") throw new Error("network down");
+      // CDMSS's own replay guard: an earlier (action, gov_intervention_ref) pair on the thread is a 200 no-op.
+      const already = events.some((e) => {
+        const pl = e.payload as { action?: string; gov_intervention_ref?: string } | null;
+        return (e.event === "ruled" || e.event === "closed") && pl?.action === body.action && pl?.gov_intervention_ref === body.gov_intervention_ref;
+      });
+      if (already) return json(200, { ok: true, replayed: true, status: cdmssStatus, signal: signalObject({ status: cdmssStatus }) });
+      if (signalActionMode === "applied_then_timeout") {
+        // CDMSS commits the ruling (new event, new status) and then the reply is lost.
+        cdmssStatus = body.action === "closed" ? "closed" : "ruled";
+        events = [
+          ...events,
+          { event: body.action === "closed" ? "closed" : "ruled", actor: body.actor, at: "2026-10-08T05:00:00.000Z", payload: { action: body.action, note: body.note, actor: body.actor, gov_intervention_ref: body.gov_intervention_ref } },
+        ];
+        throw new Error("timeout");
+      }
       if (signalActionMode === "conflict") return json(409, { ok: false, error: "signal is closed; closed is not allowed" });
       if (signalActionMode === "bad_request") return json(400, { ok: false, error: "action must be one of x" });
       return json(200, {
@@ -438,5 +464,83 @@ describe("the role is the database's, not the 7-day cookie's (L3)", () => {
     expect((await rule({ action: "closed", note: "Resolved." })).status).toBe(401);
     expect(inserts).toBe(0);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("N1: CDMSS applied the ruling but the reply timed out; pressing again must not rule twice", () => {
+  for (const [action, settled] of [
+    ["privilege_action", "ruled"],
+    ["closed", "closed"],
+  ] as const) {
+    it(`${action}: the second press reuses the pending row, confirms it from CDMSS's event log, and sends nothing`, async () => {
+      signalActionMode = "applied_then_timeout";
+      const first = await rule({ action, note: "Decision taken." });
+      expect(first.status).toBe(502);
+      expect(rows.size).toBe(1);
+      const r1 = Array.from(rows.values())[0];
+      expect(r1.state).toBe("pending");
+      expect(cdmssStatus).toBe(settled); // CDMSS really did apply it
+      expect(signalActionCalls).toHaveLength(1);
+
+      const second = await rule({ action, note: "Decision taken." });
+      expect(second.status).toBe(200);
+      const body = await second.json();
+      expect(body).toMatchObject({ ok: true, replayed: true, intervention_id: r1.id });
+      expect(body.thread.status).toBe(settled);
+      // One row, now confirmed; no second row, no second CDMSS ruling, no second ruling event.
+      expect(rows.size).toBe(1);
+      expect(r1.state).toBe("synced");
+      expect(inserts).toBe(1);
+      expect(signalActionCalls).toHaveLength(1);
+      expect(events.filter((e) => e.event === "ruled" || e.event === "closed")).toHaveLength(1);
+      expect(audits.filter((a) => a.action === "audit_ruling")).toHaveLength(1); // audited once, on recovery
+    });
+  }
+
+  it("not applied (the call never reached CDMSS) and the thread version has since changed: the same row and key are re-sent, not a new row", async () => {
+    signalActionMode = "down";
+    await rule({ action: "privilege_action", note: "Refer for review." });
+    const r1 = Array.from(rows.values())[0];
+    // Unrelated activity on the thread moves its version (a new event) between the two presses.
+    events = [...events, { event: "comment", actor: "cm:asha", at: "2026-10-06T05:00:00.000Z", payload: {} }];
+    signalActionMode = "ok";
+    const retried = await rule({ action: "privilege_action", note: "Refer for review." });
+    expect(retried.status).toBe(200);
+    expect(rows.size).toBe(1);
+    expect(signalActionCalls).toHaveLength(2);
+    expect(signalActionCalls[1].gov_intervention_ref).toBe(r1.id);
+    expect(r1.state).toBe("synced");
+  });
+
+  it("applied, then the thread was reopened before the second press: the old row is confirmed and this press is a NEW ruling", async () => {
+    signalActionMode = "applied_then_timeout";
+    await rule({ action: "closed", note: "Resolved." });
+    const r1 = Array.from(rows.values())[0];
+    reopen(); // a care manager re-routes it after the (unconfirmed) close
+    signalActionMode = "ok";
+    const res = await rule({ action: "closed", note: "Close it again." });
+    expect(res.status).toBe(200);
+    expect((await res.json()).replayed).toBe(false);
+    expect(r1.state).toBe("synced");
+    expect(rows.size).toBe(2);
+    expect(signalActionCalls).toHaveLength(2);
+    expect(signalActionCalls[1].gov_intervention_ref).not.toBe(r1.id);
+  });
+
+  it("a pending ruling for a DIFFERENT action does not block or get reused", async () => {
+    signalActionMode = "down";
+    await rule({ action: "acknowledged_by_governance", note: "Seen." });
+    signalActionMode = "ok";
+    await rule({ action: "closed", note: "Finished." });
+    expect(rows.size).toBe(2);
+    expect(Array.from(rows.values()).map((r) => r.state).sort()).toEqual(["pending", "synced"]);
+  });
+
+  it("appliedRulingIndex finds the ruling by action and intervention id only", () => {
+    const ev = [{ event: "routed" }, { event: "ruled", payload: { action: "privilege_action", gov_intervention_ref: "iv-9" } }];
+    expect(appliedRulingIndex(ev, "privilege_action", "iv-9")).toBe(1);
+    expect(appliedRulingIndex(ev, "closed", "iv-9")).toBe(-1);
+    expect(appliedRulingIndex(ev, "privilege_action", "iv-1")).toBe(-1);
+    expect(appliedRulingIndex(undefined, "closed", "iv-9")).toBe(-1);
   });
 });

@@ -15,6 +15,13 @@
  *      CDMSS treats a repeat of (ref, action, intervention id) as a 200 no-op, so step 3 is safe to
  *      repeat as often as step 2 is.
  *
+ * An unconfirmed ruling is finished before a new one is started (N1). If CDMSS applied a ruling but the
+ * reply was lost, the row is still pending; pressing again must not create a second ruling. So before
+ * writing anything: (a) any pending row for the same thread + action is reused with ITS key, whatever the
+ * thread's version is now; (b) the audit-signal read we already made is searched for that row's id, and if
+ * CDMSS's event log has it, the row is marked synced and the press reports success without a second call
+ * (if later events show the thread has moved on since, a fresh ruling follows as usual).
+ *
  * Outcomes:
  *   200 (fresh or replayed)  success; the row is marked synced.
  *   409                      the thread moved or the transition is illegal. The row for this attempt is
@@ -105,6 +112,27 @@ interface InterventionRow {
   ruling_note: string | null;
 }
 
+interface PendingLookup {
+  id: string;
+  idempotency_key: string | null;
+}
+
+/**
+ * PURE. Where in the event log the ruling with this intervention id sits (-1 when it is not there).
+ * CDMSS writes a 'ruled' or 'closed' event whose payload carries the action and gov_intervention_ref.
+ */
+export function appliedRulingIndex(events: unknown, action: string, interventionId: string): number {
+  if (!Array.isArray(events)) return -1;
+  return events.findIndex((e) => {
+    const o = e as { event?: unknown; payload?: { action?: unknown; gov_intervention_ref?: unknown } | null } | null;
+    return (
+      (o?.event === "ruled" || o?.event === "closed") &&
+      o?.payload?.action === action &&
+      o?.payload?.gov_intervention_ref === interventionId
+    );
+  });
+}
+
 async function audit(
   actor: RulingActor,
   action: string,
@@ -165,10 +193,38 @@ export async function recordRuling(input: {
     };
   }
 
-  // 2. One decision row per thread + action + thread state.
-  const version = threadVersion((thread.body as { events?: unknown } | null)?.events, (thread.body as { signal?: { routed_at?: unknown } } | null)?.signal);
-  const key = rulingKey(reference, action, version);
+  // 2. One decision row per thread + action. First, finish any unconfirmed ruling for this thread + action.
+  const events = (thread.body as { events?: unknown } | null)?.events;
+  let version = threadVersion(events, (thread.body as { signal?: { routed_at?: unknown } } | null)?.signal);
+  let key = rulingKey(reference, action, version);
   const kindNote = `${actionLabel(action)}: ${note}`;
+  try {
+    const pending = (await sql`
+      SELECT id::text AS id, idempotency_key
+      FROM gov_interventions
+      WHERE signal_key = ${reference} AND action = ${action} AND cdmss_sync_state = 'pending'
+      ORDER BY created_at DESC LIMIT 1`) as unknown as PendingLookup[];
+    const p = Array.isArray(pending) ? pending[0] : undefined;
+    if (p?.idempotency_key) {
+      const at = appliedRulingIndex(events, action, p.id);
+      if (at >= 0) {
+        // CDMSS applied it; only the answer was lost. Confirm the row.
+        await sql`UPDATE gov_interventions SET cdmss_sync_state = 'synced', cdmss_sync_error = NULL, cdmss_sync_at = now() WHERE id = ${p.id}::uuid`;
+        await audit(actor, "audit_ruling", reference, { action, intervention_id: p.id, recovered: true });
+        if (at === (events as unknown[]).length - 1) {
+          // Nothing happened to the thread since: this press IS that ruling. Report it, send nothing.
+          return { ok: true, replayed: true, status: before.status, intervention_id: p.id, row: before };
+        }
+        // The thread moved on after that ruling (for example it was reopened): this press is a new one.
+      } else {
+        // Not applied (or not visible): retry the SAME decision under its own key.
+        key = p.idempotency_key;
+        version = "reused";
+      }
+    }
+  } catch {
+    // Could not look; fall through to the version-scoped key.
+  }
   let row: InterventionRow | null = null;
   try {
     const inserted = (await sql`
