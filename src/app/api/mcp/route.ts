@@ -30,7 +30,6 @@ const NO_STORE = { "Cache-Control": "no-store, max-age=0" };
 
 type Json = Record<string, unknown>;
 type Row = Record<string, unknown>;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Sql = any;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
