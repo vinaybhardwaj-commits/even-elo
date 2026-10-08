@@ -1,15 +1,31 @@
 /**
  * Pipe B writer. Plans with document-audit-ingest.ts, then upserts.
- * Unmapped doctors are skipped (physicians.cdmss_doctor_uid). No fuzzy name match.
- * Portal flags stay off until a routed signal matches or an RMO releases.
+ * Unmapped doctors are skipped (physicians.cdmss_doctor_uid, or a recorded alias uid). No fuzzy
+ * name match here: linking is done by the mapping tool in lib/cdmss-doctor-mapping.ts.
+ *
+ * Visibility is PER FINDING (F4). A finding reaches a doctor only when CDMSS marks that finding
+ * `routed`, a routed signal for that finding's own type matches it, or an RMO releases it. The
+ * audit-level triage_routed_at stamp below is informational for staff and grants nothing.
+ *
+ * Content is refreshed (F5): when CDMSS changes a finding's content the next run rewrites the
+ * content columns of the existing row. Doctor-response columns, status and authorship are never
+ * touched by ingest.
  */
 
 import { sql } from "@/lib/db";
 import { SYSTEM_AUDIT_AUTHOR } from "@/lib/document-audits";
 import {
+  EXPORT_MARGIN_S,
+  PARTIAL_RUN_MARKER,
+  exportTimeoutMs,
+  isTimeoutError,
+  workDeadlineMs,
+} from "@/lib/ingest-timing";
+import {
   countSkips,
   formatIngestNote,
   hasAllPlannedFindings,
+  isRouteHitCurrent,
   matchRoutedFindings,
   planDocumentAuditIngest,
   shouldProbeAuditPdf,
@@ -88,6 +104,8 @@ export interface IngestRunResult {
   pdf_stored: number;
   pdf_unavailable: number;
   progress_supported: boolean;
+  /** True when the run stopped on its time budget: some audits were NOT processed. */
+  partial: boolean;
   note: string;
   skips: ReturnType<typeof countSkips>;
 }
@@ -95,11 +113,28 @@ export interface IngestRunResult {
 async function fetchExport(opts: DocumentAuditIngestOpts = {}): Promise<unknown> {
   const key = process.env.GOV_API_KEY;
   if (!key) throw new Error("GOV_API_KEY not configured");
-  const res = await fetch(buildDocumentAuditsExportUrl(BASE, opts), {
-    headers: { "x-api-key": key },
-    cache: "no-store",
-    signal: AbortSignal.timeout(20000),
-  });
+  const timeoutMs = exportTimeoutMs();
+  let res: Response;
+  try {
+    res = await fetch(buildDocumentAuditsExportUrl(BASE, opts), {
+      headers: { "x-api-key": key },
+      cache: "no-store",
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (e) {
+    if (isTimeoutError(e)) {
+      const secs = Math.round(timeoutMs / 1000);
+      const note = `${PARTIAL_RUN_MARKER} export_timeout after ${secs}s (limit is maxDuration minus ${EXPORT_MARGIN_S}s); no audits written`;
+      console.error(`[document-audit-ingest] ${note}`);
+      try {
+        await recordIngestMeta(note, false);
+      } catch {
+        // Meta row may be missing before migration 030; the thrown error still reports the failure.
+      }
+      throw new Error(`document-audits-export timed out after ${secs}s`);
+    }
+    throw e;
+  }
   if (!res.ok) {
     const body = (await res.text()).slice(0, 200);
     throw new Error(`CDMSS document-audits-export ${res.status}: ${body}`);
@@ -155,10 +190,25 @@ async function hospitalId(code: string, cache: Map<string, string | null>): Prom
 
 async function physicianId(doctorUid: string, cache: Map<string, string | null>): Promise<string | null> {
   if (cache.has(doctorUid)) return cache.get(doctorUid) ?? null;
-  const rows = (await sql`
+  // Whoever holds the uid directly owns it. Always the first and strongest answer.
+  const direct = (await sql`
     SELECT id::text AS id FROM physicians WHERE cdmss_doctor_uid = ${doctorUid} LIMIT 1
   `) as unknown as Array<{ id: string }>;
-  const id = rows[0]?.id ?? null;
+  let id: string | null = direct[0]?.id ?? null;
+  if (!id) {
+    // The export may still carry a retired duplicate uid. The mapping tool records an alias only
+    // when it is proven (matching name), so it is trusted here, but only when exactly ONE physician
+    // holds it: two holders means the alias is ambiguous and the audit stays unmapped rather than
+    // landing on the wrong doctor.
+    try {
+      const viaAlias = (await sql`
+        SELECT id::text AS id FROM physicians WHERE ${doctorUid} = ANY(cdmss_alias_uids) LIMIT 2
+      `) as unknown as Array<{ id: string }>;
+      id = viaAlias.length === 1 ? viaAlias[0].id : null;
+    } catch {
+      id = null; // migration 036 not applied yet: no alias lookup
+    }
+  }
   cache.set(doctorUid, id);
   return id;
 }
@@ -201,12 +251,27 @@ async function upsertAudit(audit: PlannedAudit, pdfUrl: string | null, physician
   return id;
 }
 
+/**
+ * Insert a finding, or refresh its CDMSS-owned content when it already exists.
+ *
+ * Content columns (label, body, severity, type/refs, note date, evidence, citations, patient,
+ * content_hash, the CDMSS routed verdict) follow CDMSS on every run, whoever the author is: an
+ * RMO confirming authorship changes authored_by_*, not the clinical content. NOT touched on
+ * conflict: status, doctor_response_*, authored_by_*, response_owner.
+ *
+ * portal_visible: CDMSS routed=true opens the finding; routed=false closes it only if CDMSS had
+ * itself routed it before (an RMO release of a never-routed finding is not undone); no verdict
+ * (null) leaves it as is.
+ */
 async function upsertFinding(auditId: string, physician: string, finding: PlannedAudit["findings"][number]): Promise<void> {
+  const citations = JSON.stringify(finding.citations);
+  const patient = finding.patient ? JSON.stringify(finding.patient) : null;
   await sql`
     INSERT INTO document_audit_findings (
       audit_id, finding_label, finding_body, severity, status,
       authored_by_name, physician_id, recurrence_count, portal_visible,
-      finding_ref, queue_item_ref, signal_reference, signal_type, note_class
+      finding_ref, queue_item_ref, signal_reference, signal_type, note_class,
+      cdmss_routed, note_date, evidence_excerpt, citations_json, patient_json, content_hash
     ) VALUES (
       ${auditId}::uuid,
       ${finding.finding_label},
@@ -216,28 +281,38 @@ async function upsertFinding(auditId: string, physician: string, finding: Planne
       ${SYSTEM_AUDIT_AUTHOR},
       ${physician}::uuid,
       ${finding.recurrence_count},
-      false,
+      ${finding.routed === true},
       ${finding.finding_ref},
       ${finding.queue_item_ref},
       ${finding.signal_reference},
       ${finding.signal_type},
-      ${finding.note_class}
+      ${finding.note_class},
+      ${finding.routed},
+      ${finding.note_date}::date,
+      ${finding.evidence_excerpt},
+      ${citations}::jsonb,
+      ${patient}::jsonb,
+      ${finding.content_hash}
     )
     ON CONFLICT (audit_id, finding_ref) WHERE finding_ref IS NOT NULL DO UPDATE SET
-      finding_label = CASE
-        WHEN document_audit_findings.authored_by_name = ${SYSTEM_AUDIT_AUTHOR}
-        THEN EXCLUDED.finding_label ELSE document_audit_findings.finding_label END,
-      finding_body = CASE
-        WHEN document_audit_findings.authored_by_name = ${SYSTEM_AUDIT_AUTHOR}
-        THEN EXCLUDED.finding_body ELSE document_audit_findings.finding_body END,
-      severity = CASE
-        WHEN document_audit_findings.authored_by_name = ${SYSTEM_AUDIT_AUTHOR}
-        THEN EXCLUDED.severity ELSE document_audit_findings.severity END,
+      finding_label = EXCLUDED.finding_label,
+      finding_body = EXCLUDED.finding_body,
+      severity = EXCLUDED.severity,
       queue_item_ref = COALESCE(EXCLUDED.queue_item_ref, document_audit_findings.queue_item_ref),
       signal_reference = COALESCE(EXCLUDED.signal_reference, document_audit_findings.signal_reference),
       signal_type = COALESCE(EXCLUDED.signal_type, document_audit_findings.signal_type),
       note_class = COALESCE(EXCLUDED.note_class, document_audit_findings.note_class),
       recurrence_count = GREATEST(document_audit_findings.recurrence_count, EXCLUDED.recurrence_count),
+      note_date = EXCLUDED.note_date,
+      evidence_excerpt = EXCLUDED.evidence_excerpt,
+      citations_json = EXCLUDED.citations_json,
+      patient_json = EXCLUDED.patient_json,
+      content_hash = EXCLUDED.content_hash,
+      portal_visible = CASE
+        WHEN EXCLUDED.cdmss_routed IS TRUE THEN true
+        WHEN EXCLUDED.cdmss_routed IS FALSE AND document_audit_findings.cdmss_routed IS TRUE THEN false
+        ELSE document_audit_findings.portal_visible END,
+      cdmss_routed = COALESCE(EXCLUDED.cdmss_routed, document_audit_findings.cdmss_routed),
       updated_at = now()
   `;
 }
@@ -263,7 +338,12 @@ async function loadExistingAuditKeys(audits: PlannedAudit[]): Promise<Map<string
         SELECT f.finding_ref
         FROM document_audit_findings f
         WHERE f.audit_id = da.id AND f.finding_ref IS NOT NULL
-      ) AS finding_refs
+      ) AS finding_refs,
+      COALESCE((
+        SELECT jsonb_object_agg(f.finding_ref, f.content_hash)
+        FROM document_audit_findings f
+        WHERE f.audit_id = da.id AND f.finding_ref IS NOT NULL
+      ), '{}'::jsonb) AS finding_hashes
     FROM document_audits da
     WHERE da.external_ref = ANY(${externalRefs}::text[])
   `) as unknown as ExistingAuditRow[];
@@ -290,7 +370,10 @@ async function loadLocalKeys(): Promise<LocalFindingKey[]> {
       f.finding_ref,
       f.queue_item_ref,
       f.signal_type,
-      f.signal_reference
+      f.signal_reference,
+      f.cdmss_routed,
+      f.portal_visible,
+      f.response_owner
     FROM document_audit_findings f
     JOIN document_audits da ON da.id = f.audit_id
   `) as unknown as LocalFindingKey[];
@@ -320,6 +403,8 @@ async function applyRouteHit(hit: RouteHit): Promise<void> {
 export async function runDocumentAuditIngest(
   opts: DocumentAuditIngestOpts = {},
 ): Promise<IngestRunResult> {
+  const startedAt = Date.now();
+  const deadline = workDeadlineMs(startedAt);
   hospitalCache.clear();
   const payload = await fetchExport(opts);
   const plan = planDocumentAuditIngest(payload);
@@ -332,10 +417,18 @@ export async function runDocumentAuditIngest(
   let pdfStored = 0;
   let pdfUnavailable = 0;
   let probes = 0;
+  let processed = 0;
+  let partial = false;
 
   const existingAudits = await loadExistingAuditKeys(plan.audits);
   for (const audit of plan.audits) {
+    if (Date.now() > deadline) {
+      partial = true;
+      break;
+    }
+    processed += 1;
     const existing = existingAudits.get(audit.external_ref);
+    // Skip only when every planned finding exists AND its stored content hash is unchanged (F5).
     if (hasAllPlannedFindings(audit, existing)) {
       if (!existing?.cdmss_pdf_url) {
         let pdf = audit.pdf_url;
@@ -373,12 +466,17 @@ export async function runDocumentAuditIngest(
     }
   }
 
+  // Route matching (per finding). Only rows whose routing state would actually change are written.
   const locals = await loadLocalKeys();
+  const localById = new Map(locals.map((l) => [l.finding_id, l]));
   const hits = matchRoutedFindings(locals, plan.signals);
-  for (const hit of hits) await applyRouteHit(hit);
+  for (const hit of hits) {
+    if (isRouteHitCurrent(localById.get(hit.finding_id), hit)) continue;
+    await applyRouteHit(hit);
+  }
 
   const skips = countSkips(plan.skips);
-  const note = formatIngestNote({
+  const baseNote = formatIngestNote({
     audits,
     findings,
     unmapped_doctor: unmapped,
@@ -388,7 +486,12 @@ export async function runDocumentAuditIngest(
     pdf_unavailable: pdfUnavailable,
     progress_supported: plan.progress_supported,
   });
-  await recordIngestMeta(note, true);
+  const note = partial
+    ? `${PARTIAL_RUN_MARKER} time_budget processed=${processed}/${plan.audits.length} audits; ${baseNote}`
+    : baseNote;
+  if (partial) console.error(`[document-audit-ingest] ${note}`);
+  // A partial run is recorded as an attempt, not a success: freshness must not read as current.
+  await recordIngestMeta(note, !partial);
   return {
     ok: true,
     audits,
@@ -398,6 +501,7 @@ export async function runDocumentAuditIngest(
     pdf_stored: pdfStored,
     pdf_unavailable: pdfUnavailable,
     progress_supported: plan.progress_supported,
+    partial,
     note,
     skips,
   };

@@ -1453,5 +1453,50 @@ export const MIGRATIONS: Migration[] = [
         ON gov_ot_tracking_sheets (created_at DESC);
     `,
   },
+  {
+    id: "034_portal_login_failures",
+    description:
+      "A3: failed doctor-portal PIN attempts, keyed by SHA-256 digests of the account identifier and the client IP, so the 5-per-account / 20-per-IP rolling 15-minute limit holds across serverless instances.",
+    sql: `
+      CREATE TABLE IF NOT EXISTS portal_login_failures (
+        id            bigserial PRIMARY KEY,
+        subject_kind  text NOT NULL CHECK (subject_kind IN ('account', 'ip')),
+        subject_key   text NOT NULL,
+        attempted_at  timestamptz NOT NULL DEFAULT now()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_portal_login_failures_lookup
+        ON portal_login_failures (subject_kind, subject_key, attempted_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_portal_login_failures_age
+        ON portal_login_failures (attempted_at);
+    `,
+  },
+  {
+    id: "035_document_audit_finding_card_fields",
+    description:
+      "F4/F5: per-finding card content from the CDMSS export (CDMSS routed verdict, note date, evidence excerpt, citations, patient context) and a content hash so ingest can refresh a finding when CDMSS changes it.",
+    sql: `
+      ALTER TABLE document_audit_findings
+        ADD COLUMN IF NOT EXISTS cdmss_routed boolean,
+        ADD COLUMN IF NOT EXISTS note_date date,
+        ADD COLUMN IF NOT EXISTS evidence_excerpt text,
+        ADD COLUMN IF NOT EXISTS citations_json jsonb,
+        ADD COLUMN IF NOT EXISTS patient_json jsonb,
+        ADD COLUMN IF NOT EXISTS content_hash text;
+
+      CREATE INDEX IF NOT EXISTS idx_daf_portal_visible
+        ON document_audit_findings (physician_id)
+        WHERE portal_visible = true;
+    `,
+  },
+  {
+    id: "036_physician_cdmss_alias_uids",
+    description:
+      "F1: duplicate CDMSS identities collapsed into one canonical doctor uid. The physician keeps the canonical uid in cdmss_doctor_uid and the retired duplicates here, so audits that still carry an old uid resolve to the same physician.",
+    sql: `
+      ALTER TABLE physicians
+        ADD COLUMN IF NOT EXISTS cdmss_alias_uids text[];
+    `,
+  },
 ];
 

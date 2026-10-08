@@ -5,6 +5,7 @@ import { PortalNav, MobileTabBar, type Dest } from "@/components/portal/PortalNa
 import { HomeExtras, type AnnData } from "@/components/portal/HomeExtras";
 import { FindingsForDoctor } from "@/components/portal/FindingsForDoctor";
 import { LocalDocumentAuditsForDoctor } from "@/components/portal/LocalDocumentAuditsForDoctor";
+import { ADVISORY_FOOTER } from "@/lib/finding-labels";
 import { IncidentReporting } from "@/components/portal/IncidentReporting";
 
 interface Phys { id: string; full_name: string; preferred_name: string | null; primary_specialty: string | null; registration_number: string | null; registration_council: string | null; registration_expiry: string | null; email: string | null; phone: string | null; date_joined_network: string | null; current_status: string }
@@ -236,7 +237,7 @@ export default function PortalHome() {
               {features.findings && (
                 <section className="bg-white border border-stone-200 rounded-xl p-5">
                   <h2 className="text-[11px] font-bold uppercase tracking-[0.08em] text-brand mb-2">Findings</h2>
-                  <div className="text-[13px] text-stone-500 leading-snug">Documentation &amp; prescribing signals routed to you, with the note behind each one.</div>
+                  <div className="text-[13px] text-stone-500 leading-snug">Documentation and prescribing observations on your notes, with the evidence behind each one.</div>
                   <button onClick={() => goDest("findings")} className="mt-3 px-3.5 py-1.5 rounded-lg text-[13px] font-medium bg-brand text-white">View findings</button>
                 </section>
               )}
@@ -275,7 +276,8 @@ export default function PortalHome() {
                 reactions={features.reactions}
                 respond={features.findingsRespond}
               />
-              <LocalDocumentAuditsForDoctor />
+              <LocalDocumentAuditsForDoctor respond={features.findingsRespond} />
+              <p className="text-[12px] text-stone-500 leading-snug px-1">{ADVISORY_FOOTER}</p>
             </div>
           )}
 

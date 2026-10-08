@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentPhysician } from "@/lib/physician-auth";
 import { sql } from "@/lib/db";
-import { fetchDoctorAudits, type DoctorAuditSignal } from "@/lib/doctor-audits";
+import { findingsEnabled } from "@/lib/portal-flags";
+import { fetchDoctorAudits } from "@/lib/doctor-audits";
 import { doctorMayFetchAuditPdf, isAuditUuid, type AuditPdfSignal } from "@/lib/findings-pdf";
+import { fetchCdmssAuditPdf, pdfStreamResponse } from "@/lib/cdmss-pdf";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 30;
-
-const PDF_TIMEOUT_MS = 20000;
 
 /**
  * GET /api/portal/findings/pdf?ref=<audit uuid>
@@ -24,11 +24,37 @@ const PDF_TIMEOUT_MS = 20000;
  * portal-visible local document audit for this physician is the other grant,
  * so the local strip can download without exposing the CDMSS URL.
  *
+ * The upstream call ALWAYS carries routed_only=1, so the file a doctor opens
+ * contains only the findings routed to them: no sibling findings, no internal
+ * ids, no triage text. There is no path from this route to the unfiltered PDF
+ * (staff use /api/document-audits/[id]/pdf for that).
+ *
  * A missing session is 401. A reference that is not an audit UUID (including
  * EHRC-AUD-*) is 400. An audit this doctor cannot see is 404 — the same answer
  * whether it belongs to someone else or does not exist. Upstream failure is
  * 502, never an empty PDF and never the upstream body.
  */
+
+/**
+ * "View note" opens this URL in a new tab, so every non-PDF answer is a small page a doctor can
+ * read, never JSON. The wording is one plain sentence with no code, and the status code is kept so
+ * logs and tests still tell the cases apart.
+ */
+const NOTE_UNAVAILABLE = "This note isn't available right now. The quality team has been notified.";
+
+function notePage(status: number, message: string = NOTE_UNAVAILABLE): NextResponse {
+  const safe = message.replace(/[<>&]/g, "");
+  const html =
+    '<!doctype html><html lang="en"><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width, initial-scale=1">' +
+    "<title>Note unavailable</title></head>" +
+    '<body style="font-family:system-ui,sans-serif;max-width:32rem;margin:15vh auto;padding:0 1.25rem;color:#292524">' +
+    `<p style="font-size:1.0625rem;line-height:1.5">${safe}</p></body></html>`;
+  return new NextResponse(html, {
+    status,
+    headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store, max-age=0" },
+  });
+}
 
 async function lookupDoctorUid(physicianId: string): Promise<string | null> {
   try {
@@ -42,7 +68,7 @@ async function lookupDoctorUid(physicianId: string): Promise<string | null> {
   }
 }
 
-/** Portal-visible local document audit whose CDMSS id is this audit UUID. */
+/** A finding of this physician, visible to them (its own portal_visible), on the audit with this CDMSS id. */
 async function physicianHasLocalAuditPdf(physicianId: string, auditId: string): Promise<boolean> {
   try {
     const rows = (await sql`
@@ -50,7 +76,7 @@ async function physicianHasLocalAuditPdf(physicianId: string, auditId: string): 
       FROM document_audit_findings f
       JOIN document_audits da ON da.id = f.audit_id
       WHERE f.physician_id = ${physicianId}::uuid
-        AND (f.portal_visible = true OR da.triage_routed_at IS NOT NULL)
+        AND f.portal_visible = true
         AND (
           lower(da.source_audit_id) = lower(${auditId})
           OR position(lower(${auditId}) in lower(coalesce(da.cdmss_pdf_url, ''))) > 0
@@ -62,33 +88,14 @@ async function physicianHasLocalAuditPdf(physicianId: string, auditId: string): 
   }
 }
 
-async function fetchCdmssAuditPdf(auditId: string): Promise<Response> {
-  const key = process.env.GOV_API_KEY;
-  if (!key) throw new Error("GOV_API_KEY not configured");
-  const base = process.env.GOV_API_BASE || "https://even-cdmss.vercel.app";
-  const res = await fetch(`${base}/api/governance/audits/${encodeURIComponent(auditId)}/pdf`, {
-    headers: { "x-api-key": key, accept: "application/pdf" },
-    cache: "no-store",
-    signal: AbortSignal.timeout(PDF_TIMEOUT_MS),
-  });
-  const ct = (res.headers.get("content-type") || "").toLowerCase();
-  if (!res.ok || !res.body) throw new Error(`CDMSS audit pdf ${res.status}`);
-  if (ct.includes("json") || ct.includes("text/html") || ct.includes("text/plain")) {
-    throw new Error(`CDMSS audit pdf content-type ${ct || "unknown"}`);
-  }
-  if (ct && !ct.includes("pdf") && !ct.includes("octet-stream")) {
-    throw new Error(`CDMSS audit pdf content-type ${ct}`);
-  }
-  return res;
-}
-
 export async function GET(request: NextRequest) {
   const p = await getCurrentPhysician();
-  if (!p) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  if (!p) return notePage(401, "Please sign in to the doctor portal again to view this note.");
+  if (!findingsEnabled()) return notePage(404);
 
   const ref = (request.nextUrl.searchParams.get("ref") || "").trim();
   if (!isAuditUuid(ref)) {
-    return NextResponse.json({ ok: false, error: "invalid" }, { status: 400 });
+    return notePage(400);
   }
 
   const uid = await lookupDoctorUid(p.physicianId);
@@ -99,7 +106,12 @@ export async function GET(request: NextRequest) {
     try {
       const upstream = await fetchDoctorAudits(uid, { window: 90, status: "all" });
       const list = Array.isArray(upstream?.signals) ? upstream.signals : [];
-      signals = list as DoctorAuditSignal[];
+      // A finding marked not routed never grants a file.
+      signals = (list as unknown as AuditPdfSignal[]).filter(
+        (s) =>
+          (s as { routed?: unknown }).routed !== false &&
+          (s.representative as { routed?: unknown } | null)?.routed !== false,
+      );
     } catch {
       listFailed = true;
     }
@@ -108,20 +120,14 @@ export async function GET(request: NextRequest) {
   const localMatch = await physicianHasLocalAuditPdf(p.physicianId, ref);
   if (!doctorMayFetchAuditPdf({ auditId: ref, signals, localMatch })) {
     if (listFailed && !localMatch) {
-      return NextResponse.json({ ok: false, error: "upstream_unavailable" }, { status: 502 });
+      return notePage(502);
     }
-    return NextResponse.json({ ok: false, error: "not_found" }, { status: 404 });
+    return notePage(404);
   }
 
   try {
-    const upstream = await fetchCdmssAuditPdf(ref);
-    const headers = new Headers();
-    headers.set("Content-Type", "application/pdf");
-    headers.set("Content-Disposition", 'inline; filename="audit-findings.pdf"');
-    headers.set("Cache-Control", "private, no-store");
-    headers.set("X-Content-Type-Options", "nosniff");
-    return new NextResponse(upstream.body, { status: 200, headers });
+    return pdfStreamResponse(await fetchCdmssAuditPdf(ref, { routedOnly: true }));
   } catch {
-    return NextResponse.json({ ok: false, error: "upstream_unavailable" }, { status: 502 });
+    return notePage(502);
   }
 }

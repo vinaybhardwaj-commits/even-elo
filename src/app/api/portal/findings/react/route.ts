@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentPhysician } from "@/lib/physician-auth";
 import { sql } from "@/lib/db";
+import { disabledWrite, reactionsEnabled } from "@/lib/portal-flags";
 import { callReaction, mapReactOutcome, parseReactBody } from "@/lib/findings-actions";
+import { friendlyError } from "@/lib/finding-labels";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -32,6 +34,7 @@ export const runtime = "nodejs";
 export async function POST(request: NextRequest) {
   const p = await getCurrentPhysician();
   if (!p) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  if (!reactionsEnabled()) return disabledWrite();
 
   // Same fail-safe as the findings GET: a lookup that throws lands on UNMAPPED rather than a 500.
   // Unmapped hides the reaction row, which is the right outcome whenever we cannot establish the
@@ -46,11 +49,11 @@ export async function POST(request: NextRequest) {
   } catch {
     uid = null;
   }
-  if (!uid) return NextResponse.json({ ok: false, error: "unmapped" });
+  if (!uid) return NextResponse.json({ ok: false, error: "unmapped", message: friendlyError("unmapped") });
 
   const parsed = parseReactBody(await request.json().catch(() => null));
   if (!parsed.ok) {
-    return NextResponse.json({ ok: false, error: "invalid", message: parsed.message });
+    return NextResponse.json({ ok: false, error: "invalid", message: friendlyError("invalid") });
   }
   const { signalId, reaction } = parsed;
 
@@ -71,5 +74,9 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  return NextResponse.json(result);
+  if (!result.ok) {
+    return NextResponse.json({ ok: false, error: result.error, message: friendlyError(result.error) });
+  }
+  // The upstream reaction record is not relayed; the browser needs only to know it was saved.
+  return NextResponse.json({ ok: true, replay: result.replay });
 }

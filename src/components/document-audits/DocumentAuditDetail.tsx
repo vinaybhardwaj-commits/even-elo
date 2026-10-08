@@ -207,7 +207,7 @@ export function DocumentAuditDetail({
             </div>
             {audit.cdmss_pdf_url ? (
               <a
-                href={audit.cdmss_pdf_url}
+                href={`/api/document-audits/${audit.id}/pdf`}
                 target="_blank"
                 rel="noreferrer"
                 className="inline-flex rounded-lg bg-brand px-3.5 py-2 text-[12.5px] font-semibold text-white hover:opacity-90"

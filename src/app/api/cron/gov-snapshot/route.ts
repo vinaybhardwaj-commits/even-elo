@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getCurrentUser } from "@/lib/auth";
+import { cronGuard } from "@/lib/cron-auth";
 import { storeSnapshot, storeIncidentSnapshot } from "@/lib/gov-signals";
 
 export const dynamic = "force-dynamic";
@@ -14,18 +14,9 @@ export const maxDuration = 60;
  * (admin cookie required for backfill; plain cron invocations store just the
  * latest audited day).
  *
- * Auth: Vercel cron (CRON_SECRET bearer if set, else vercel-cron user agent)
- * OR any active signed-in governance user. Idempotent upserts — harmless to re-run.
+ * Auth: `Authorization: Bearer ${CRON_SECRET}` only (src/lib/cron-auth.ts). Missing CRON_SECRET
+ * answers 503. Backfill (?from&to) uses the same bearer. Idempotent upserts — harmless to re-run.
  */
-async function allowed(req: NextRequest): Promise<boolean> {
-  const secret = process.env.CRON_SECRET;
-  const authz = req.headers.get("authorization") || "";
-  if (secret && authz === `Bearer ${secret}`) return true;
-  const ua = req.headers.get("user-agent") || "";
-  if (ua.startsWith("vercel-cron/")) return true;
-  const u = await getCurrentUser();
-  return !!u && u.status === "active";
-}
 
 function dayRange(from: string, to: string): string[] {
   const out: string[] = [];
@@ -37,9 +28,8 @@ function dayRange(from: string, to: string): string[] {
 }
 
 export async function GET(req: NextRequest) {
-  if (!(await allowed(req))) {
-    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  }
+  const denied = cronGuard(req, "/api/cron/gov-snapshot");
+  if (denied) return denied;
   const sp = req.nextUrl.searchParams;
   const from = sp.get("from");
   const to = sp.get("to");

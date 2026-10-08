@@ -27,6 +27,7 @@ import {
   DOC_TYPE_LABEL,
   OPEN_PIPE,
   HIGH_SEV,
+  portalResponseOwner,
   formatAuditDate,
   ingestHonesty,
   isSystemAuditAuthor,
@@ -634,27 +635,41 @@ export async function loadPhysicianDocumentation(
   }
 }
 
-/** Portal: TriageBot-routed local findings for the signed-in physician. */
-export async function loadPortalRoutedFindings(physicianId: string): Promise<
-  Array<{
-    finding_id: string;
-    audit_id: string;
-    external_ref: string | null;
-    finding_label: string;
-    finding_body: string | null;
-    severity: string;
-    status: string;
-    authored_by_name: string;
-    authored_at: string;
-    doc_type: string;
-    cdmss_pdf_url: string | null;
-    doctor_response_verb: string | null;
-    doctor_response_comment: string | null;
-    doctor_responded_at: string | null;
-    response_owner: string | null;
-    signal_reference: string | null;
-  }>
-> {
+export interface PortalRoutedFindingRow {
+  finding_id: string;
+  audit_id: string;
+  external_ref: string | null;
+  finding_label: string;
+  finding_body: string | null;
+  severity: string;
+  status: string;
+  authored_by_name: string;
+  authored_at: string;
+  doc_type: string;
+  cdmss_pdf_url: string | null;
+  source_audit_id: string | null;
+  doctor_response_verb: string | null;
+  doctor_response_comment: string | null;
+  doctor_responded_at: string | null;
+  response_owner: string | null;
+  signal_reference: string | null;
+  signal_type: string | null;
+  cdmss_routed: boolean | null;
+  note_class: string | null;
+  note_date: string | null;
+  evidence_excerpt: string | null;
+  citations_json: unknown;
+  patient_json: unknown;
+}
+
+/**
+ * Portal: this physician's findings that a doctor may see, PER FINDING (F4).
+ *
+ * A finding qualifies only when its own portal_visible is true: set by CDMSS marking that finding
+ * routed, a routed signal matching that finding's type, or an RMO release. The audit's
+ * triage_routed_at is deliberately NOT consulted: one routed finding must not open its siblings.
+ */
+export async function loadPortalRoutedFindings(physicianId: string): Promise<PortalRoutedFindingRow[]> {
   try {
     const rows = (await sql`
       SELECT
@@ -669,35 +684,31 @@ export async function loadPortalRoutedFindings(physicianId: string): Promise<
         f.authored_at,
         da.doc_type,
         da.cdmss_pdf_url,
+        da.source_audit_id,
         f.doctor_response_verb,
         f.doctor_response_comment,
         f.doctor_responded_at,
         f.response_owner,
-        f.signal_reference
+        f.signal_reference,
+        f.signal_type,
+        f.cdmss_routed,
+        COALESCE(f.note_class, da.note_class) AS note_class,
+        to_char(COALESCE(f.note_date, da.note_date), 'YYYY-MM-DD') AS note_date,
+        f.evidence_excerpt,
+        f.citations_json,
+        f.patient_json
       FROM document_audit_findings f
       JOIN document_audits da ON da.id = f.audit_id
       WHERE f.physician_id = ${physicianId}::uuid
-        AND (f.portal_visible = true OR da.triage_routed_at IS NOT NULL)
+        AND f.portal_visible = true
       ORDER BY f.authored_at DESC
       LIMIT 100
-    `) as unknown as Array<{
-      finding_id: string;
-      audit_id: string;
-      external_ref: string | null;
-      finding_label: string;
-      finding_body: string | null;
-      severity: string;
-      status: string;
-      authored_by_name: string;
-      authored_at: unknown;
-      doc_type: string;
-      cdmss_pdf_url: string | null;
-      doctor_response_verb: string | null;
-      doctor_response_comment: string | null;
-      doctor_responded_at: unknown;
-      response_owner: string | null;
-      signal_reference: string | null;
-    }>;
+    `) as unknown as Array<
+      Omit<PortalRoutedFindingRow, "authored_at" | "doctor_responded_at"> & {
+        authored_at: unknown;
+        doctor_responded_at: unknown;
+      }
+    >;
     return rows.map((r) => ({
       ...r,
       authored_at: iso(r.authored_at) ?? new Date(0).toISOString(),
@@ -729,13 +740,41 @@ export async function recordDoctorFindingResponse(opts: {
         updated_at = now()
       WHERE id = ${opts.findingId}::uuid
         AND physician_id = ${opts.physicianId}::uuid
-        AND (portal_visible = true OR EXISTS (
-          SELECT 1 FROM document_audits da
-          WHERE da.id = document_audit_findings.audit_id AND da.triage_routed_at IS NOT NULL
-        ))
+        AND portal_visible = true
+        AND doctor_responded_at IS NULL
+        AND status NOT IN ('remediated', 'escalated')
+        AND (
+          response_owner = 'local'
+          OR (coalesce(response_owner, '') <> 'pipe_a' AND coalesce(btrim(signal_reference), '') = '')
+        )
       RETURNING id::text AS id
     `) as unknown as Array<{ id: string }>;
-    if (!rows[0]) return { ok: false, error: "not_found" };
+    if (!rows[0]) {
+      // Nothing updated. Say why, but only for a finding that is this doctor's and visible to them:
+      // already answered (a finding is answered once, like the live list), closed, or owned by the
+      // live Findings list. Anything else is "not found", which leaks nothing about other doctors.
+      const row = (await sql`
+        SELECT status, response_owner, signal_reference, doctor_responded_at
+        FROM document_audit_findings
+        WHERE id = ${opts.findingId}::uuid
+          AND physician_id = ${opts.physicianId}::uuid
+          AND portal_visible = true
+        LIMIT 1
+      `) as unknown as Array<{
+        status: string;
+        response_owner: string | null;
+        signal_reference: string | null;
+        doctor_responded_at: unknown;
+      }>;
+      const r = row[0];
+      if (!r) return { ok: false, error: "not_found" };
+      if (r.doctor_responded_at) return { ok: false, error: "already_responded" };
+      if (r.status === "remediated" || r.status === "escalated") return { ok: false, error: "closed" };
+      if (portalResponseOwner(r.response_owner, r.signal_reference) === "pipe_a") {
+        return { ok: false, error: "on_live_list" };
+      }
+      return { ok: false, error: "not_found" };
+    }
     return { ok: true };
   } catch {
     return { ok: false, error: "db_error" };

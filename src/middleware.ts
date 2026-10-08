@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { jwtVerify } from "jose";
 import { isPublicCaptureApi, isPublicCapturePage, isUploadCaptureHost } from "@/lib/capture/access";
+import { checkCronAuth } from "@/lib/cron-auth";
 
 const COOKIE_NAME = "epi_session";
 
@@ -137,11 +138,15 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Cron routes self-auth (CRON_SECRET Bearer, vercel-cron User-Agent, or
-  // an active signed-in user). Skip the session cookie so Vercel Cron can
-  // reach the handlers; do not treat these as fully public.
+  // Cron routes accept ONE credential: Authorization: Bearer ${CRON_SECRET}
+  // (Vercel Cron sends it automatically). No User-Agent trust, no session
+  // fallback, and no blanket bypass: a request without the bearer is refused
+  // here (401), and a deployment without CRON_SECRET answers 503 (fail
+  // closed). The route handlers re-check with the same function.
   if (pathname === "/api/cron" || pathname.startsWith("/api/cron/")) {
-    return NextResponse.next();
+    const cron = checkCronAuth(request.headers.get("authorization"), process.env.CRON_SECRET);
+    if (cron.ok) return NextResponse.next();
+    return NextResponse.json({ ok: false, error: cron.error }, { status: cron.status });
   }
 
   // Session cookie

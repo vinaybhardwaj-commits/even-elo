@@ -14,13 +14,11 @@ import {
 import {
   normalizeNoteClass,
   normalizeReactions,
-  noteClassLabel,
   parseNoteClassQuery,
-  toPortalPayload,
-  toPortalSignal,
   type DoctorAuditSignal,
   type DoctorAuditsUpstream,
 } from "../doctor-audits";
+import { toLiveCard, toLiveCardsPayload } from "../doctor-card";
 
 /**
  * WM2 v1 — reactions and responses on Findings.
@@ -38,6 +36,7 @@ const REACT_ROUTE = "src/app/api/portal/findings/react/route.ts";
 const RESPOND_ROUTE = "src/app/api/portal/findings/respond/route.ts";
 const FINDINGS_ROUTE = "src/app/api/portal/findings/route.ts";
 const CARD = "src/components/portal/FindingsForDoctor.tsx";
+const CARD_COMPONENT = "src/components/portal/FindingCard.tsx";
 
 const http = (status: number, body: unknown): CatOutcome => ({ kind: "http", status, body });
 const transport: CatOutcome = { kind: "transport" };
@@ -75,71 +74,61 @@ function upstream(signals: DoctorAuditSignal[]): DoctorAuditsUpstream {
   };
 }
 
-describe("toPortalPayload: the strip still holds, and now carries my_reaction", () => {
-  it("drops overdue, sla_due_at and doctor_uid from every signal", () => {
-    const out = toPortalPayload(upstream([signal(), signal({ signal_id: "sig-2" })]));
-    for (const s of out.signals) {
-      expect(s).not.toHaveProperty("overdue");
-      expect(s).not.toHaveProperty("sla_due_at");
-      expect(s).not.toHaveProperty("doctor_uid");
+describe("toLiveCardsPayload: the allowlist strip", () => {
+  it("never carries overdue, sla_due_at, doctor_uid, reference, triage or ruling", () => {
+    const out = toLiveCardsPayload(
+      upstream([
+        signal({ triage: { rationale: "Route for review", policy_version: "triage-v2" } }),
+        signal({ signal_id: "sig-2" }),
+      ]),
+    );
+    const text = JSON.stringify(out);
+    for (const banned of [
+      "overdue",
+      "sla_due_at",
+      "doctor_uid",
+      "EHRC-AUD",
+      "triage",
+      "policy_version",
+      "ruling",
+      "council",
+      "cdmss-uid-must-never-ship",
+    ]) {
+      expect(text).not.toContain(banned);
     }
   });
 
-  it("drops the envelope doctor.uid", () => {
-    const out = toPortalPayload(upstream([signal()]));
-    expect(out.doctor).not.toHaveProperty("uid");
-    expect(out.doctor).toEqual({ name: "Dr A", speciality: "Cardiology" });
+  it("answers { ok, mapped, cards } and nothing else: no doctor envelope, metrics or advisory", () => {
+    const out = toLiveCardsPayload(upstream([signal()]));
+    expect(Object.keys(out).sort()).toEqual(["cards", "mapped", "ok"]);
+    expect(JSON.stringify(out)).not.toContain("Cardiology");
   });
 
-  it("drops metrics, and the uid appears nowhere in the serialised payload", () => {
-    const out = toPortalPayload(upstream([signal()]));
-    expect(out).not.toHaveProperty("metrics");
-    expect(JSON.stringify(out)).not.toContain("cdmss-uid-must-never-ship");
-  });
-
-  it("carries my_reaction from the reactions map, keyed by signal_id", () => {
-    const out = toPortalPayload(upstream([signal(), signal({ signal_id: "sig-2" })]), {
-      "sig-2": { reaction: "surprised", at: "2026-09-07T10:00:00Z" },
+  it("carries the doctor's reaction from the reactions map, keyed by signal_id", () => {
+    const out = toLiveCardsPayload(upstream([signal(), signal({ signal_id: "sig-2" })]), {
+      "sig-2": { reaction: "surprised" },
     });
-    expect(out.signals[0].my_reaction).toBeNull();
-    expect(out.signals[1].my_reaction).toEqual({ reaction: "surprised", at: "2026-09-07T10:00:00Z" });
+    expect(out.cards[0].reaction).toBeNull();
+    expect(out.cards[1].reaction).toBe("surprised");
   });
 
-  it("sets my_reaction null on every signal when the reactions map is null — the failed-call case", () => {
-    const out = toPortalPayload(upstream([signal(), signal({ signal_id: "sig-2" })]), null);
+  it("sets reaction null on every card when the reactions map is null — the failed-call case", () => {
+    const out = toLiveCardsPayload(upstream([signal(), signal({ signal_id: "sig-2" })]), null);
     expect(out.ok).toBe(true);
-    expect(out.signals.map((s) => s.my_reaction)).toEqual([null, null]);
+    expect(out.cards.map((c) => c.reaction)).toEqual([null, null]);
   });
 
-  it("keeps the advisory fallback and survives a malformed payload", () => {
-    const out = toPortalPayload({ signals: "not-an-array" } as unknown as DoctorAuditsUpstream);
-    expect(out.signals).toEqual([]);
-    expect(out.advisory).toContain("not a performance score");
+  it("survives a malformed payload", () => {
+    expect(toLiveCardsPayload({ signals: "not-an-array" }).cards).toEqual([]);
+    expect(toLiveCardsPayload(null).cards).toEqual([]);
   });
 
-  it("toPortalSignal strips the same three fields for the respond route's returned signal", () => {
-    const s = toPortalSignal(
-      signal({ triage: { rationale: "Route for physician review", policy_version: "triage-v2" } }),
-      { reaction: "dismiss", at: "2026-09-07T10:00:00Z" },
-    );
-    expect(s).not.toHaveProperty("overdue");
-    expect(s).not.toHaveProperty("sla_due_at");
-    expect(s).not.toHaveProperty("doctor_uid");
-    expect(s.my_reaction).toEqual({ reaction: "dismiss", at: "2026-09-07T10:00:00Z" });
-    expect(s.triage).toEqual({
-      rationale: "Route for physician review",
-      policy_version: "triage-v2",
-    });
-  });
-
-  it("defaults missing note_class to opd and preserves a known class", () => {
-    expect(toPortalSignal(signal()).note_class).toBe("opd");
-    expect(toPortalSignal(signal({ note_class: null })).note_class).toBe("opd");
-    expect(toPortalSignal(signal({ note_class: "bogus" })).note_class).toBe("opd");
-    expect(toPortalSignal(signal({ note_class: "discharge_summary" })).note_class).toBe(
-      "discharge_summary",
-    );
-    expect(toPortalSignal(signal({ note_class: "ot" })).note_class).toBe("ot");
+  it("defaults a missing note class to an OPD note and names the others in words", () => {
+    expect(toLiveCard(signal())!.note_type).toBe("OPD note");
+    expect(toLiveCard(signal({ note_class: "bogus" }))!.note_type).toBe("OPD note");
+    expect(toLiveCard(signal({ note_class: "discharge_summary" }))!.note_type).toBe("Discharge summary");
+    expect(toLiveCard(signal({ note_class: "discharge" }))!.note_type).toBe("Discharge summary");
+    expect(toLiveCard(signal({ note_class: "ot" }))!.note_type).toBe("OT note");
   });
 });
 
@@ -164,11 +153,6 @@ describe("note_class helpers", () => {
     expect(parseNoteClassQuery("ot")).toBe("ot");
   });
 
-  it("noteClassLabel uses the short badge labels", () => {
-    expect(noteClassLabel("opd")).toBe("OPD");
-    expect(noteClassLabel("discharge_summary")).toBe("Discharge");
-    expect(noteClassLabel("ot")).toBe("OT");
-  });
 });
 
 describe("normalizeReactions: a malformed entry is dropped, not rendered", () => {
@@ -402,55 +386,44 @@ describe("the findings GET survives a failed reactions call", () => {
     // The reactions failure sets the map to null and falls through to the ok:true payload; only the
     // audits failure is allowed to reach upstream_unavailable.
     expect(inner).toMatch(/catch\s*\{\s*\n?\s*reactions = null/);
-    expect(inner.slice(0, inner.indexOf("toPortalPayload"))).not.toContain("upstream_unavailable");
+    expect(inner.slice(0, inner.indexOf("toLiveCardsPayload"))).not.toContain("upstream_unavailable");
   });
 
-  it("still answers ok:true with my_reaction null when the map is null", () => {
-    const out = toPortalPayload(upstream([signal()]), null);
+  it("still answers ok:true with reaction null when the map is null", () => {
+    const out = toLiveCardsPayload(upstream([signal()]), null);
     expect(out.ok).toBe(true);
     expect(out.mapped).toBe(true);
-    expect(out.signals).toHaveLength(1);
-    expect(out.signals[0].my_reaction).toBeNull();
+    expect(out.cards).toHaveLength(1);
+    expect(out.cards[0].reaction).toBeNull();
   });
 });
 
 describe("with the respond flag off the card shows no workflow controls", () => {
-  const LABELS = [
-    "Agree",
-    "Disagree",
-    "Needs clarification",
-    "Response · goes to your care manager",
-    "Disagree or Needs clarification sends this finding back to your care manager.",
-  ];
+  const CONTROLS = ["Acknowledge", "I disagree", "I need clarification"];
 
-  it("every response label lives in the separately gated response row", () => {
-    const src = SRC(CARD);
-    const rowB = src.slice(src.indexOf("function ResponseRow"), src.indexOf("function SignalCard"));
-    const consts = src.slice(0, src.indexOf("function Shell"));
-    for (const label of LABELS) {
-      expect(rowB + consts).toContain(label);
-    }
-    expect(src).toContain("{respond ? (");
+  it("every response control lives in the separately gated ResponseControls block", () => {
+    const src = SRC(CARD_COMPONENT);
+    const controls = src.slice(src.indexOf("function ResponseControls"), src.indexOf("export function FindingCard"));
+    for (const label of CONTROLS) expect(controls).toContain(label);
+    expect(src).toContain("respond && card.can_respond ? (");
   });
 
-  it("the read-only sentence renders on the respond flag-off branch", () => {
-    const src = SRC(CARD);
-    const off = src.slice(src.lastIndexOf("s.response_required !== \"none\" &&"));
-    expect(off).toContain(
-      "A response is requested — until in-portal responses ship, respond via your care manager.",
-    );
-    for (const label of LABELS) {
+  it("the flag-off branch says plainly that responding here is not available", () => {
+    const src = SRC(CARD_COMPONENT);
+    const off = src.slice(src.indexOf("!respond && ("));
+    expect(off).toContain("Responding here is not available yet. Please reply to the quality team directly.");
+    for (const label of CONTROLS) {
       expect(off.slice(0, off.indexOf("</p>"))).not.toContain(label);
     }
   });
 
   it("the independent flag reaches the card and defaults false", () => {
     expect(SRC(CARD)).toContain("respond = false");
+    expect(SRC(CARD_COMPONENT)).toContain("respond = false");
     expect(SRC("src/app/portal/page.tsx")).toContain("respond={features.findingsRespond}");
-    expect(SRC("src/app/api/portal/announcements/route.ts")).toContain(
-      'findingsRespond: process.env.PORTAL_FINDINGS_RESPOND === "1"',
-    );
-    expect(SRC(RESPOND_ROUTE)).toContain('process.env.PORTAL_FINDINGS_RESPOND !== "1"');
+    expect(SRC("src/app/api/portal/announcements/route.ts")).toContain("features: portalFlags()");
+    expect(SRC("src/lib/portal-flags.ts")).toContain('on("PORTAL_FINDINGS_RESPOND")');
+    expect(SRC(RESPOND_ROUTE)).toContain("respondEnabled()");
   });
 
   it("the BFF generates and forwards one idempotency key per submit", () => {
@@ -462,7 +435,7 @@ describe("with the respond flag off the card shows no workflow controls", () => 
   });
 });
 
-describe("note_class filter chip, BFF pass-through, and badge", () => {
+describe("note type filter chip and BFF pass-through", () => {
   it("the findings GET parses note_class and forwards it to fetchDoctorAudits", () => {
     const src = SRC(FINDINGS_ROUTE);
     expect(src).toContain("parseNoteClassQuery");
@@ -474,7 +447,6 @@ describe("note_class filter chip, BFF pass-through, and badge", () => {
   it("fetchDoctorAudits only appends note_class when a class is selected", () => {
     const src = SRC("src/lib/doctor-audits.ts");
     expect(src).toContain("if (params.note_class) qs.set(\"note_class\", params.note_class)");
-    expect(src).toContain("note_class: normalizeNoteClass(s.note_class)");
   });
 
   it("the Findings panel has All / OPD / Discharge summary / OT chips and refetches with note_class", () => {
@@ -488,18 +460,10 @@ describe("note_class filter chip, BFF pass-through, and badge", () => {
     expect(src).toContain("fetch(`/api/portal/findings${qs}`)");
   });
 
-  it("each SignalCard renders the note_class badge via noteClassLabel", () => {
-    const src = SRC(CARD);
-    const card = src.slice(src.indexOf("function SignalCard"), src.indexOf("export function FindingsForDoctor"));
-    expect(card).toContain("noteClassLabel(s.note_class)");
-    expect(SRC("src/lib/doctor-audits.ts")).toContain('return "Discharge"');
-  });
-
-  it("respond verbs and Row B are unchanged by the note_class work", () => {
-    const src = SRC(CARD);
+  it("respond verbs are unchanged by the card rewrite", () => {
+    const src = SRC(CARD_COMPONENT);
     expect(src).toContain('send("agree")');
     expect(src).toContain('send("disagree")');
     expect(src).toContain('send("needs_clarification")');
-    expect(src).toContain("Response · goes to your care manager");
   });
 });

@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { neon } from "@neondatabase/serverless";
 import { createPhysicianToken, setPhysicianCookie, verifyPortalPin } from "@/lib/physician-auth";
+import {
+  RATE_LIMIT_MESSAGE,
+  beginLoginAttempt,
+  clientIp,
+  releaseLoginAttempt,
+  type SqlTag,
+} from "@/lib/portal-login-limit";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -13,20 +20,40 @@ export async function POST(request: NextRequest) {
   const url = process.env.DATABASE_URL;
   if (!url) return NextResponse.json({ ok: false, error: "DATABASE_URL not configured" }, { status: 500, headers: NO_STORE });
   const sql = neon(url);
+  const limiter = sql as unknown as SqlTag;
+
+  // A3: throttle BEFORE touching the PIN. The attempt is recorded first and counted second (see
+  // portal-login-limit.ts), so parallel requests cannot all slip under the limit. 5 per account and
+  // 20 per IP in 15 minutes, kept in Postgres so every serverless instance sees the same count.
+  const account = String(email).toLowerCase().trim();
+  const ip = clientIp(request.headers);
+  const gate = await beginLoginAttempt(limiter, account, ip);
+  if (!gate.allowed) {
+    return NextResponse.json(
+      { ok: false, error: RATE_LIMIT_MESSAGE },
+      { status: 429, headers: { ...NO_STORE, "Retry-After": "900" } },
+    );
+  }
+  // The attempt is already on record, so a failure needs nothing more than the answer.
+  const fail = async (body: { ok: false; error: string }, status: number) =>
+    NextResponse.json(body, { status, headers: NO_STORE });
 
   const rows = (await sql`
     SELECT id::text AS id, full_name, email, portal_pin_hash, portal_access, portal_must_change_pin, current_status
-    FROM physicians WHERE lower(email) = ${String(email).toLowerCase().trim()} LIMIT 1
+    FROM physicians WHERE lower(email) = ${account} LIMIT 1
   `) as Array<Record<string, unknown>>;
-  if (rows.length === 0) return NextResponse.json({ ok: false, error: "No portal account found with this email." }, { status: 401, headers: NO_STORE });
+  if (rows.length === 0) return fail({ ok: false, error: "No portal account found with this email." }, 401);
   const p = rows[0];
 
-  if (!p.portal_access) return NextResponse.json({ ok: false, error: "No PIN set for this account yet. Use \u2018Email me a PIN\u2019 below to get one." }, { status: 403, headers: NO_STORE });
-  if (p.current_status !== "active") return NextResponse.json({ ok: false, error: "This account is not active." }, { status: 403, headers: NO_STORE });
-  if (!p.portal_pin_hash) return NextResponse.json({ ok: false, error: "No PIN set for this account yet. Use \u2018Email me a PIN\u2019 below to get one." }, { status: 403, headers: NO_STORE });
+  if (!p.portal_access) return fail({ ok: false, error: "No PIN set for this account yet. Use ‘Email me a PIN’ below to get one." }, 403);
+  if (p.current_status !== "active") return fail({ ok: false, error: "This account is not active." }, 403);
+  if (!p.portal_pin_hash) return fail({ ok: false, error: "No PIN set for this account yet. Use ‘Email me a PIN’ below to get one." }, 403);
 
   const ok = await verifyPortalPin(String(pin), p.portal_pin_hash as string);
-  if (!ok) return NextResponse.json({ ok: false, error: "Incorrect PIN." }, { status: 401, headers: NO_STORE });
+  if (!ok) return fail({ ok: false, error: "Incorrect PIN." }, 401);
+
+  // A correct PIN removes only this attempt's own rows; earlier failures stay inside the window.
+  await releaseLoginAttempt(limiter, gate.attemptIds);
 
   const token = await createPhysicianToken({
     kind: "physician", physicianId: p.id as string, email: p.email as string,

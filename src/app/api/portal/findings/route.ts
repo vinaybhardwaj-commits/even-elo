@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentPhysician } from "@/lib/physician-auth";
 import { sql } from "@/lib/db";
+import { disabledRead, findingsEnabled } from "@/lib/portal-flags";
 import {
   fetchDoctorAudits,
   fetchDoctorReactions,
   parseNoteClassQuery,
-  toPortalPayload,
   type ReactionMap,
 } from "@/lib/doctor-audits";
+import { toLiveCardsPayload } from "@/lib/doctor-card";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -46,6 +47,10 @@ export const runtime = "nodejs";
  * table read throws, we fall back to the UNMAPPED state rather than to a 500. Unmapped is the
  * honest answer to "we could not establish your CDMSS identity", whatever the cause.
  *
+ * ⚠️ THE RESPONSE IS AN ALLOWLIST. `toLiveCardsPayload` builds each card from named fields only, so
+ * triage text, rulings, references, uids and anything CDMSS adds later cannot reach the browser.
+ * The answer is `{ ok, mapped, cards }` and nothing else.
+ *
  * ⚠️ INFERRED SQL: this sandbox has no live database. The one query below is listed verbatim in the
  * ship report. It mirrors the existing lookup in api/physicians/[id]/opd-signals, tagged-template
  * form, and reads exactly one column.
@@ -53,6 +58,7 @@ export const runtime = "nodejs";
 export async function GET(request: NextRequest) {
   const p = await getCurrentPhysician();
   if (!p) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  if (!findingsEnabled()) return disabledRead();
 
   // The JWT does not carry the CDMSS identifier — it is looked up per request, never cached into
   // the token, so a governance re-link takes effect on the next page load rather than the next login.
@@ -66,7 +72,7 @@ export async function GET(request: NextRequest) {
   } catch {
     uid = null; // fail-safe → the unmapped state, never a 500
   }
-  if (!uid) return NextResponse.json({ ok: true, mapped: false, signals: [] });
+  if (!uid) return NextResponse.json({ ok: true, mapped: false, cards: [] });
 
   const noteClass = parseNoteClassQuery(request.nextUrl.searchParams.get("note_class"));
 
@@ -82,10 +88,9 @@ export async function GET(request: NextRequest) {
     } catch {
       reactions = null; // every signal gets my_reaction:null, and the panel still renders
     }
-    // toPortalPayload is where `metrics`, per-signal `overdue`/`sla_due_at`, and the doctor's uid
-    // are dropped — by whitelist, so nothing upstream adds later can leak through this route. It is
-    // also where the reactions map is merged onto the signals, keyed by signal_id.
-    return NextResponse.json(toPortalPayload(upstream, reactions));
+    // The allowlist builder is where everything a physician must not see is simply never read. It is
+    // also where the reactions map is merged onto the cards, keyed by signal_id.
+    return NextResponse.json(toLiveCardsPayload(upstream, reactions));
   } catch {
     return NextResponse.json({ ok: false, mapped: true, error: "upstream_unavailable" });
   }

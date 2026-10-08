@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getCurrentUser } from "@/lib/auth";
+import { cronGuard } from "@/lib/cron-auth";
 import { isOtCaptureOcrEnabled } from "@/lib/capture/access";
 import { isMissingCaptureTable } from "@/lib/capture/db";
 import { clampOcrLimit, processQueuedCaptures } from "@/lib/capture/ocr/run";
@@ -15,20 +15,9 @@ export const maxDuration = 180;
  * No-ops when FEATURE_OT_CAPTURE_OCR is not exactly "true".
  * Does not mint surgical_cases.
  */
-async function allowed(req: NextRequest): Promise<boolean> {
-  const secret = process.env.CRON_SECRET;
-  const authz = req.headers.get("authorization") || "";
-  if (secret && authz === `Bearer ${secret}`) return true;
-  const ua = req.headers.get("user-agent") || "";
-  if (ua.startsWith("vercel-cron/")) return true;
-  const user = await getCurrentUser();
-  return !!user && user.status === "active" && user.is_super_admin === true;
-}
-
 async function run(req: NextRequest) {
-  if (!(await allowed(req))) {
-    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  }
+  const denied = cronGuard(req, "/api/cron/ot-capture-ocr");
+  if (denied) return denied;
   if (!isOtCaptureOcrEnabled()) {
     return NextResponse.json({ ok: true, skipped: "flag_off", processed: 0, results: [] });
   }

@@ -18,6 +18,7 @@ export function isAuditUuid(ref: string | null | undefined): ref is string {
 
 /** At least one attached instance. Missing, zero, and non-numeric counts are shells. */
 export function hasAttachedInstances(instances: unknown): boolean {
+  if (Array.isArray(instances)) return instances.length >= 1;
   const n = typeof instances === "number" ? instances : Number(instances);
   return Number.isFinite(n) && n >= 1;
 }
@@ -99,7 +100,7 @@ export function presentPortalPdf(storedPdfUrl: string | null): {
 }
 
 export interface AuditPdfSignal {
-  instances?: number | null;
+  instances?: unknown;
   representative?: { audit_id?: string | null; pdf_url?: string | null } | null;
   pdf_url?: string | null;
 }

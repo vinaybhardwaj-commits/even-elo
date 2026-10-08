@@ -2,12 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { getCurrentPhysician } from "@/lib/physician-auth";
 import { sql } from "@/lib/db";
-import {
-  fetchDoctorReactions,
-  toPortalSignal,
-  type DoctorAuditSignal,
-  type PortalReaction,
-} from "@/lib/doctor-audits";
+import { disabledWrite, respondEnabled } from "@/lib/portal-flags";
+import { toResponseState } from "@/lib/doctor-card";
+import { friendlyError } from "@/lib/finding-labels";
 import { callResponse, mapRespondOutcome, parseRespondBody } from "@/lib/findings-actions";
 
 export const dynamic = "force-dynamic";
@@ -24,11 +21,11 @@ export const runtime = "nodejs";
  * id, and only signal_id, verb and comment are accepted from the body. The BFF creates the
  * client_request_id and sends it as both the payload field and Idempotency-Key.
  *
- * ⚠️ THE RETURNED SIGNAL GOES THROUGH THE SAME STRIP AS THE GET. CDMSS answers with a full signal,
- * which carries `doctor_uid`, `overdue` and `sla_due_at`. Handing that straight back would leak
- * through the write path the three things the read path spends a whitelist removing — so it is run
- * through `toPortalSignal` like everything else. `my_reaction` is re-read here so the card that
- * swaps this signal in does not lose a reaction the doctor already recorded.
+ * ⚠️ NOTHING FROM THE CDMSS BODY IS FORWARDED. CDMSS answers with a governance signal (uid, triage,
+ * ruling, importance, possibly a null representative). The answer here is `{ ok, state }` where
+ * `state` is `toResponseState(body)`: the new status and the recorded response (verb, comment,
+ * time) and nothing else. If CDMSS sent no response, the doctor's own submission stands in for it.
+ * The browser MERGES `state` into the card it already holds; it never replaces the card.
  *
  * ⚠️ ALWAYS HTTP 200 (except 401). See ../react for why.
  *
@@ -39,9 +36,7 @@ export const runtime = "nodejs";
 export async function POST(request: NextRequest) {
   const p = await getCurrentPhysician();
   if (!p) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  if (process.env.PORTAL_FINDINGS_RESPOND !== "1") {
-    return NextResponse.json({ ok: false, error: "disabled" });
-  }
+  if (!respondEnabled()) return disabledWrite();
 
   let uid: string | null = null;
   try {
@@ -53,11 +48,12 @@ export async function POST(request: NextRequest) {
   } catch {
     uid = null;
   }
-  if (!uid) return NextResponse.json({ ok: false, error: "unmapped" });
+  if (!uid) return NextResponse.json({ ok: false, error: "unmapped", message: friendlyError("unmapped") });
 
   const parsed = parseRespondBody(await request.json().catch(() => null));
   if (!parsed.ok) {
-    return NextResponse.json({ ok: false, error: "invalid", message: parsed.message });
+    // The parser's own wording is for developers; the doctor gets a plain sentence.
+    return NextResponse.json({ ok: false, error: "invalid", message: friendlyError("invalid") });
   }
   const { signalId, verb, comment } = parsed;
   const clientRequestId = randomUUID();
@@ -72,7 +68,10 @@ export async function POST(request: NextRequest) {
     }),
   );
 
-  if (!result.ok) return NextResponse.json(result);
+  if (!result.ok) {
+    // `message` is a plain sentence; CDMSS's own error text is never relayed to a physician.
+    return NextResponse.json({ ok: false, error: result.error, message: friendlyError(result.error) });
+  }
 
   // The response is recorded upstream; this row is the portal's record of it. Best-effort, same as
   // the login route. The COMMENT IS DELIBERATELY ABSENT: a doctor's explanation is clinical prose
@@ -85,21 +84,10 @@ export async function POST(request: NextRequest) {
     // Intentionally ignored: see above.
   }
 
-  // The doctor's own reaction is not part of the response contract, so it is re-read rather than
-  // assumed. Best-effort: a reaction we could not confirm is rendered as none, never as stale.
-  let myReaction: PortalReaction | null = null;
-  try {
-    const reactions = await fetchDoctorReactions(uid, p.physicianId);
-    myReaction = reactions[signalId] ?? null;
-  } catch {
-    myReaction = null;
+  const state = toResponseState(result.signal);
+  if (!state.response) {
+    // Upstream said yes but sent no readable response: the doctor's own submission is the record.
+    state.response = { verb, comment, at: new Date().toISOString() };
   }
-
-  const s = result.signal;
-  if (!s || typeof s !== "object") {
-    // Upstream said yes but sent nothing renderable. Answer ok so the card does not report a
-    // failure that did not happen; it refetches rather than swapping in a signal we do not have.
-    return NextResponse.json({ ok: true, signal: null });
-  }
-  return NextResponse.json({ ok: true, signal: toPortalSignal(s as DoctorAuditSignal, myReaction) });
+  return NextResponse.json({ ok: true, state });
 }
