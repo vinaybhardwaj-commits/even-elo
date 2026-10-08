@@ -1453,5 +1453,23 @@ export const MIGRATIONS: Migration[] = [
         ON gov_ot_tracking_sheets (created_at DESC);
     `,
   },
+  {
+    id: "034_portal_login_failures",
+    description:
+      "A3: failed doctor-portal PIN attempts, keyed by SHA-256 digests of the account identifier and the client IP, so the 5-per-account / 20-per-IP rolling 15-minute limit holds across serverless instances.",
+    sql: `
+      CREATE TABLE IF NOT EXISTS portal_login_failures (
+        id            bigserial PRIMARY KEY,
+        subject_kind  text NOT NULL CHECK (subject_kind IN ('account', 'ip')),
+        subject_key   text NOT NULL,
+        attempted_at  timestamptz NOT NULL DEFAULT now()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_portal_login_failures_lookup
+        ON portal_login_failures (subject_kind, subject_key, attempted_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_portal_login_failures_age
+        ON portal_login_failures (attempted_at);
+    `,
+  },
 ];
 
