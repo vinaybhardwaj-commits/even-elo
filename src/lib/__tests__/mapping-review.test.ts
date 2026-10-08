@@ -1,14 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
-import { PROFILE_ID, fakeSql, json, staff } from "./helpers/fixtures";
+import { HOSPITAL_A, HOSPITAL_B, PROFILE_ID, fakeSql, json, liveFromClaims, staff } from "./helpers/fixtures";
 
 const h = vi.hoisted(() => ({
   user: null as unknown,
+  live: "claims" as unknown,
   sql: null as unknown as (...a: unknown[]) => unknown,
 }));
 
 vi.mock("@/lib/auth", () => ({ getCurrentUser: vi.fn(async () => h.user) }));
 vi.mock("@/lib/db", () => ({ sql: (...a: unknown[]) => h.sql(...a) }));
+vi.mock("@/lib/staff-live", async (orig) => {
+  const real = await orig<typeof import("@/lib/staff-live")>();
+  const { liveFromClaims } = await import("./helpers/fixtures");
+  return { ...real, loadLiveStaff: vi.fn(async () => (h.live === "claims" ? liveFromClaims(h.user) : h.live)) };
+});
 
 import { GET, POST } from "@/app/api/audit-findings/mapping/route";
 
@@ -43,6 +49,9 @@ let audits: Array<{ actor: string; action: string; entity: string; after: Record
 let failDecisionInsert: boolean;
 let updateMode: "normal" | "no_rows" | "unique";
 let sqlCalls: string[];
+/** Physicians with a non-terminated engagement at HOSPITAL_A (the site a Site Medical Head in these tests heads). */
+let engagedAtA: Set<string>;
+
 
 const DIRECTORY = {
   ok: true,
@@ -56,6 +65,11 @@ const DIRECTORY = {
 function installSql() {
   h.sql = fakeSql((text, v) => {
     sqlCalls.push(text);
+    if (text.includes("FROM physician_engagements")) {
+      const ids = v[0] as string[];
+      const hospitals = v[1] as string[];
+      return hospitals.includes(HOSPITAL_A) ? ids.filter((id) => engagedAtA.has(id)).map((id) => ({ id })) : [];
+    }
     if (text.includes("FROM physicians WHERE current_status = 'active'")) return physicians.map((p) => ({ ...p }));
     if (text.includes("FROM cdmss_mapping_decisions WHERE decision = 'reject'")) {
       return decisions.filter((d) => d.decision === "reject").map((d) => ({ cdmss_uid: d.uid, physician_id: d.physician_id }));
@@ -99,6 +113,8 @@ beforeEach(() => {
   process.env.GOV_API_KEY = "gov-key";
   process.env.GOV_API_BASE = "https://cdmss.test";
   h.user = staff.smh;
+  h.live = "claims";
+  engagedAtA = new Set([P_SUNIL, P_MEERA, P_LINKED]);
   physicians = [
     { id: P_SUNIL, full_name: "Sunil Shah", phone: "9000005555", cdmss_doctor_uid: null, cdmss_alias_uids: null },
     { id: P_MEERA, full_name: "Meera Iyer", phone: "9000001111", cdmss_doctor_uid: null, cdmss_alias_uids: null },
@@ -260,5 +276,58 @@ describe("request validation", () => {
     }
     expect(fetchMock).not.toHaveBeenCalled();
     expect(sqlCalls).toEqual([]);
+  });
+});
+
+describe("site scope and live role (L3, L4)", () => {
+  const confirmSunil = () => post({ decision: "confirm", uid: "D-SUNIL", physician_id: P_SUNIL });
+
+  it("a Site Medical Head sees and decides only physicians engaged at a hospital they head", async () => {
+    engagedAtA = new Set([P_SUNIL]); // Meera and Ravi are at another site
+    const body = await (await GET()).json();
+    expect(body.items.map((i: { uid: string }) => i.uid)).toEqual(["D-SUNIL"]);
+
+    const refused = await post({ decision: "confirm", uid: "D-MEERA", physician_id: P_MEERA });
+    expect(refused.status).toBe(403);
+    expect((await refused.json()).error).toBe("out_of_scope");
+    const rejected = await post({ decision: "reject", uid: "D-MEERA", physician_id: P_MEERA });
+    expect(rejected.status).toBe(403);
+    expect(writes()).toHaveLength(0); // no decision row, no link
+    expect(physicians.find((p) => p.id === P_MEERA)?.cdmss_doctor_uid).toBeNull();
+
+    expect((await confirmSunil()).status).toBe(200);
+    expect(physicians.find((p) => p.id === P_SUNIL)?.cdmss_doctor_uid).toBe("D-SUNIL");
+  });
+
+  it("a Site Medical Head of a different hospital gets nothing", async () => {
+    h.live = { ...liveFromClaims(staff.smh)!, smh_hospital_ids: [HOSPITAL_B] };
+    expect((await (await GET()).json()).items).toEqual([]);
+    expect((await confirmSunil()).status).toBe(403);
+    expect(writes()).toHaveLength(0);
+  });
+
+  it("a super admin decides for any physician at any hospital", async () => {
+    h.user = staff.superAdmin;
+    engagedAtA = new Set();
+    expect((await (await GET()).json()).items.length).toBe(3);
+    expect((await confirmSunil()).status).toBe(200);
+  });
+
+  it("the role is the database's, not the cookie's: a revoked Site Medical Head is refused", async () => {
+    h.live = { ...liveFromClaims(staff.smh)!, is_site_medical_head: false, smh_hospital_ids: [] };
+    expect((await GET()).status).toBe(403);
+    expect((await confirmSunil()).status).toBe(403);
+    h.live = { ...liveFromClaims(staff.smh)!, status: "deactivated" };
+    expect((await confirmSunil()).status).toBe(401);
+    h.live = null;
+    expect((await confirmSunil()).status).toBe(401);
+    expect(writes()).toHaveLength(0);
+  });
+
+  it("a promoted super admin does not need a new login to lose access, and a stale cookie cannot grant one", async () => {
+    // Cookie says super admin; the database says plain staff with no governance role.
+    h.user = staff.superAdmin;
+    h.live = { ...liveFromClaims(staff.hr)!, is_super_admin: false };
+    expect((await confirmSunil()).status).toBe(403);
   });
 });

@@ -17,13 +17,15 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
  *         and when; reject stops the pair being offered. Both are recorded in cdmss_mapping_decisions.
  *
  * Staff with the manage level only (super_admin or Site Medical Head): a link decides which doctor
- * sees which findings, so viewing staff cannot make it.
+ * sees which findings, so viewing staff cannot make it. A Site Medical Head sees and decides only the
+ * pairs whose physician is engaged at a hospital they head (403 out_of_scope otherwise); a super admin
+ * sees all.
  */
 export async function GET() {
   const gate = await requireStaff("manage");
   if (!gate.ok) return gate.response;
   try {
-    return NextResponse.json({ ok: true, ...(await reviewQueue()) });
+    return NextResponse.json({ ok: true, ...(await reviewQueue(gate.scope)) });
   } catch (e) {
     return NextResponse.json(
       {
@@ -57,6 +59,7 @@ export async function POST(req: NextRequest) {
     physicianId,
     note,
     actor: { profileId: gate.user.profileId, email: gate.user.email },
+    scope: gate.scope,
   });
   if (!result.ok) {
     return NextResponse.json({ ok: false, error: result.error, message: result.message }, { status: result.http });

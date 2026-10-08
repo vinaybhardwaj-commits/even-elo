@@ -23,7 +23,7 @@ interface Options {
 interface Payload {
   ok: boolean;
   counts?: BucketCounts;
-  sync?: { not_synced: number; failed: number };
+  sync?: { not_synced: number; failed: number; rulings_pending: number };
   rows?: FindingRow[];
   options?: Options;
   message?: string;
@@ -122,6 +122,16 @@ export function AuditFindingsWorklist() {
             {data.sync.not_synced === 1 ? "doctor answer is" : "doctor answers are"} not yet synced to CDMSS
             {data.sync.failed > 0 ? ` (${data.sync.failed} failed to send)` : ""}. They are marked{" "}
             <span className="font-semibold">Not yet synced</span> below and retried every night.
+          </div>
+        ) : null}
+        {data?.sync && data.sync.rulings_pending > 0 ? (
+          <div
+            role="status"
+            className="mb-4 rounded-lg border border-violet-200 bg-violet-50 px-4 py-2.5 text-[13px] text-violet-950"
+          >
+            <span className="num font-semibold">{data.sync.rulings_pending}</span>{" "}
+            {data.sync.rulings_pending === 1 ? "ruling is" : "rulings are"} saved here but not confirmed by CDMSS yet. They are marked{" "}
+            <span className="font-semibold">Pending sync</span> below, are not applied until CDMSS confirms, and are retried every night.
           </div>
         ) : null}
 

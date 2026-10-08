@@ -19,6 +19,7 @@
  */
 
 import { sql } from "@/lib/db";
+import { canActOnPhysician, physiciansInScope, type StaffScope } from "@/lib/staff-live";
 import { fetchDoctorDirectory } from "@/lib/cdmss-doctor-directory";
 import {
   matchDirectory,
@@ -133,7 +134,14 @@ export function buildQueue(run: Pick<MappingRun, "review" | "physicians">, rejec
   return items;
 }
 
-export async function reviewQueue(): Promise<{
+/** PURE. Keep only the candidates in `allowed`; an item with none left goes. */
+export function restrictQueue(items: ReviewQueueItem[], allowed: ReadonlySet<string>): ReviewQueueItem[] {
+  return items
+    .map((i) => ({ ...i, candidates: i.candidates.filter((c) => allowed.has(c.physician_id)) }))
+    .filter((i) => i.candidates.length > 0);
+}
+
+export async function reviewQueue(scope: StaffScope = { all: true }): Promise<{
   items: ReviewQueueItem[];
   directory_count: number;
   coverage: MappingResult["coverage"];
@@ -141,8 +149,13 @@ export async function reviewQueue(): Promise<{
   recent: DecisionRow[];
 }> {
   const [run, rejected, recent] = await Promise.all([computeMapping(), loadRejected(), loadRecentDecisions()]);
+  let items = buildQueue(run, rejected.pairs);
+  if (!scope.all) {
+    const ids = items.flatMap((i) => i.candidates.map((c) => c.physician_id));
+    items = restrictQueue(items, await physiciansInScope(scope, ids));
+  }
   return {
-    items: buildQueue(run, rejected.pairs),
+    items,
     directory_count: run.directory_count,
     coverage: run.coverage,
     decisions_available: rejected.available,
@@ -154,8 +167,9 @@ export type DecisionResult =
   | { ok: true; decision: "confirm" | "reject"; physician_id: string; cdmss_uid: string }
   | {
       ok: false;
-      http: 400 | 409 | 502 | 500;
+      http: 400 | 403 | 409 | 502 | 500;
       error:
+        | "out_of_scope"
         | "directory_unavailable"
         | "not_in_review"
         | "physician_already_linked"
@@ -177,8 +191,19 @@ export async function decideMapping(input: {
   physicianId: string;
   note: string | null;
   actor: MappingActor;
+  /** Where the caller may act (from requireStaff). Defaults to everywhere only for direct service calls. */
+  scope: StaffScope;
 }): Promise<DecisionResult> {
-  const { decision, uid, physicianId, note, actor } = input;
+  const { decision, uid, physicianId, note, actor, scope } = input;
+  // A Site Medical Head decides only for physicians at their own hospital(s).
+  if (!(await canActOnPhysician(scope, physicianId))) {
+    return {
+      ok: false,
+      http: 403,
+      error: "out_of_scope",
+      message: "This physician is not engaged at a hospital you head, so you cannot decide this match.",
+    };
+  }
   let run: MappingRun;
   try {
     run = await computeMapping();

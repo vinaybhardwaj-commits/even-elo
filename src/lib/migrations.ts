@@ -1557,5 +1557,33 @@ export const MIGRATIONS: Migration[] = [
         ON cdmss_mapping_decisions (decided_at DESC);
     `,
   },
+  {
+    id: "040_ruling_retry_and_legacy_responses",
+    description:
+      "Round 2 / F3 refuter fixes. (1) gov_interventions keeps the raw ruling note, the thread version the ruling was made against and a retry counter, so a ruling CDMSS did not confirm can be retried by the nightly cron with the same actor and note; a retry CDMSS refuses is marked 'refused'. (2) Every doctor response that exists when this runs is marked 'legacy': it is never forwarded to CDMSS. Only responses recorded after this migration are.",
+    sql: `
+      ALTER TABLE gov_interventions
+        ADD COLUMN IF NOT EXISTS ruling_note text,
+        ADD COLUMN IF NOT EXISTS thread_version text,
+        ADD COLUMN IF NOT EXISTS cdmss_sync_attempts integer NOT NULL DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS cdmss_sync_at timestamptz;
+
+      ALTER TABLE gov_interventions
+        DROP CONSTRAINT IF EXISTS gov_interventions_cdmss_sync_state_check;
+      ALTER TABLE gov_interventions
+        ADD CONSTRAINT gov_interventions_cdmss_sync_state_check
+        CHECK (cdmss_sync_state IS NULL OR cdmss_sync_state IN ('pending', 'synced', 'refused'));
+
+      ALTER TABLE document_audit_findings
+        DROP CONSTRAINT IF EXISTS document_audit_findings_cdmss_sync_state_check;
+      ALTER TABLE document_audit_findings
+        ADD CONSTRAINT document_audit_findings_cdmss_sync_state_check
+        CHECK (cdmss_sync_state IS NULL OR cdmss_sync_state IN ('pending', 'synced', 'failed', 'legacy'));
+
+      UPDATE document_audit_findings
+        SET cdmss_sync_state = 'legacy'
+        WHERE cdmss_sync_state IS NULL AND doctor_responded_at IS NOT NULL;
+    `,
+  },
 ];
 

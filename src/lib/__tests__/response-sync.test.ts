@@ -23,6 +23,7 @@ vi.mock("@/lib/document-audit-ingest-db", () => ({
   recordIngestMeta: vi.fn(async () => undefined),
 }));
 
+import { MIGRATIONS } from "@/lib/migrations";
 import { classifySync, forwardResponseNow, markResponseForSync, MAX_ATTEMPTS, retryResponseSyncs, syncRequestId } from "@/lib/response-sync";
 import { POST as respondPOST } from "@/app/api/portal/document-audits/respond/route";
 import { GET as cronGET } from "@/app/api/cron/document-audit-ingest/route";
@@ -41,15 +42,17 @@ interface Finding {
   error: string | null;
   attempts: number;
   permanent: boolean;
-  doctor_uid: string | null;
+  /** The physician's canonical CDMSS uid (physicians.cdmss_doctor_uid). */
+  canonical: string | null;
 }
 
 let db: Map<string, Finding>;
 const fetchMock = vi.fn();
 let postedBodies: Array<{ body: Record<string, unknown>; headers: Headers }>;
+let loadRowQueries: string[];
 
 function finding(over: Partial<Finding> = {}): Finding {
-  return { id: F1, ref: REFERENCE, owner: "local", verb: "disagree", comment: "Dose is correct.", responded: true, state: null, error: null, attempts: 0, permanent: false, doctor_uid: "D-100", ...over };
+  return { id: F1, ref: REFERENCE, owner: "local", verb: "disagree", comment: "Dose is correct.", responded: true, state: null, error: null, attempts: 0, permanent: false, canonical: "D-100", ...over };
 }
 
 /** An in-memory stand-in for document_audit_findings that understands the statements response-sync issues. */
@@ -63,10 +66,11 @@ function installDb() {
       }
       return [];
     }
-    if (text.includes("FROM document_audit_findings f") && text.includes("JOIN document_audits")) {
+    if (text.includes("FROM document_audit_findings f") && text.includes("LEFT JOIN physicians")) {
+      loadRowQueries.push(text);
       const f = db.get(String(v[0]));
       return f && f.responded
-        ? [{ id: f.id, signal_reference: f.ref, doctor_response_verb: f.verb, doctor_response_comment: f.comment, doctor_uid: f.doctor_uid, cdmss_doctor_uid: "D-100", cdmss_sync_attempts: f.attempts }]
+        ? [{ id: f.id, signal_reference: f.ref, doctor_response_verb: f.verb, doctor_response_comment: f.comment, cdmss_doctor_uid: f.canonical, cdmss_sync_attempts: f.attempts }]
         : [];
     }
     if (text.includes("SET cdmss_sync_state = ?,")) {
@@ -87,7 +91,7 @@ function installDb() {
             f.owner !== "pipe_a" &&
             !f.permanent &&
             f.attempts < Number(v[0]) &&
-            (f.state === null || f.state === "pending" || f.state === "failed"),
+            (f.state === "pending" || f.state === "failed"),
         )
         .slice(0, limit)
         .map((f) => ({ id: f.id }));
@@ -116,6 +120,7 @@ beforeEach(() => {
   process.env.CRON_SECRET = "cron-secret";
   db = new Map([[F1, finding()]]);
   postedBodies = [];
+  loadRowQueries = [];
   installDb();
   fetchMock.mockReset();
   cdmss("ok");
@@ -169,6 +174,25 @@ describe("forwarding", () => {
     expect(postedBodies[0].headers.get("idempotency-key")).toBe(`elo-daf-${F1}`);
     expect(postedBodies[0].headers.get("x-api-key")).toBe("gov-key");
     expect(db.get(F1)).toMatchObject({ state: "synced", error: null, attempts: 1, permanent: false });
+  });
+
+  it("L2: sends the physician's canonical uid, never the audit's (possibly retired alias) uid, and omits it when unlinked", async () => {
+    // The audit may carry a retired alias uid; the query no longer reads it at all.
+    await forwardResponseNow(F1);
+    expect(loadRowQueries.join(" ")).not.toContain("document_audits");
+    expect(loadRowQueries.join(" ")).not.toContain("da.doctor_uid");
+    expect(postedBodies[0].body.doctor_uid).toBe("D-100");
+
+    postedBodies = [];
+    db.set(F1, finding({ canonical: "D-CANON" }));
+    await forwardResponseNow(F1);
+    expect(postedBodies[0].body.doctor_uid).toBe("D-CANON");
+
+    postedBodies = [];
+    db.set(F1, finding({ canonical: null }));
+    await forwardResponseNow(F1);
+    expect(postedBodies[0].body).not.toHaveProperty("doctor_uid");
+    expect(postedBodies[0].body.reference).toBe(REFERENCE);
   });
 
   it("does nothing for a finding CDMSS did not route (no signal reference) or one the live list owns", async () => {
@@ -244,19 +268,106 @@ describe("the doctor's submit", () => {
 });
 
 describe("nightly retry", () => {
-  it("retries pending and failed responses, and picks up answered routed findings that were never marked", async () => {
+  it("retries pending and failed responses", async () => {
     const A = "aaaaaaaa-0000-4000-8000-000000000001";
     const B = "aaaaaaaa-0000-4000-8000-000000000002";
-    const C = "aaaaaaaa-0000-4000-8000-000000000003";
     db = new Map([
       [A, finding({ id: A, state: "failed", attempts: 2, error: "CDMSS 503" })],
       [B, finding({ id: B, state: "pending" })],
-      [C, finding({ id: C, state: null })],
     ]);
     const summary = await retryResponseSyncs();
-    expect(summary).toMatchObject({ attempted: 3, synced: 3, failed: 0 });
+    expect(summary).toMatchObject({ attempted: 2, synced: 2, failed: 0 });
     expect(Array.from(db.values()).every((f) => f.state === "synced")).toBe(true);
-    expect(postedBodies.map((p) => p.body.client_request_id).sort()).toEqual([A, B, C].map(syncRequestId).sort());
+    expect(postedBodies.map((p) => p.body.client_request_id).sort()).toEqual([A, B].map(syncRequestId).sort());
+  });
+
+  it("M1: never back-forwards history: legacy and never-marked responses are left alone", async () => {
+    const L = "cccccccc-0000-4000-8000-000000000001";
+    const N = "cccccccc-0000-4000-8000-000000000002";
+    db = new Map([
+      [L, finding({ id: L, state: "legacy" })],
+      [N, finding({ id: N, state: null })],
+    ]);
+    const summary = await retryResponseSyncs();
+    expect(summary.attempted).toBe(0);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(db.get(L)!.state).toBe("legacy");
+  });
+
+  it("M1: the retry query only selects pending or failed rows (no NULL branch)", async () => {
+    const seen: string[] = [];
+    h.sql = fakeSql((text) => {
+      seen.push(text);
+      return [];
+    });
+    await retryResponseSyncs();
+    const q = seen.find((t) => t.includes("ORDER BY f.doctor_responded_at"))!;
+    expect(q).toContain("cdmss_sync_state IN ('pending', 'failed')");
+    expect(q).not.toMatch(/cdmss_sync_state IS NULL/);
+    expect(q).not.toContain("legacy");
+  });
+
+  it("M1: migration 040 marks every existing answered response legacy and allows the state", () => {
+    const m = MIGRATIONS.find((x) => x.id === "040_ruling_retry_and_legacy_responses")!;
+    expect(m).toBeTruthy();
+    expect(m.sql).toMatch(/UPDATE document_audit_findings\s+SET cdmss_sync_state = 'legacy'\s+WHERE cdmss_sync_state IS NULL AND doctor_responded_at IS NOT NULL/);
+    expect(m.sql).toMatch(/IN \('pending', 'synced', 'failed', 'legacy'\)/);
+    // Idempotent: constraint dropped before it is re-added, columns added IF NOT EXISTS.
+    expect(m.sql).toMatch(/DROP CONSTRAINT IF EXISTS document_audit_findings_cdmss_sync_state_check/);
+    expect(m.sql).toMatch(/ADD COLUMN IF NOT EXISTS ruling_note/);
+    // It runs after the migration that creates the sync columns.
+    const ids = MIGRATIONS.map((x) => x.id);
+    expect(ids.indexOf("040_ruling_retry_and_legacy_responses")).toBeGreaterThan(ids.indexOf("038_document_audit_response_sync"));
+    expect(ids.indexOf("040_ruling_retry_and_legacy_responses")).toBeGreaterThan(ids.indexOf("037_gov_interventions_ruling_keys"));
+  });
+
+  it("M2: stops when the time budget is spent; the rest waits for the next night", async () => {
+    const ids = [1, 2, 3, 4, 5].map((n) => `dddddddd-0000-4000-8000-00000000000${n}`);
+    db = new Map(ids.map((id) => [id, finding({ id, state: "pending" })]));
+    let t = 1_000_000;
+    // Each CDMSS call "takes" 100 s on the injected clock.
+    fetchMock.mockImplementation(async () => {
+      t += 100_000;
+      return json(200, { ok: true });
+    });
+    const summary = await retryResponseSyncs({ now: () => t });
+    // 240 s budget: calls start at +0 s, +100 s, +200 s; the fourth would start at +300 s, past the budget.
+    expect(summary).toMatchObject({ attempted: 3, synced: 3, stopped_reason: "time_budget" });
+    expect(Array.from(db.values()).filter((f) => f.state === "pending")).toHaveLength(2);
+  });
+
+  it("M2: each call is cut to what is left of the budget, never above the 15 s per-call timeout", async () => {
+    const timeouts: number[] = [];
+    const spy = vi.spyOn(AbortSignal, "timeout").mockImplementation((ms: number) => {
+      timeouts.push(ms);
+      return new AbortController().signal;
+    });
+    try {
+      db = new Map([[F1, finding({ state: "pending" })]]);
+      await retryResponseSyncs();
+      expect(timeouts.at(-1)).toBe(15_000);
+      timeouts.length = 0;
+      db = new Map([[F1, finding({ state: "pending" })]]);
+      const now = Date.now();
+      await retryResponseSyncs({ deadline: now + 4_000, now: () => now });
+      expect(timeouts.at(-1)).toBe(4_000);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("M2: a CDMSS that hangs cannot push a run past its budget", async () => {
+    const ids = Array.from({ length: 40 }, (_, n) => `eeeeeeee-0000-4000-8000-${String(n).padStart(12, "0")}`);
+    db = new Map(ids.map((id) => [id, finding({ id, state: "pending" })]));
+    let t = 0;
+    fetchMock.mockImplementation(async () => {
+      t += 15_000; // every call burns its full timeout
+      throw new Error("timeout");
+    });
+    const summary = await retryResponseSyncs({ now: () => t });
+    expect(summary.stopped_reason).toBe("time_budget");
+    expect(summary.attempted).toBe(16); // 16 x 15 s = 240 s, not 40 x 15 s = 600 s
+    expect(t).toBeLessThanOrEqual(240_000);
   });
 
   it("skips synced, permanent, exhausted and live-list findings", async () => {
@@ -276,6 +387,7 @@ describe("nightly retry", () => {
   });
 
   it("a still-failing response stays failed, counts the attempt, and a permanent refusal stops being retried", async () => {
+    db.get(F1)!.state = "pending";
     cdmss("500");
     await retryResponseSyncs();
     expect(db.get(F1)).toMatchObject({ state: "failed", attempts: 1, permanent: false });
@@ -322,6 +434,7 @@ describe("the existing nightly cron runs the retry", () => {
     const body = await (await cron()).json();
     expect(body.ok).toBe(true);
     expect(body.response_sync).toMatchObject({ attempted: 1, synced: 1 });
+    expect(body.ruling_sync).toMatchObject({ attempted: 0 });
     expect(db.get(F1)!.state).toBe("synced");
   });
 

@@ -70,8 +70,10 @@ export function postSignalAction(input: {
   note: string;
   actor: string;
   govInterventionRef: string;
+  timeoutMs?: number;
 }): Promise<CatOutcome> {
   return request("POST", "/api/governance/signal-action", {
+    timeoutMs: input.timeoutMs,
     body: {
       reference: input.reference,
       action: input.action,

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
 const h = vi.hoisted(() => ({
-  user: { status: "active", is_super_admin: true } as null | { status?: string; is_super_admin: boolean },
+  user: { profileId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", status: "active", is_super_admin: true } as null | { profileId?: string; status?: string; is_super_admin: boolean },
   physicians: [] as Array<Record<string, unknown>>,
   writes: [] as Array<{ q: string; values: unknown[] }>,
 }));
@@ -17,6 +17,11 @@ vi.mock("@/lib/db", () => ({
     return [];
   },
 }));
+vi.mock("@/lib/staff-live", async (orig) => {
+  const real = await orig<typeof import("@/lib/staff-live")>();
+  const { liveFromClaims } = await import("./helpers/fixtures");
+  return { ...real, loadLiveStaff: vi.fn(async () => liveFromClaims(h.user)) };
+});
 
 import {
   last4,
@@ -305,7 +310,7 @@ describe("coverage before/after (the dry-run report)", () => {
 describe("admin route: dry run writes nothing, apply writes only auto links", () => {
   const fetchMock = vi.fn();
   beforeEach(() => {
-    h.user = { status: "active", is_super_admin: true };
+    h.user = { profileId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", status: "active", is_super_admin: true };
     h.writes.length = 0;
     process.env.GOV_API_KEY = "k";
     h.physicians = [

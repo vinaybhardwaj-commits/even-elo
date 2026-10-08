@@ -3,6 +3,7 @@ import {
   actionLabel,
   actorText,
   allowedActions,
+  annotatePendingRulings,
   annotateSync,
   applyFilters,
   countBuckets,
@@ -11,6 +12,7 @@ import {
   parseFilters,
   parseRuling,
   parseResponse,
+  pendingRulingText,
   rowsFromRoster,
   sortRows,
   statusText,
@@ -213,8 +215,8 @@ describe("sync flags", () => {
         ["EHRC-AUD-2026-0043", { state: "failed" as const, permanent: true, attempts: 8 }],
       ]),
     );
-    expect(countNotSynced(flagged)).toEqual({ not_synced: 2, failed: 1 });
-    expect(countNotSynced(rows())).toEqual({ not_synced: 0, failed: 0 });
+    expect(countNotSynced(flagged)).toEqual({ not_synced: 2, failed: 1, rulings_pending: 0 });
+    expect(countNotSynced(rows())).toEqual({ not_synced: 0, failed: 0, rulings_pending: 0 });
   });
 
   it("syncFlagText says what happened in plain words", () => {
@@ -222,5 +224,24 @@ describe("sync flags", () => {
     expect(syncFlagText({ state: "failed", permanent: false, attempts: 3 })).toMatch(/3 attempts/);
     expect(syncFlagText({ state: "failed", permanent: true, attempts: 1 })).toMatch(/refused/);
     expect(syncFlagText({ state: "pending", permanent: false, attempts: 0 })).toMatch(/waiting/);
+  });
+});
+
+describe("pending rulings", () => {
+  const rows = () => rowsFromRoster(roster([signalObject(), signalObject({ reference: "EHRC-AUD-2026-0043", signal_id: "s-2" })]), lookup);
+
+  it("annotatePendingRulings attaches by reference and counts them, without touching the thread's status", () => {
+    const before = rows();
+    const flagged = annotatePendingRulings(before, new Map([["EHRC-AUD-2026-0043", { action: "closed", attempts: 1, since: null }]]));
+    const one = flagged.find((r) => r.reference === "EHRC-AUD-2026-0043")!;
+    expect(one.pending_ruling).toEqual({ action: "closed", attempts: 1, since: null });
+    expect(one.status).toBe(before.find((r) => r.reference === "EHRC-AUD-2026-0043")!.status);
+    expect(flagged.find((r) => r.reference !== "EHRC-AUD-2026-0043")!.pending_ruling).toBeUndefined();
+    expect(countNotSynced(flagged).rulings_pending).toBe(1);
+  });
+
+  it("pendingRulingText says the ruling is saved but not confirmed", () => {
+    expect(pendingRulingText({ action: "closed", attempts: 0, since: null })).toMatch(/not confirmed it yet/);
+    expect(pendingRulingText({ action: "weird", attempts: 0, since: null })).toMatch(/A ruling is saved here/);
   });
 });

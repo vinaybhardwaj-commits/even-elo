@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireStaff } from "@/lib/staff-guard";
 import { loadSyncFlags, loadWorklistRows } from "@/lib/audit-findings-server";
-import { annotateSync, applyFilters, countBuckets, countNotSynced, parseFilters, sortRows, NOTE_CLASS_LABEL, STATUSES } from "@/lib/audit-findings";
+import { loadPendingRulings } from "@/lib/audit-ruling";
+import { annotatePendingRulings, annotateSync, applyFilters, countBuckets, countNotSynced, parseFilters, sortRows, NOTE_CLASS_LABEL, STATUSES } from "@/lib/audit-findings";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -16,8 +17,9 @@ export const maxDuration = 30;
  * Query: view=attention|overdue|disagreed|awaiting_ruling|awaiting_doctor|all (default attention),
  * status, importance, response_required, note_class, doctor_uid, from, to (routed date, YYYY-MM-DD).
  * Counts are over the whole set, so the bucket tiles do not change when a filter is applied.
- * `sync` = { not_synced, failed }: threads whose doctor answer has not reached CDMSS (each such row
- * carries `sync` too). Empty when migration 038 is not applied.
+ * `sync` = { not_synced, failed, rulings_pending }: threads whose doctor answer has not reached CDMSS
+ * (each such row carries `sync`) and threads with a saved ruling CDMSS has not confirmed (each such row
+ * carries `pending_ruling`). Zeros when migrations 038/040 are not applied.
  */
 export async function GET(req: NextRequest) {
   const gate = await requireStaff("view");
@@ -31,7 +33,11 @@ export async function GET(req: NextRequest) {
     );
   }
   // Doctor answers that CDMSS does not have yet are flagged per thread and counted over the whole set.
-  const all = annotateSync(loaded.rows, await loadSyncFlags());
+  const pendingRulings = new Map<string, { action: string; attempts: number; since: string | null }>();
+  for (const p of await loadPendingRulings(500)) {
+    if (!pendingRulings.has(p.reference)) pendingRulings.set(p.reference, { action: p.action, attempts: p.attempts, since: p.created_at });
+  }
+  const all = annotatePendingRulings(annotateSync(loaded.rows, await loadSyncFlags()), pendingRulings);
   const filters = parseFilters(req.nextUrl.searchParams);
   const rows = sortRows(applyFilters(all, filters));
 

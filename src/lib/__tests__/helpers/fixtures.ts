@@ -27,6 +27,26 @@ export const staff = {
   physicianToken: { kind: "physician", physicianId: "11111111-1111-4111-8111-111111111111", status: "active", is_super_admin: true },
 };
 
+export const HOSPITAL_A = "aaaa0000-0000-4000-8000-00000000000a";
+export const HOSPITAL_B = "bbbb0000-0000-4000-8000-00000000000b";
+
+/**
+ * What the database would say about a session's role right now, taken from the session's own claims
+ * (so a test that sets `h.user` gets the matching live row). A Site Medical Head heads HOSPITAL_A.
+ * Used to mock `loadLiveStaff` in tests that are not about revocation.
+ */
+export function liveFromClaims(user: unknown) {
+  const u = user as { status?: string; is_super_admin?: boolean; is_site_medical_head?: boolean; is_sgc_member?: boolean } | null;
+  if (!u) return null;
+  return {
+    status: String(u.status ?? "active"),
+    is_super_admin: u.is_super_admin === true,
+    is_site_medical_head: u.is_site_medical_head === true,
+    is_sgc_member: u.is_sgc_member === true,
+    smh_hospital_ids: u.is_site_medical_head === true ? [HOSPITAL_A] : [],
+  };
+}
+
 export const REF = "EHRC-AUD-2026-0042";
 
 export function signalObject(over: Record<string, unknown> = {}) {

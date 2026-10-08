@@ -242,6 +242,18 @@ export interface FindingRow {
    * forward failed or is still waiting for its retry). Absent when the answer is synced or none was given.
    */
   sync?: SyncFlag | null;
+  /**
+   * Set by the worklist route when a governance ruling on this thread is saved here but CDMSS has not
+   * confirmed it. It is never shown as a done ruling.
+   */
+  pending_ruling?: PendingRulingFlag | null;
+}
+
+/** A ruling recorded in EPI that CDMSS has not confirmed yet. */
+export interface PendingRulingFlag {
+  action: string;
+  attempts: number;
+  since: string | null;
 }
 
 /** The forward of a doctor's answer to CDMSS has not completed. */
@@ -403,16 +415,32 @@ export function annotateSync(rows: readonly FindingRow[], flags: ReadonlyMap<str
   });
 }
 
-/** PURE. How many threads carry a sync flag, and how many of those have actually failed. */
-export function countNotSynced(rows: readonly FindingRow[]): { not_synced: number; failed: number } {
+/** PURE. Plain-words hover text for the "Pending sync" ruling badge. */
+export function pendingRulingText(flag: PendingRulingFlag): string {
+  const what = isSignalAction(flag.action) ? actionLabel(flag.action) : "A ruling";
+  return `${what} is saved here but CDMSS has not confirmed it yet, so the thread still shows its old status there. It is retried every night; opening the thread and pressing the same button retries it now.`;
+}
+
+/** PURE. Rows with their unconfirmed ruling attached, matched by thread reference. */
+export function annotatePendingRulings(rows: readonly FindingRow[], pending: ReadonlyMap<string, PendingRulingFlag>): FindingRow[] {
+  return rows.map((r) => {
+    const f = pending.get(r.reference);
+    return f ? { ...r, pending_ruling: f } : r;
+  });
+}
+
+/** PURE. Threads whose doctor answer has not reached CDMSS (and how many failed), and threads with an unconfirmed ruling. */
+export function countNotSynced(rows: readonly FindingRow[]): { not_synced: number; failed: number; rulings_pending: number } {
   let notSynced = 0;
   let failed = 0;
+  let rulingsPending = 0;
   for (const r of rows) {
+    if (r.pending_ruling) rulingsPending += 1;
     if (!r.sync) continue;
     notSynced += 1;
     if (r.sync.state === "failed") failed += 1;
   }
-  return { not_synced: notSynced, failed };
+  return { not_synced: notSynced, failed, rulings_pending: rulingsPending };
 }
 
 /** PURE. Counts per bucket over the rows given (the unfiltered set, so the tiles never lie). */

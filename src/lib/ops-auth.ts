@@ -8,7 +8,9 @@
  *   1. a signed-in, active super_admin staff session (the UI path: the `epi_session` cookie), or
  *   2. `Authorization: Bearer ${ADMIN_OPS_TOKEN}` (deploy and smoke scripts; no session needed).
  *
- * Neither present = 401. Fail closed: an unset or short (< 16 chars) ADMIN_OPS_TOKEN disables the
+ * Neither present = 401. The session's super-admin flag is re-read from the database on every request
+ * (a revoked super admin keeps no ops access for the rest of the 7-day cookie); if the database cannot
+ * confirm it, the session does not count (the bearer still can). Fail closed: an unset or short (< 16 chars) ADMIN_OPS_TOKEN disables the
  * bearer path, it never makes it open. The token compare is constant-time. Physician-portal
  * sessions never count as a session here.
  *
@@ -19,6 +21,7 @@
 
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
+import { loadLiveStaff } from "@/lib/staff-live";
 
 export type OpsAuth =
   | { ok: true; via: "session" | "token" }
@@ -58,11 +61,19 @@ export function opsDenied(auth: OpsAuth): NextResponse | null {
 
 /**
  * Call first in every handler: `const denied = await requireOps(req); if (denied) return denied;`
- * The session lookup is best-effort (no cookie / no request scope = no session).
+ * The session lookup is best-effort (no cookie / no request scope = no session). A session whose cookie
+ * claims super admin is confirmed against the database before it counts.
  */
 export async function requireOps(req: Request): Promise<NextResponse | null> {
-  const user = await getCurrentUser().catch(() => null);
-  return opsDenied(
-    checkOpsAuth(req.headers.get("authorization"), process.env.ADMIN_OPS_TOKEN, user),
-  );
+  const authorization = req.headers.get("authorization");
+  const token = process.env.ADMIN_OPS_TOKEN;
+  const cookieUser = await getCurrentUser().catch(() => null);
+
+  let sessionUser: { status?: unknown; is_super_admin?: unknown; kind?: unknown } | null = null;
+  const claimed = cookieUser as unknown as { profileId?: string; kind?: unknown; is_super_admin?: unknown } | null;
+  if (claimed && claimed.kind !== "physician" && claimed.is_super_admin === true && claimed.profileId) {
+    const live = await loadLiveStaff(claimed.profileId);
+    if (live) sessionUser = { status: live.status, is_super_admin: live.is_super_admin };
+  }
+  return opsDenied(checkOpsAuth(authorization, token, sessionUser));
 }

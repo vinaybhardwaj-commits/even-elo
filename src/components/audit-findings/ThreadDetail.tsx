@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { TopNav } from "@/components/TopNav";
 import { StatusChips, formatDateTime, formatDay } from "@/components/audit-findings/FindingsTable";
-import type { FindingRow, Instance, SignalAction, TimelineEntry } from "@/lib/audit-findings";
+import { actionLabel, type FindingRow, type Instance, type SignalAction, type TimelineEntry } from "@/lib/audit-findings";
 
 interface ActionChoice {
   action: SignalAction;
@@ -19,6 +19,7 @@ interface DetailPayload {
   timeline?: TimelineEntry[];
   can_rule?: boolean;
   actions?: ActionChoice[];
+  pending_rulings?: Array<{ action: string; attempts: number; since: string | null }>;
   message?: string;
 }
 
@@ -232,8 +233,18 @@ export function ThreadDetail({ reference }: { reference: string }) {
 
             <section className="rounded-xl border border-stone-200 bg-white px-5 py-4">
               <h2 className="mb-2 text-sm font-semibold">Ruling</h2>
+              {(data?.pending_rulings ?? []).length > 0 ? (
+                <div role="status" className="mb-3 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-[12.5px] text-violet-950">
+                  <span className="mr-1.5 rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-violet-700">Pending sync</span>
+                  {(data?.pending_rulings ?? []).map((p) => actionLabel(p.action)).join(", ")} saved here, not yet confirmed by CDMSS. The
+                  thread above still shows its old status. Press the same button to retry now; it is also retried every night and will not be
+                  recorded twice.
+                </div>
+              ) : null}
               {data?.can_rule === false ? (
-                <div className="text-[13px] text-stone-500">Only a super admin or Site Medical Head can record a ruling.</div>
+                <div className="text-[13px] text-stone-500">
+                  Only a super admin, or a Site Medical Head for a doctor at their own hospital, can record a ruling.
+                </div>
               ) : (data?.actions ?? []).length === 0 ? (
                 <div className="text-[13px] text-stone-500">
                   {t.status === "closed" ? "This thread is closed. No further ruling is possible." : "No ruling is available for this thread."}

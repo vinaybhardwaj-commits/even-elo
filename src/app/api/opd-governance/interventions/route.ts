@@ -38,8 +38,17 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
   const key = req.nextUrl.searchParams.get("signal_key");
-  const rows = key
-    ? await sql`SELECT i.*, p.full_name FROM gov_interventions i LEFT JOIN physicians p ON p.id=i.physician_id WHERE i.signal_key=${key} ORDER BY i.done_on DESC LIMIT 50`
-    : await sql`SELECT i.*, p.full_name FROM gov_interventions i LEFT JOIN physicians p ON p.id=i.physician_id ORDER BY i.done_on DESC LIMIT 50`;
+  // Governance rulings CDMSS has not confirmed (pending) or refused are not interventions that happened:
+  // they are left out. Before migration 037 there is no sync column, so fall back to the plain list.
+  let rows: unknown[];
+  try {
+    rows = key
+      ? await sql`SELECT i.*, p.full_name FROM gov_interventions i LEFT JOIN physicians p ON p.id=i.physician_id WHERE i.signal_key=${key} AND (i.cdmss_sync_state IS NULL OR i.cdmss_sync_state = 'synced') ORDER BY i.done_on DESC LIMIT 50`
+      : await sql`SELECT i.*, p.full_name FROM gov_interventions i LEFT JOIN physicians p ON p.id=i.physician_id WHERE i.cdmss_sync_state IS NULL OR i.cdmss_sync_state = 'synced' ORDER BY i.done_on DESC LIMIT 50`;
+  } catch {
+    rows = key
+      ? await sql`SELECT i.*, p.full_name FROM gov_interventions i LEFT JOIN physicians p ON p.id=i.physician_id WHERE i.signal_key=${key} ORDER BY i.done_on DESC LIMIT 50`
+      : await sql`SELECT i.*, p.full_name FROM gov_interventions i LEFT JOIN physicians p ON p.id=i.physician_id ORDER BY i.done_on DESC LIMIT 50`;
+  }
   return NextResponse.json({ ok: true, interventions: rows });
 }

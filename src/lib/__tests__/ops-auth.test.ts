@@ -2,10 +2,12 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fakeSql, staff } from "./helpers/fixtures";
+import { fakeSql, liveFromClaims, staff } from "./helpers/fixtures";
 
 const h = vi.hoisted(() => ({
   user: null as unknown,
+  /** What the database says about the session's role right now. "claims" = same as the cookie. */
+  live: "claims" as unknown,
   sql: null as unknown as (...a: unknown[]) => unknown,
   neonSql: null as unknown as (...a: unknown[]) => unknown,
   neon: vi.fn(),
@@ -15,6 +17,11 @@ const h = vi.hoisted(() => ({
 vi.mock("@/lib/auth", () => ({ getCurrentUser: vi.fn(async () => h.user) }));
 vi.mock("@/lib/db", () => ({ sql: (...a: unknown[]) => h.sql(...a) }));
 vi.mock("@neondatabase/serverless", () => ({ neon: h.neon }));
+vi.mock("@/lib/staff-live", async (orig) => {
+  const real = await orig<typeof import("@/lib/staff-live")>();
+  const { liveFromClaims: fromClaims } = await import("./helpers/fixtures");
+  return { ...real, loadLiveStaff: vi.fn(async () => (h.live === "claims" ? fromClaims(h.user) : h.live)) };
+});
 vi.mock("@/lib/cdmss-mapping-service", () => ({ computeMapping: h.computeMapping }));
 
 import { checkOpsAuth } from "@/lib/ops-auth";
@@ -82,6 +89,7 @@ function expectUntouched() {
 }
 
 beforeEach(() => {
+  h.live = "claims";
   vi.spyOn(console, "error").mockImplementation(() => {});
   h.user = null;
   h.neon.mockReset();
@@ -279,6 +287,51 @@ describe("map-cdmss-doctors (dry-run GET and write POST)", () => {
     expect((await mapDoctors.GET(request(url, "GET"))).status).toBe(401);
     expect((await mapDoctors.POST(request(url, "POST"))).status).toBe(401);
     expect(h.computeMapping).not.toHaveBeenCalled();
+  });
+});
+
+describe("role is re-read from the database (L3)", () => {
+  it("a super admin whose flag was revoked after login is refused on every ops route, even with a valid cookie", async () => {
+    h.user = staff.superAdmin; // the 7-day cookie still says super admin
+    h.live = { ...liveFromClaims(staff.superAdmin)!, is_super_admin: false };
+    for (const c of CASES) expect((await c.handler(request(c.path, c.method))).status, c.name).toBe(401);
+    expectUntouched();
+  });
+
+  it("a deactivated account is refused", async () => {
+    h.user = staff.superAdmin;
+    h.live = { ...liveFromClaims(staff.superAdmin)!, status: "deactivated" };
+    expect((await dbFresh.GET(request("db-fresh", "GET"))).status).toBe(401);
+    expect((await wipe.POST(request("wipe-smoke-residue", "POST"))).status).toBe(401);
+    expect(h.neon).not.toHaveBeenCalled();
+  });
+
+  it("a profile that no longer exists, or a database that cannot answer, fails closed", async () => {
+    h.user = staff.superAdmin;
+    h.live = null;
+    expect((await mapDoctors.GET(request("map-cdmss-doctors", "GET"))).status).toBe(401);
+    expect(h.computeMapping).not.toHaveBeenCalled();
+  });
+
+  it("the bearer token still works when the session is revoked or the database cannot confirm a role", async () => {
+    h.user = staff.superAdmin;
+    h.live = null;
+    expect((await dbFresh.GET(request("db-fresh", "GET", `Bearer ${TOKEN}`))).status).toBe(200);
+  });
+
+  it("the live lookup runs only for a cookie that claims super admin (nothing to confirm otherwise)", async () => {
+    const { loadLiveStaff } = await import("@/lib/staff-live");
+    (loadLiveStaff as unknown as { mockClear: () => void }).mockClear();
+    h.user = staff.smh;
+    await dbFresh.GET(request("db-fresh", "GET"));
+    h.user = staff.physicianToken;
+    await dbFresh.GET(request("db-fresh", "GET"));
+    h.user = null;
+    await dbFresh.GET(request("db-fresh", "GET"));
+    expect(loadLiveStaff).not.toHaveBeenCalled();
+    h.user = staff.superAdmin;
+    await dbFresh.GET(request("db-fresh", "GET"));
+    expect(loadLiveStaff).toHaveBeenCalledTimes(1);
   });
 });
 

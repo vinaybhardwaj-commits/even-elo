@@ -13,6 +13,9 @@
  *   pending  recorded locally, not yet delivered
  *   synced   CDMSS accepted it (a replay of the same answer is also a success)
  *   failed   the last attempt failed; `cdmss_sync_error` says why
+ *   legacy   answered before forwarding existed (migration 040 marks every such response). NEVER
+ *            forwarded: replaying history would escalate live threads and write calibration rows.
+ *            Only responses recorded after the deploy are sent.
  *   `cdmss_sync_permanent` marks a failure a retry cannot fix (CDMSS refused the answer: 400 / 403 /
  *   404, or 409 because the thread was already answered differently or is closed). Those are shown to
  *   staff and never retried. Transport errors, 429 and 5xx are retried, up to MAX_ATTEMPTS.
@@ -28,6 +31,10 @@ export const INLINE_TIMEOUT_MS = 3500;
 export const RETRY_BATCH = 40;
 
 export type SyncState = "pending" | "synced" | "failed";
+
+/** Wall-clock budget for one retry run (the cron's maxDuration is 300 s). */
+export const RETRY_BUDGET_MS = 240_000;
+export const RETRY_CALL_TIMEOUT_MS = 15_000;
 
 export interface SyncVerdict {
   state: "synced" | "failed";
@@ -60,7 +67,6 @@ interface SyncRow {
   signal_reference: string | null;
   doctor_response_verb: string | null;
   doctor_response_comment: string | null;
-  doctor_uid: string | null;
   cdmss_doctor_uid: string | null;
   cdmss_sync_attempts: number | null;
 }
@@ -89,9 +95,8 @@ export async function markResponseForSync(findingId: string): Promise<boolean> {
 async function loadRow(findingId: string): Promise<SyncRow | null> {
   const rows = (await sql`
     SELECT f.id::text AS id, f.signal_reference, f.doctor_response_verb, f.doctor_response_comment,
-           da.doctor_uid, p.cdmss_doctor_uid, f.cdmss_sync_attempts
+           p.cdmss_doctor_uid, f.cdmss_sync_attempts
     FROM document_audit_findings f
-    JOIN document_audits da ON da.id = f.audit_id
     LEFT JOIN physicians p ON p.id = f.physician_id
     WHERE f.id = ${findingId}::uuid AND f.doctor_responded_at IS NOT NULL`) as unknown as SyncRow[];
   return rows[0] ?? null;
@@ -107,7 +112,10 @@ export async function syncFindingResponse(
     if (!row || !row.signal_reference || !row.doctor_response_verb) return { state: "pending", error: null, permanent: false };
     const out = await postDoctorResponse({
       reference: row.signal_reference.trim(),
-      doctorUid: row.doctor_uid ?? row.cdmss_doctor_uid,
+      // The physician's canonical uid, never the audit's: an audit can carry a retired alias uid, which
+      // CDMSS answers with 403 (and we would then mark permanent). Null omits the field; the reference
+      // already identifies the thread.
+      doctorUid: row.cdmss_doctor_uid,
       verb: row.doctor_response_verb,
       comment: row.doctor_response_comment,
       clientRequestId: syncRequestId(row.id),
@@ -147,13 +155,21 @@ export interface RetrySummary {
   failed: number;
   permanent: number;
   skipped_reason?: string;
+  /** The run stopped early because its time budget was spent; what is left waits for the next night. */
+  stopped_reason?: "time_budget";
 }
 
 /**
- * Nightly retry. Picks up pending and retryable failed rows, plus answered CDMSS-routed findings
- * that were never marked (the marking is best-effort), oldest first. Safe to run any number of times.
+ * Nightly retry. Picks up responses recorded after the deploy that are still 'pending' or 'failed'
+ * (never 'legacy', never rows with no state at all), oldest first. Safe to run any number of times.
+ * Stops when `deadline` (default: now + 240 s) is spent; each call is cut to what is left of it.
  */
-export async function retryResponseSyncs(limit: number = RETRY_BATCH): Promise<RetrySummary> {
+export async function retryResponseSyncs(
+  opts: { limit?: number; deadline?: number; now?: () => number } = {},
+): Promise<RetrySummary> {
+  const now = opts.now ?? Date.now;
+  const deadline = opts.deadline ?? now() + RETRY_BUDGET_MS;
+  const limit = opts.limit ?? RETRY_BATCH;
   let ids: string[] = [];
   try {
     const rows = (await sql`
@@ -164,7 +180,7 @@ export async function retryResponseSyncs(limit: number = RETRY_BATCH): Promise<R
         AND coalesce(f.response_owner, '') <> 'pipe_a'
         AND coalesce(f.cdmss_sync_permanent, false) = false
         AND coalesce(f.cdmss_sync_attempts, 0) < ${MAX_ATTEMPTS}
-        AND (f.cdmss_sync_state IS NULL OR f.cdmss_sync_state IN ('pending', 'failed'))
+        AND f.cdmss_sync_state IN ('pending', 'failed')
       ORDER BY f.doctor_responded_at ASC
       LIMIT ${limit}`) as unknown as Array<{ id: string }>;
     ids = rows.map((r) => r.id);
@@ -173,8 +189,13 @@ export async function retryResponseSyncs(limit: number = RETRY_BATCH): Promise<R
   }
   const summary: RetrySummary = { attempted: 0, synced: 0, failed: 0, permanent: 0 };
   for (const id of ids) {
+    const left = deadline - now();
+    if (left <= 0) {
+      summary.stopped_reason = "time_budget";
+      break;
+    }
     summary.attempted += 1;
-    const r = await syncFindingResponse(id);
+    const r = await syncFindingResponse(id, { timeoutMs: Math.min(RETRY_CALL_TIMEOUT_MS, left) });
     if (r.state === "synced") summary.synced += 1;
     else {
       summary.failed += 1;

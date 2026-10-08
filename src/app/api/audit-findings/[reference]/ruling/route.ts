@@ -16,11 +16,12 @@ export const maxDuration = 30;
  *
  *   200  recorded (or a repeat of a ruling already recorded: `replayed: true`)
  *   409  the thread moved; `current_status` says where it is now, `actions` what is still allowed
+ *   403  a Site Medical Head ruling on a doctor who is not engaged at a hospital they head (super admin: never)
  *   400 / 404  the request or the thread is not valid
  *   502  CDMSS did not confirm; the decision is saved here and the same button press retries it
  *
- * The decision is recorded once per thread + action (src/lib/audit-ruling.ts); pressing twice never
- * creates a second row.
+ * The decision is recorded once per thread + action + thread state (src/lib/audit-ruling.ts); pressing
+ * twice never creates a second row, and a thread that was reopened can be ruled again.
  */
 export async function POST(req: NextRequest, { params }: { params: { reference: string } }) {
   const gate = await requireStaff("manage");
@@ -38,6 +39,7 @@ export async function POST(req: NextRequest, { params }: { params: { reference: 
     action: parsed.action,
     note: parsed.note,
     actor: { profileId: gate.user.profileId, email: gate.user.email },
+    scope: gate.scope,
   });
 
   if (!result.ok) {

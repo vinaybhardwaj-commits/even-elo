@@ -1,23 +1,33 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
-import { EVENTS, REF, fakeSql, json, signalObject, staff } from "./helpers/fixtures";
+import { EVENTS, HOSPITAL_A, REF, fakeSql, json, liveFromClaims, signalObject, staff } from "./helpers/fixtures";
 
 const h = vi.hoisted(() => ({
   user: null as unknown,
+  /** The role the database reports; "claims" = same as the cookie. */
+  live: "claims" as unknown,
   sql: null as unknown as (...a: unknown[]) => unknown,
 }));
 
 vi.mock("@/lib/auth", () => ({ getCurrentUser: vi.fn(async () => h.user) }));
 vi.mock("@/lib/db", () => ({ sql: (...a: unknown[]) => h.sql(...a) }));
+vi.mock("@/lib/staff-live", async (orig) => {
+  const real = await orig<typeof import("@/lib/staff-live")>();
+  const { liveFromClaims: fromClaims } = await import("./helpers/fixtures");
+  return { ...real, loadLiveStaff: vi.fn(async () => (h.live === "claims" ? fromClaims(h.user) : h.live)) };
+});
 
 import { POST } from "@/app/api/audit-findings/[reference]/ruling/route";
-import { parseRulingBody, rulingKey } from "@/lib/audit-ruling";
+import { parseRulingBody, rulingKey, threadVersion } from "@/lib/audit-ruling";
 
 interface Row {
   id: string;
   key: string;
   action: string;
   note: string;
+  ruling_note: string;
+  actor: string;
+  version: string;
   state: string;
   error: string | null;
 }
@@ -26,6 +36,9 @@ let rows: Map<string, Row>;
 let audits: Array<{ action: string; entity: string }>;
 let inserts: number;
 let cdmssStatus: string; // the thread's CURRENT status as CDMSS holds it
+let events: Array<Record<string, unknown>>; // the thread's CURRENT event log as CDMSS holds it
+let linkedDoctor: boolean; // is the CDMSS doctor linked to a physician profile
+let engagedAtA: boolean; // is that physician engaged at HOSPITAL_A
 let signalActionCalls: Array<Record<string, unknown>>;
 let signalActionMode: "ok" | "replay" | "conflict" | "down" | "bad_request";
 const fetchMock = vi.fn();
@@ -33,19 +46,42 @@ const fetchMock = vi.fn();
 function installSql() {
   h.sql = fakeSql((text, v) => {
     if (text.includes("FROM physicians WHERE cdmss_doctor_uid IS NOT NULL")) {
-      return [{ id: "p-1", full_name: "Asha Rao", cdmss_doctor_uid: "D-100", cdmss_alias_uids: null }];
+      return linkedDoctor ? [{ id: "p-1", full_name: "Asha Rao", cdmss_doctor_uid: "D-100", cdmss_alias_uids: null }] : [];
+    }
+    if (text.includes("FROM physician_engagements")) {
+      const hospitals = v[1] as string[];
+      return engagedAtA && hospitals.includes(HOSPITAL_A) ? [{ id: "p-1" }] : [];
     }
     if (text.includes("INSERT INTO gov_interventions")) {
       inserts += 1;
       const key = String(v[6]);
-      if (rows.has(key)) return [];
-      const row: Row = { id: `iv-${rows.size + 1}`, key, action: String(v[5]), note: String(v[2]), state: "pending", error: null };
+      const existing = rows.get(key);
+      if (existing) {
+        if (!text.includes("DO UPDATE") || existing.state === "synced") return [];
+        existing.note = String(v[2]);
+        existing.actor = String(v[4]);
+        existing.ruling_note = String(v[7]);
+        existing.state = "pending";
+        existing.error = null;
+        return [{ id: existing.id, cdmss_sync_state: existing.state, actor_email: existing.actor, ruling_note: existing.ruling_note }];
+      }
+      const row: Row = {
+        id: `iv-${rows.size + 1}`,
+        key,
+        action: String(v[5]),
+        note: String(v[2]),
+        ruling_note: String(v[7]),
+        actor: String(v[4]),
+        version: String(v[8]),
+        state: "pending",
+        error: null,
+      };
       rows.set(key, row);
-      return [{ id: row.id }];
+      return [{ id: row.id, cdmss_sync_state: row.state, actor_email: row.actor, ruling_note: row.ruling_note }];
     }
     if (text.includes("FROM gov_interventions WHERE idempotency_key")) {
       const r = rows.get(String(v[0]));
-      return r ? [{ id: r.id, cdmss_sync_state: r.state }] : [];
+      return r ? [{ id: r.id, cdmss_sync_state: r.state, actor_email: r.actor, ruling_note: r.ruling_note }] : [];
     }
     if (text.includes("SET cdmss_sync_state = 'synced'")) {
       for (const r of Array.from(rows.values())) if (r.id === v[0]) r.state = "synced";
@@ -74,15 +110,19 @@ beforeEach(() => {
   audits = [];
   inserts = 0;
   cdmssStatus = "escalated";
+  events = EVENTS.map((e) => ({ ...e }));
+  linkedDoctor = true;
+  engagedAtA = true;
   signalActionCalls = [];
   signalActionMode = "ok";
   h.user = staff.smh;
+  h.live = "claims";
   installSql();
   fetchMock.mockReset();
   fetchMock.mockImplementation(async (u: string, init?: RequestInit) => {
     const s = String(u);
     if (s.includes("/audit-signal/")) {
-      return json(200, { ok: true, signal: signalObject({ status: cdmssStatus }), instances: [], events: EVENTS });
+      return json(200, { ok: true, signal: signalObject({ status: cdmssStatus }), instances: [], events });
     }
     if (s.includes("/signal-action")) {
       const body = JSON.parse(String(init?.body));
@@ -113,6 +153,12 @@ const rule = (body: unknown) =>
     { params: { reference: REF } },
   );
 
+/** CDMSS re-routes a settled thread: status back to routed, one more event in the log. */
+function reopen() {
+  cdmssStatus = "routed";
+  events = [...events, { event: "routed", actor: "cm:asha", at: "2026-10-05T05:00:00.000Z", payload: { reason: "re-routed" } }];
+}
+
 describe("ruling body", () => {
   it("requires a real action and a note, and refuses unknown fields", () => {
     expect(parseRulingBody({ action: "closed", note: "ok" }).ok).toBe(false); // 2 characters
@@ -122,10 +168,24 @@ describe("ruling body", () => {
     expect(parseRulingBody(null).ok).toBe(false);
     expect(parseRulingBody({ action: "dismissed", note: "  Not our patient.  " })).toEqual({ ok: true, action: "dismissed", note: "Not our patient." });
   });
+});
 
-  it("keys a decision by thread and action", () => {
-    expect(rulingKey(REF, "closed")).toBe(`${REF}|closed`);
-    expect(rulingKey(REF, "closed")).not.toBe(rulingKey(REF, "dismissed"));
+describe("idempotency key: thread + action + thread version (H1)", () => {
+  it("changes with the action and with the thread's version", () => {
+    expect(rulingKey(REF, "closed", "3.100")).toBe(`${REF}|closed|3.100`);
+    expect(rulingKey(REF, "closed", "3.100")).not.toBe(rulingKey(REF, "dismissed", "3.100"));
+    expect(rulingKey(REF, "closed", "3.100")).not.toBe(rulingKey(REF, "closed", "4.200"));
+  });
+
+  it("threadVersion moves when an event is appended, ignores event order, and falls back to routed_at", () => {
+    const v3 = threadVersion(EVENTS);
+    expect(v3).toMatch(/^3\.\d+$/);
+    expect(threadVersion([...EVENTS].reverse())).toBe(v3);
+    const v4 = threadVersion([...EVENTS, { event: "routed", at: "2026-10-05T05:00:00.000Z" }]);
+    expect(v4).not.toBe(v3);
+    expect(v4).toMatch(/^4\./);
+    expect(threadVersion(undefined, { routed_at: "2026-10-01T05:00:00.000Z" })).toBe(`0.${Date.parse("2026-10-01T05:00:00.000Z")}`);
+    expect(threadVersion([], null)).toBe("0.0");
   });
 });
 
@@ -139,6 +199,8 @@ describe("ruling flow", () => {
     const row = Array.from(rows.values())[0];
     expect(row.state).toBe("synced");
     expect(row.note).toContain("Reviewed with the doctor.");
+    expect(row.ruling_note).toBe("Reviewed with the doctor.");
+    expect(row.version).toBe(threadVersion(EVENTS));
     expect(signalActionCalls).toHaveLength(1);
     expect(signalActionCalls[0]).toMatchObject({
       reference: REF,
@@ -150,11 +212,11 @@ describe("ruling flow", () => {
     // The row was written BEFORE the CDMSS call.
     const sqlOrder = (h.sql as unknown as { mock: { invocationCallOrder: number[] } }).mock.invocationCallOrder;
     const signalActionOrder = fetchMock.mock.invocationCallOrder[fetchMock.mock.calls.findIndex((c) => String(c[0]).includes("/signal-action"))];
-    expect(Math.min(...sqlOrder.slice(0, 3))).toBeLessThan(signalActionOrder);
+    expect(Math.min(...sqlOrder.slice(0, 4))).toBeLessThan(signalActionOrder);
     expect(audits.map((a) => a.action)).toEqual(["audit_ruling"]);
   });
 
-  it("a repeat press reuses the same row and the same reference; CDMSS answers 200 replayed, shown as success", async () => {
+  it("a repeat press on the same thread state reuses the same row and the same reference; CDMSS answers 200 replayed", async () => {
     const first = await rule({ action: "closed", note: "Resolved with the doctor." });
     expect(first.status).toBe(200);
     signalActionMode = "replay";
@@ -167,18 +229,62 @@ describe("ruling flow", () => {
     expect(audits.map((a) => a.action)).toEqual(["audit_ruling"]); // the replay is not audited as a second ruling
   });
 
-  it("a different note on a retry does not create a second row (the first decision stands)", async () => {
+  it("once CDMSS has confirmed a ruling, a later press with another note changes neither the row nor what is sent", async () => {
     await rule({ action: "closed", note: "First reason." });
     signalActionMode = "replay";
     await rule({ action: "closed", note: "Second reason, typed later." });
     expect(rows.size).toBe(1);
-    expect(Array.from(rows.values())[0].note).toContain("First reason.");
+    const row = Array.from(rows.values())[0];
+    expect(row.note).toContain("First reason.");
+    expect(row.state).toBe("synced");
+    expect(signalActionCalls[1].note).toBe("First reason.");
   });
 
   it("two different actions on one thread are two decisions", async () => {
     await rule({ action: "acknowledged_by_governance", note: "Seen." });
     await rule({ action: "closed", note: "Finished." });
     expect(rows.size).toBe(2);
+  });
+
+  it("H1: a thread that CDMSS reopened can be ruled with the same action again (new row, fresh non-replayed call)", async () => {
+    const first = await rule({ action: "closed", note: "Resolved." });
+    expect((await first.json()).replayed).toBe(false);
+    expect(rows.size).toBe(1);
+
+    reopen(); // a care manager re-routes the settled thread: status routed, one more event
+
+    const second = await rule({ action: "closed", note: "Resolved again after the re-route." });
+    expect(second.status).toBe(200);
+    expect(await second.json()).toMatchObject({ ok: true, replayed: false });
+    expect(rows.size).toBe(2);
+    const [a, b] = Array.from(rows.values());
+    expect(a.key).not.toBe(b.key);
+    expect(a.version).not.toBe(b.version);
+    expect(signalActionCalls).toHaveLength(2);
+    expect(signalActionCalls[1].gov_intervention_ref).not.toBe(signalActionCalls[0].gov_intervention_ref);
+    expect(signalActionCalls[1].note).toBe("Resolved again after the re-route.");
+    expect(audits.map((x) => x.action)).toEqual(["audit_ruling", "audit_ruling"]);
+  });
+
+  it("H1: the row and the CDMSS call carry the same actor and note even when a second person retries a pending ruling", async () => {
+    signalActionMode = "down";
+    const failed = await rule({ action: "privilege_action", note: "A's note: refer for review." });
+    expect(failed.status).toBe(502);
+    expect(Array.from(rows.values())[0].actor).toBe("benita@even.in");
+
+    h.user = staff.superAdmin; // B rules the same action on the same thread state
+    signalActionMode = "ok";
+    const retried = await rule({ action: "privilege_action", note: "B's note: privileges suspended." });
+    expect(retried.status).toBe(200);
+    expect(rows.size).toBe(1);
+    const row = Array.from(rows.values())[0];
+    expect(row.actor).toBe("vinay@even.in");
+    expect(row.ruling_note).toBe("B's note: privileges suspended.");
+    expect(row.note).toContain("B's note");
+    // CDMSS got B's attribution, not A's, and the same intervention id as the first attempt.
+    expect(signalActionCalls[1]).toMatchObject({ actor: "gov:vinay@even.in", note: "B's note: privileges suspended.", gov_intervention_ref: row.id });
+    expect(signalActionCalls[1].gov_intervention_ref).toBe(signalActionCalls[0].gov_intervention_ref);
+    expect(row.state).toBe("synced");
   });
 
   it("when CDMSS is unreachable the decision stays saved as pending, answers 502, and the retry is the SAME row", async () => {
@@ -197,7 +303,7 @@ describe("ruling flow", () => {
     const retried = await rule({ action: "privilege_action", note: "Refer for review." });
     expect(retried.status).toBe(200);
     expect(rows.size).toBe(1);
-    expect(inserts).toBe(2); // the second INSERT hit the unique key and returned nothing
+    expect(inserts).toBe(2);
     expect(signalActionCalls[1].gov_intervention_ref).toBe(signalActionCalls[0].gov_intervention_ref);
     expect(Array.from(rows.values())[0].state).toBe("synced");
   });
@@ -258,10 +364,79 @@ describe("ruling flow", () => {
     h.sql = fakeSql((text) => {
       if (text.includes("FROM physicians")) return [];
       if (text.includes("INSERT INTO gov_interventions")) throw new Error("db down");
-      return [];
+      return [{ id: "p-1" }];
     });
+    h.user = staff.superAdmin;
     const res = await rule({ action: "closed", note: "Resolved." });
     expect(res.status).toBe(502);
     expect(signalActionCalls).toHaveLength(0);
+  });
+});
+
+describe("who may rule on which doctor (L4)", () => {
+  it("a Site Medical Head cannot rule on a doctor engaged only at another hospital: 403, nothing recorded, CDMSS never called for the ruling", async () => {
+    engagedAtA = false;
+    const res = await rule({ action: "closed", note: "Resolved." });
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toBe("out_of_scope");
+    expect(body.message).toMatch(/not engaged at a hospital you head/);
+    expect(inserts).toBe(0);
+    expect(rows.size).toBe(0);
+    expect(signalActionCalls).toHaveLength(0);
+  });
+
+  it("a Site Medical Head cannot rule on a doctor not yet linked to a physician profile", async () => {
+    linkedDoctor = false;
+    const res = await rule({ action: "closed", note: "Resolved." });
+    expect(res.status).toBe(403);
+    expect((await res.json()).message).toMatch(/only a super admin/);
+    expect(inserts).toBe(0);
+    expect(signalActionCalls).toHaveLength(0);
+  });
+
+  it("a Site Medical Head can rule on a doctor engaged at their own hospital", async () => {
+    expect((await rule({ action: "closed", note: "Resolved." })).status).toBe(200);
+    expect(rows.size).toBe(1);
+  });
+
+  it("a Site Medical Head of another hospital cannot, even for a doctor engaged at hospital A", async () => {
+    h.live = { ...liveFromClaims(staff.smh)!, smh_hospital_ids: ["bbbb0000-0000-4000-8000-00000000000b"] };
+    expect((await rule({ action: "closed", note: "Resolved." })).status).toBe(403);
+    expect(inserts).toBe(0);
+  });
+
+  it("a super admin can rule for any doctor, linked or not, at any hospital", async () => {
+    h.user = staff.superAdmin;
+    engagedAtA = false;
+    linkedDoctor = false;
+    expect((await rule({ action: "closed", note: "Resolved." })).status).toBe(200);
+    expect(rows.size).toBe(1);
+  });
+});
+
+describe("the role is the database's, not the 7-day cookie's (L3)", () => {
+  it("a Site Medical Head whose role was revoked after login is refused (403), nothing recorded", async () => {
+    h.live = { ...liveFromClaims(staff.smh)!, is_site_medical_head: false, smh_hospital_ids: [] };
+    const res = await rule({ action: "closed", note: "Resolved." });
+    expect(res.status).toBe(403);
+    expect(inserts).toBe(0);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("a super admin whose flag was revoked is refused", async () => {
+    h.user = staff.superAdmin;
+    h.live = { ...liveFromClaims(staff.superAdmin)!, is_super_admin: false };
+    expect((await rule({ action: "closed", note: "Resolved." })).status).toBe(403);
+    expect(inserts).toBe(0);
+  });
+
+  it("a deactivated account, a vanished profile and an unreadable database are refused (401)", async () => {
+    h.live = { ...liveFromClaims(staff.smh)!, status: "deactivated" };
+    expect((await rule({ action: "closed", note: "Resolved." })).status).toBe(401);
+    h.live = null;
+    expect((await rule({ action: "closed", note: "Resolved." })).status).toBe(401);
+    expect(inserts).toBe(0);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
