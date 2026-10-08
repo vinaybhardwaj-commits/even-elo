@@ -1,16 +1,21 @@
 import { NextResponse } from "next/server";
 import { getCurrentPhysician } from "@/lib/physician-auth";
 import { loadPortalRoutedFindings } from "@/lib/document-audits-db";
-import { portalPdfStatus, portalResponseOwner, DOC_TYPE_LABEL, normalizeDocType } from "@/lib/document-audits";
-import { presentPortalPdf } from "@/lib/findings-pdf";
+import { toDocumentCards } from "@/lib/doctor-card";
 import { disabledRead, findingsEnabled } from "@/lib/portal-flags";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /**
- * GET /api/portal/document-audits — TriageBot-routed local document-audit findings
- * for the signed-in physician (Stage 4 lock). Complements CDMSS doctor-audits Findings.
+ * GET /api/portal/document-audits — the signed-in physician's document-audit findings that a doctor
+ * may see (visibility is decided per finding in SQL: portal_visible, never the audit's stamp).
+ *
+ * ⚠️ THE RESPONSE IS AN ALLOWLIST. Each stored row is rebuilt as a doctor card by `toDocumentCards`,
+ * the same card shape the live Findings list uses. Authors, external references, severities,
+ * statuses and signal references are not read, so they cannot be shipped. A finding that is also on
+ * the live list is left out here (answering it there avoids asking the doctor twice).
+ * The answer is `{ ok, cards }` and nothing else.
  */
 export async function GET() {
   const p = await getCurrentPhysician();
@@ -18,33 +23,5 @@ export async function GET() {
   if (!findingsEnabled()) return disabledRead();
 
   const rows = await loadPortalRoutedFindings(p.physicianId);
-  const findings = rows.map((r) => {
-    const docType = normalizeDocType(r.doc_type);
-    return {
-      finding_id: r.finding_id,
-      audit_id: r.audit_id,
-      external_ref: r.external_ref,
-      finding_label: r.finding_label,
-      finding_body: r.finding_body,
-      severity: r.severity,
-      status: r.status,
-      authored_by_name: r.authored_by_name,
-      authored_at: r.authored_at,
-      doc_type: docType,
-      doc_type_label: docType ? DOC_TYPE_LABEL[docType] : r.doc_type,
-      ...presentPortalPdf(portalPdfStatus(r.cdmss_pdf_url).pdf_url),
-      response_owner: portalResponseOwner(r.response_owner, r.signal_reference),
-      signal_reference: r.signal_reference,
-      doctor_response_verb: r.doctor_response_verb,
-      doctor_response_comment: r.doctor_response_comment,
-      doctor_responded_at: r.doctor_responded_at,
-    };
-  });
-
-  return NextResponse.json({
-    ok: true,
-    findings,
-    advisory:
-      "Document-audit findings routed to you. A named RMO is shown once they confirm authorship. Respond here unless the card points you at Findings. The PDF link appears only when CDMSS has an audit-findings file.",
-  });
+  return NextResponse.json({ ok: true, cards: toDocumentCards(rows) });
 }

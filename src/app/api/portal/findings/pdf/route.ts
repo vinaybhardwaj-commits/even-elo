@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCurrentPhysician } from "@/lib/physician-auth";
 import { sql } from "@/lib/db";
 import { disabledRead, findingsEnabled } from "@/lib/portal-flags";
-import { fetchDoctorAudits, type DoctorAuditSignal } from "@/lib/doctor-audits";
+import { fetchDoctorAudits } from "@/lib/doctor-audits";
 import { doctorMayFetchAuditPdf, isAuditUuid, type AuditPdfSignal } from "@/lib/findings-pdf";
 import { fetchCdmssAuditPdf, pdfStreamResponse } from "@/lib/cdmss-pdf";
 
@@ -85,7 +85,15 @@ export async function GET(request: NextRequest) {
     try {
       const upstream = await fetchDoctorAudits(uid, { window: 90, status: "all" });
       const list = Array.isArray(upstream?.signals) ? upstream.signals : [];
-      signals = list as DoctorAuditSignal[];
+      // A finding marked not routed never grants a file. When the new contract sends the findings
+      // as an instance list, the first routed one stands in for the representative.
+      signals = list.map((s) => {
+        const first = Array.isArray(s.instances)
+          ? (s.instances as Array<Record<string, unknown>>).find((i) => i && i.routed !== false)
+          : undefined;
+        const rep = (s.representative ?? first ?? null) as AuditPdfSignal["representative"];
+        return { ...s, representative: rep } as AuditPdfSignal;
+      }).filter((s) => (s as { routed?: unknown }).routed !== false && (s.representative as { routed?: unknown } | null)?.routed !== false);
     } catch {
       listFailed = true;
     }

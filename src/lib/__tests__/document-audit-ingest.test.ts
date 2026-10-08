@@ -408,7 +408,7 @@ describe("ingest wiring", () => {
     expect(cron).toContain("?note_class=ot");
     expect(cron).toContain("?window=30");
     const portal = readFileSync(join(root, "src/app/api/portal/document-audits/route.ts"), "utf8");
-    expect(portal).toContain("portalPdfStatus");
+    expect(portal).toContain("toDocumentCards");
     expect(portal).not.toContain("resolveAuditPdfUrl");
     const findings = readFileSync(join(root, "src/components/portal/FindingsForDoctor.tsx"), "utf8");
     expect(findings).toContain("export function FindingsForDoctor");

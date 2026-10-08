@@ -738,9 +738,22 @@ export async function recordDoctorFindingResponse(opts: {
       WHERE id = ${opts.findingId}::uuid
         AND physician_id = ${opts.physicianId}::uuid
         AND portal_visible = true
+        AND doctor_responded_at IS NULL
       RETURNING id::text AS id
     `) as unknown as Array<{ id: string }>;
-    if (!rows[0]) return { ok: false, error: "not_found" };
+    if (!rows[0]) {
+      // Nothing updated: either the doctor already answered it (a finding is answered once, like
+      // the live list) or it is not theirs / not visible. Say which, without leaking the latter.
+      const prior = (await sql`
+        SELECT 1 AS answered FROM document_audit_findings
+        WHERE id = ${opts.findingId}::uuid
+          AND physician_id = ${opts.physicianId}::uuid
+          AND portal_visible = true
+          AND doctor_responded_at IS NOT NULL
+        LIMIT 1
+      `) as unknown as Array<{ answered: number }>;
+      return { ok: false, error: prior[0] ? "already_responded" : "not_found" };
+    }
     return { ok: true };
   } catch {
     return { ok: false, error: "db_error" };

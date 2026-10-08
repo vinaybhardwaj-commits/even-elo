@@ -19,7 +19,8 @@ vi.mock("@/lib/db", () => ({
 import { getCurrentPhysician } from "@/lib/physician-auth";
 import { sql } from "@/lib/db";
 import { GET } from "@/app/api/portal/findings/pdf/route";
-import { toPortalSignal, type DoctorAuditSignal } from "@/lib/doctor-audits";
+import type { DoctorAuditSignal } from "@/lib/doctor-audits";
+import { toLiveCard } from "@/lib/doctor-card";
 import {
   doctorMayFetchAuditPdf,
   findingsCardPdfHref,
@@ -140,25 +141,25 @@ describe("findings PDF hrefs", () => {
     expect(presentPortalPdf(null)).toEqual({ pdf_url: null, pdf_status: "unavailable" });
   });
 
-  it("toPortalSignal never emits a CDMSS PDF URL or a reference fallback", () => {
-    const live = toPortalSignal(signal());
-    expect(live.pdf_url).toBe(`/api/portal/findings/pdf?ref=${AUDIT_ID}`);
+  it("toLiveCard never emits a CDMSS PDF URL or a reference fallback", () => {
+    const live = toLiveCard(signal())!;
+    expect(live.view_note_href).toBe(`/api/portal/findings/pdf?ref=${AUDIT_ID}`);
     expect(JSON.stringify(live)).not.toContain("even-cdmss.vercel.app");
     expect(JSON.stringify(live)).not.toContain("/api/governance/audits/");
     expect(JSON.stringify(live)).not.toContain("cdmss-uid-must-never-ship");
     expect(live).not.toHaveProperty("doctor_uid");
 
-    const shell = toPortalSignal(
+    const shell = toLiveCard(
       signal({
         instances: 0,
         reference: "EHRC-AUD-2026-0111",
         representative: null,
       }),
-    );
-    expect(shell.pdf_url).toBeNull();
-    expect(JSON.stringify(shell)).not.toContain("EHRC-AUD-2026-0111/pdf");
+    )!;
+    expect(shell.view_note_href).toBeNull();
+    expect(JSON.stringify(shell)).not.toContain("EHRC-AUD-2026-0111");
 
-    const withNested = toPortalSignal(
+    const withNested = toLiveCard(
       signal({
         representative: {
           audit_id: AUDIT_ID,
@@ -172,8 +173,8 @@ describe("findings PDF hrefs", () => {
         } as DoctorAuditSignal["representative"],
       }),
     );
-    expect(JSON.stringify(withNested.representative)).not.toContain("pdf_url");
-    expect(withNested.pdf_url).toBe(`/api/portal/findings/pdf?ref=${AUDIT_ID}`);
+    expect(JSON.stringify(withNested)).not.toContain("pdf_url");
+    expect(withNested!.view_note_href).toBe(`/api/portal/findings/pdf?ref=${AUDIT_ID}`);
   });
 });
 
@@ -383,17 +384,22 @@ describe("Findings PDF wiring stays off the raw CDMSS URL", () => {
     const route = SRC("src/app/api/portal/findings/pdf/route.ts");
     const docs = SRC("src/app/api/portal/document-audits/route.ts");
 
-    expect(card).toContain("findingsCardPdfHref");
-    expect(card).toContain("hasAttachedInstances");
-    expect(card).toContain("This finding has no attached instances yet, so a response cannot be recorded here.");
-    expect(card).toContain("Audit findings PDF is not available for this finding.");
-    expect(card).not.toContain("even-cdmss.vercel.app");
-    expect(card).not.toContain("/api/governance/audits/");
-    expect(card).not.toContain("GOV_API_KEY");
+    const shared = SRC("src/components/portal/FindingCard.tsx");
+    const builder = SRC("src/lib/doctor-card.ts");
 
-    expect(local).toContain("localCardPdfHref");
-    expect(local).not.toContain("/api/governance/audits/");
-    expect(local).not.toContain("GOV_API_KEY");
+    // One shared card renders the single "View note" link from the card's server-built href.
+    expect(card).toContain("FindingCard");
+    expect(local).toContain("FindingCard");
+    expect(shared).toContain("card.view_note_href");
+    expect(builder).toContain("findingsCardPdfHref");
+    expect(builder).toContain("localCardPdfHref");
+    // Only the portal proxy may ever be shipped as a link.
+    expect(builder).toContain('href.startsWith("/api/portal/findings/pdf?ref=")');
+    for (const src of [card, local, shared]) {
+      expect(src).not.toContain("even-cdmss.vercel.app");
+      expect(src).not.toContain("/api/governance/audits/");
+      expect(src).not.toContain("GOV_API_KEY");
+    }
 
     expect(route).toContain("getCurrentPhysician()");
     expect(route).toContain("SELECT cdmss_doctor_uid FROM physicians WHERE id=");
@@ -403,7 +409,7 @@ describe("Findings PDF wiring stays off the raw CDMSS URL", () => {
     expect(route).toContain("doctorMayFetchAuditPdf");
     expect(route).not.toContain("NEXT_PUBLIC");
 
-    expect(docs).toContain("portalPdfStatus");
-    expect(docs).toContain("presentPortalPdf");
+    expect(docs).toContain("toDocumentCards");
+    expect(builder).toContain("portalPdfStatus");
   });
 });

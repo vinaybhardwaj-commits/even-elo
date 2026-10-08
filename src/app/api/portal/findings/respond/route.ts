@@ -3,12 +3,9 @@ import { randomUUID } from "node:crypto";
 import { getCurrentPhysician } from "@/lib/physician-auth";
 import { sql } from "@/lib/db";
 import { disabledWrite, respondEnabled } from "@/lib/portal-flags";
-import {
-  fetchDoctorReactions,
-  toPortalSignal,
-  type DoctorAuditSignal,
-  type PortalReaction,
-} from "@/lib/doctor-audits";
+import { fetchDoctorReactions, type PortalReaction } from "@/lib/doctor-audits";
+import { toLiveCard } from "@/lib/doctor-card";
+import { friendlyError } from "@/lib/finding-labels";
 import { callResponse, mapRespondOutcome, parseRespondBody } from "@/lib/findings-actions";
 
 export const dynamic = "force-dynamic";
@@ -25,11 +22,10 @@ export const runtime = "nodejs";
  * id, and only signal_id, verb and comment are accepted from the body. The BFF creates the
  * client_request_id and sends it as both the payload field and Idempotency-Key.
  *
- * ⚠️ THE RETURNED SIGNAL GOES THROUGH THE SAME STRIP AS THE GET. CDMSS answers with a full signal,
- * which carries `doctor_uid`, `overdue` and `sla_due_at`. Handing that straight back would leak
- * through the write path the three things the read path spends a whitelist removing — so it is run
- * through `toPortalSignal` like everything else. `my_reaction` is re-read here so the card that
- * swaps this signal in does not lose a reaction the doctor already recorded.
+ * ⚠️ THE RETURNED SIGNAL GOES THROUGH THE SAME ALLOWLIST AS THE GET. CDMSS answers with a full
+ * signal (uid, triage, timers). Handing that straight back would leak through the write path what
+ * the read path spends an allowlist keeping out — so it is rebuilt as a card by `toLiveCard`.
+ * The doctor's reaction is re-read here so the card that is swapped in does not lose it.
  *
  * ⚠️ ALWAYS HTTP 200 (except 401). See ../react for why.
  *
@@ -52,11 +48,12 @@ export async function POST(request: NextRequest) {
   } catch {
     uid = null;
   }
-  if (!uid) return NextResponse.json({ ok: false, error: "unmapped" });
+  if (!uid) return NextResponse.json({ ok: false, error: "unmapped", message: friendlyError("unmapped") });
 
   const parsed = parseRespondBody(await request.json().catch(() => null));
   if (!parsed.ok) {
-    return NextResponse.json({ ok: false, error: "invalid", message: parsed.message });
+    // The parser's own wording is for developers; the doctor gets a plain sentence.
+    return NextResponse.json({ ok: false, error: "invalid", message: friendlyError("invalid") });
   }
   const { signalId, verb, comment } = parsed;
   const clientRequestId = randomUUID();
@@ -71,7 +68,10 @@ export async function POST(request: NextRequest) {
     }),
   );
 
-  if (!result.ok) return NextResponse.json(result);
+  if (!result.ok) {
+    // `message` is a plain sentence; CDMSS's own error text is never relayed to a physician.
+    return NextResponse.json({ ok: false, error: result.error, message: friendlyError(result.error) });
+  }
 
   // The response is recorded upstream; this row is the portal's record of it. Best-effort, same as
   // the login route. The COMMENT IS DELIBERATELY ABSENT: a doctor's explanation is clinical prose
@@ -98,7 +98,8 @@ export async function POST(request: NextRequest) {
   if (!s || typeof s !== "object") {
     // Upstream said yes but sent nothing renderable. Answer ok so the card does not report a
     // failure that did not happen; it refetches rather than swapping in a signal we do not have.
-    return NextResponse.json({ ok: true, signal: null });
+    return NextResponse.json({ ok: true, card: null });
   }
-  return NextResponse.json({ ok: true, signal: toPortalSignal(s as DoctorAuditSignal, myReaction) });
+  // A signal that cannot be rebuilt as a card is answered as null: the browser refetches.
+  return NextResponse.json({ ok: true, card: toLiveCard(s, myReaction) });
 }
