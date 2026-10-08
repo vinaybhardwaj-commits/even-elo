@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cronGuard } from "@/lib/cron-auth";
 import { recordIngestMeta, runDocumentAuditIngest } from "@/lib/document-audit-ingest-db";
+import { retryResponseSyncs, type RetrySummary } from "@/lib/response-sync";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -14,6 +15,10 @@ export const maxDuration = 300;
  * (src/lib/cron-auth.ts); a missing CRON_SECRET answers 503. Manual runs use the same bearer.
  * Idempotent upserts. Does not mint OT gov signals.
  *
+ * After the ingest (success OR failure) the same run retries doctor responses that have not reached
+ * CDMSS yet (src/lib/response-sync.ts). Its result is reported as `response_sync`; it can never fail
+ * the ingest, and a failed ingest never skips it.
+ *
  * Ops can scope the CDMSS export with query params (forwarded as-is when valid):
  *   ?note_class=ot
  *   ?window=30
@@ -25,6 +30,13 @@ async function run(req: NextRequest) {
   if (denied) return denied;
   const hasScope = ["window", "note_class", "from", "to"].some((k) => req.nextUrl.searchParams.has(k));
   const mode = hasScope ? "manual" : "cron";
+  const responseSync = async (): Promise<RetrySummary | { error: string }> => {
+    try {
+      return await retryResponseSyncs();
+    } catch (e) {
+      return { error: e instanceof Error ? e.message.slice(0, 160) : "retry failed" };
+    }
+  };
   try {
     const q = req.nextUrl.searchParams;
     const result = await runDocumentAuditIngest({
@@ -33,7 +45,7 @@ async function run(req: NextRequest) {
       from: q.get("from"),
       to: q.get("to"),
     });
-    return NextResponse.json({ ...result, mode });
+    return NextResponse.json({ ...result, mode, response_sync: await responseSync() });
   } catch (e) {
     const message = e instanceof Error ? e.message : "ingest failed";
     try {
@@ -42,7 +54,7 @@ async function run(req: NextRequest) {
       // Meta row may be missing before migration 030. The error response still reports the failure.
     }
     const status = /GOV_API_KEY|document-audits-export|export_/.test(message) ? 502 : 500;
-    return NextResponse.json({ ok: false, error: message, mode }, { status });
+    return NextResponse.json({ ok: false, error: message, mode, response_sync: await responseSync() }, { status });
   }
 }
 
