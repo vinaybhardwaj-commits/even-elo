@@ -15,6 +15,9 @@ const h = vi.hoisted(() => ({
   existing: [] as Array<Record<string, unknown>>,
   locals: [] as Array<Record<string, unknown>>,
   deadlineInPast: false,
+  /** Who holds the doctor uid directly (null = nobody), and who lists it as an alias. */
+  directHolder: "00000000-0000-4000-8000-0000000000aa" as string | null,
+  aliasHolders: [] as Array<{ id: string }>,
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -23,7 +26,10 @@ vi.mock("@/lib/db", () => ({
     h.calls.push({ q, values });
     if (q.includes("FROM document_audits da") && q.includes("ANY(")) return h.existing;
     if (q.includes("FROM hospitals")) return [{ id: "00000000-0000-4000-8000-000000000001" }];
-    if (q.includes("FROM physicians")) return [{ id: "00000000-0000-4000-8000-0000000000aa" }];
+    if (q.includes("FROM physicians")) {
+      if (q.includes("ANY(cdmss_alias_uids)")) return h.aliasHolders;
+      return h.directHolder ? [{ id: h.directHolder }] : [];
+    }
     if (q.includes("INSERT INTO document_audits (")) return [{ id: "00000000-0000-4000-8000-0000000000bb" }];
     if (q.includes("FROM document_audit_findings f") && q.includes("JOIN document_audits da")) return h.locals;
     return [];
@@ -382,12 +388,47 @@ describe("runDocumentAuditIngest: refresh, preserve, and time (F5)", () => {
     expect(routed.values.some((v) => typeof v === "string" && v.includes("IP-1001"))).toBe(true);
   });
 
-  it("resolves the audit's doctor through a recorded alias uid as well as the canonical one", async () => {
-    respondWith(exportPayload());
-    await runDocumentAuditIngest();
-    const lookup = h.calls.find((c) => c.q.includes("FROM physicians"));
-    expect(lookup!.q).toContain("ANY(cdmss_alias_uids)");
-    expect(lookup!.values).toContain("DOC-1");
+  describe("resolving the audit's doctor", () => {
+    const AUDIT_INSERT = (calls: typeof h.calls) => calls.some((c) => c.q.includes("INSERT INTO document_audits ("));
+    afterEach(() => {
+      h.directHolder = "00000000-0000-4000-8000-0000000000aa";
+      h.aliasHolders = [];
+    });
+
+    it("the physician who holds the uid directly wins, and no alias lookup happens", async () => {
+      respondWith(exportPayload());
+      await runDocumentAuditIngest();
+      const lookups = h.calls.filter((c) => c.q.includes("FROM physicians"));
+      expect(lookups).toHaveLength(1);
+      expect(lookups[0].values).toContain("DOC-1");
+      expect(AUDIT_INSERT(h.calls)).toBe(true);
+    });
+
+    it("falls back to a recorded alias only when exactly one physician holds it", async () => {
+      h.directHolder = null;
+      h.aliasHolders = [{ id: "00000000-0000-4000-8000-0000000000cc" }];
+      respondWith(exportPayload());
+      await runDocumentAuditIngest();
+      expect(h.calls.some((c) => c.q.includes("ANY(cdmss_alias_uids)"))).toBe(true);
+      const insert = h.calls.find((c) => c.q.includes("INSERT INTO document_audits ("))!;
+      expect(insert.values).toContain("00000000-0000-4000-8000-0000000000cc");
+    });
+
+    it("an alias held by two physicians is ambiguous: the audit stays unmapped, not misattributed", async () => {
+      h.directHolder = null;
+      h.aliasHolders = [{ id: "a" }, { id: "b" }];
+      respondWith(exportPayload());
+      await runDocumentAuditIngest();
+      expect(AUDIT_INSERT(h.calls)).toBe(false);
+    });
+
+    it("an audit under a uid nobody holds or lists is skipped", async () => {
+      h.directHolder = null;
+      h.aliasHolders = [];
+      respondWith(exportPayload());
+      await runDocumentAuditIngest();
+      expect(AUDIT_INSERT(h.calls)).toBe(false);
+    });
   });
 
   it("an export that times out leaves a PARTIAL_RUN marker, marks the run not-successful, and throws", async () => {

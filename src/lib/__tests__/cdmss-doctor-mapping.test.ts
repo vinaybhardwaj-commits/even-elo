@@ -163,12 +163,87 @@ describe("matchDirectory: auto-link only when certain", () => {
 });
 
 describe("matchDirectory: alias_uids and disabled doctors", () => {
-  it("records aliases when linking and flags disabled doctors without hiding them", () => {
+  it("records only PROVEN aliases when linking, and flags disabled doctors without hiding them", () => {
     const r = matchDirectory(
-      [dir({ doctor_uid: "U1", name: "Asha Rao", alias_uids: ["OLD1", "OLD2"], disabled: true })],
+      [
+        dir({
+          doctor_uid: "U1",
+          name: "Asha Rao",
+          alias_uids: ["OLD1", "OLD2"],
+          alias_names: { OLD1: "Dr. Rao Asha", OLD2: "Someone Else" },
+          disabled: true,
+        }),
+      ],
       [phys({ id: "p1", full_name: "Asha Rao" })],
     );
-    expect(r.auto[0]).toMatchObject({ uid: "U1", alias_uids: ["OLD1", "OLD2"], disabled: true });
+    expect(r.auto[0]).toMatchObject({ uid: "U1", alias_uids: ["OLD1"], disabled: true });
+  });
+
+  it("an alias with no name evidence is not recorded", () => {
+    const r = matchDirectory(
+      [dir({ doctor_uid: "U1", name: "Asha Rao", alias_uids: ["U2"] })],
+      [phys({ id: "p1", full_name: "Asha Rao" })],
+    );
+    expect(r.auto[0].alias_uids).toEqual([]);
+  });
+
+  it("shared department phone: two different names on one mobile never move physician B onto A's uid", () => {
+    // CDMSS collapsed B's uid U2 into A's U1 because they share a mobile. B is linked to U2.
+    const directory = [
+      dir({ doctor_uid: "U1", name: "Asha Rao", mobile_last4: "5555", alias_uids: ["U2"] }),
+    ];
+    const physicians = [
+      phys({ id: "pA", full_name: "Asha Rao", phone: "+91 90000 05555" }),
+      phys({ id: "pB", full_name: "Vikram Shetty", phone: "+91 90000 05555", cdmss_doctor_uid: "U2" }),
+    ];
+    const r = matchDirectory(directory, physicians);
+    // B is not moved, and is flagged for a person to look at.
+    expect(r.auto.find((a) => a.physician_id === "pB")).toBeUndefined();
+    expect(r.review).toEqual([
+      expect.objectContaining({
+        uid: "U1",
+        reason: "alias_name_mismatch",
+        candidates: [{ physician_id: "pB", physician_name: "Vikram Shetty" }],
+      }),
+    ]);
+    // A still links to U1 on its own name, and does NOT inherit B's uid as an alias.
+    const a = r.auto.find((x) => x.physician_id === "pA")!;
+    expect(a).toMatchObject({ uid: "U1", alias_uids: [] });
+    expect(r.alias_updates).toEqual([]);
+  });
+
+  it("the same case when A is already linked to U1: B stays on U2, and A is not given U2", () => {
+    const r = matchDirectory(
+      [dir({ doctor_uid: "U1", name: "Asha Rao", alias_uids: ["U2"] })],
+      [
+        phys({ id: "pA", full_name: "Asha Rao", cdmss_doctor_uid: "U1", cdmss_alias_uids: [] }),
+        phys({ id: "pB", full_name: "Vikram Shetty", cdmss_doctor_uid: "U2" }),
+      ],
+    );
+    expect(r.auto).toEqual([]);
+    expect(r.review.map((x) => x.reason)).toEqual(["alias_name_mismatch"]);
+    expect(r.alias_updates).toEqual([]); // nothing proves U2 is Asha Rao, so it is never written to her
+  });
+
+  it("an existing link under a different name keeps its link and alias list untouched", () => {
+    const r = matchDirectory(
+      [dir({ doctor_uid: "U1", name: "Asha Rao", alias_uids: ["X"], alias_names: { X: "Asha Rao" } })],
+      [phys({ id: "p1", full_name: "Totally Different", cdmss_doctor_uid: "U1" })],
+    );
+    expect(r.auto).toEqual([]);
+    expect(r.alias_updates).toEqual([]);
+    expect(r.already_linked).toBe(1);
+  });
+
+  it("parseDirectory reads alias names from either shape", () => {
+    const out = parseDirectory({
+      doctors: [
+        { doctor_uid: "U1", name: "A", alias_uids: ["X", "Y"], alias_names: { X: "A" } },
+        { doctor_uid: "U2", name: "B", alias_uids: ["Z"], aliases: [{ doctor_uid: "Z", name: "B" }] },
+      ],
+    });
+    expect(out[0].alias_names).toEqual({ X: "A" });
+    expect(out[1].alias_names).toEqual({ Z: "B" });
   });
 
   it("moves a physician linked through a retired alias onto the canonical uid", () => {
@@ -182,9 +257,9 @@ describe("matchDirectory: alias_uids and disabled doctors", () => {
     expect(r.already_linked).toBe(0);
   });
 
-  it("proposes an alias-list refresh for a physician already on the canonical uid", () => {
+  it("proposes an alias-list refresh for a physician already on the canonical uid, from proven aliases", () => {
     const r = matchDirectory(
-      [dir({ doctor_uid: "U1", name: "Asha Rao", alias_uids: ["OLD1"] })],
+      [dir({ doctor_uid: "U1", name: "Asha Rao", alias_uids: ["OLD1"], alias_names: { OLD1: "Asha Rao" } })],
       [phys({ id: "p1", full_name: "Asha Rao", cdmss_doctor_uid: "U1", cdmss_alias_uids: [] })],
     );
     expect(r.alias_updates).toEqual([{ physician_id: "p1", uid: "U1", alias_uids: ["OLD1"] }]);
@@ -244,7 +319,7 @@ describe("admin route: dry run writes nothing, apply writes only auto links", ()
         JSON.stringify({
           ok: true,
           doctors: [
-            { doctor_uid: "U1", name: "Asha Rao", mobile_last4: null, alias_uids: ["OLD"] },
+            { doctor_uid: "U1", name: "Asha Rao", mobile_last4: null, alias_uids: ["OLD"], alias_names: { OLD: "Asha Rao" } },
             { doctor_uid: "U2", name: "Rajesh Kumar", mobile_last4: null },
           ],
         }),

@@ -19,8 +19,17 @@
  * Anything weaker (ambiguous names, a mobile that disagrees, a partial name such as a missing
  * middle name) goes to a REVIEW list for governance staff. It is never auto-linked and never
  * reaches a doctor. `alias_uids` (duplicate CDMSS identities collapsed into one canonical uid)
- * are honoured: a physician linked through an alias is moved to the canonical uid and keeps the
- * alias recorded so audits that still carry the old uid keep resolving.
+ * are honoured only with proof of identity. CDMSS collapses on the mobile number alone, so two
+ * different doctors who share a department phone arrive as one canonical uid plus an alias:
+ *
+ *   · a physician linked through an alias is moved to the canonical uid ONLY when the physician's
+ *     normalized name equals the canonical doctor's name; otherwise it goes to review as
+ *     `alias_name_mismatch` and keeps its link;
+ *   · an alias uid is recorded on a physician (so audits that still carry the old uid resolve to
+ *     them) only when it is proven: the physician was already linked to it under a matching name,
+ *     or the directory supplies the alias's name (`alias_names`) and it matches the canonical name.
+ *     An unproven alias is not recorded, so an audit under it stays unmapped instead of landing on
+ *     the wrong doctor.
  */
 
 export interface DirectoryDoctor {
@@ -28,6 +37,8 @@ export interface DirectoryDoctor {
   name: string;
   mobile_last4: string | null;
   alias_uids: string[];
+  /** Optional proof: alias uid -> the name CDMSS holds for it. Absent today. */
+  alias_names?: Record<string, string>;
   /** CDMSS includes disabled doctors with `disabled: true`; the consumer decides what that means. */
   disabled: boolean;
 }
@@ -57,7 +68,8 @@ export type ReviewReason =
   | "mobile_mismatch"
   | "partial_name"
   | "linked_to_other_uid"
-  | "physician_claimed_twice";
+  | "physician_claimed_twice"
+  | "alias_name_mismatch";
 
 export interface ReviewItem {
   uid: string;
@@ -125,15 +137,40 @@ export function parseDirectory(raw: unknown): DirectoryDoctor[] {
           .sort()
       : [];
     const m = typeof o.mobile_last4 === "string" ? o.mobile_last4.replace(/\D/g, "") : "";
+    const aliasNames: Record<string, string> = {};
+    const rawNames = o.alias_names;
+    if (rawNames && typeof rawNames === "object" && !Array.isArray(rawNames)) {
+      for (const [k, v] of Object.entries(rawNames as Record<string, unknown>)) {
+        if (typeof v === "string" && v.trim()) aliasNames[k.trim()] = v.trim();
+      }
+    }
+    if (Array.isArray(o.aliases)) {
+      for (const a of o.aliases) {
+        const ao = a && typeof a === "object" ? (a as Record<string, unknown>) : null;
+        if (ao && typeof ao.doctor_uid === "string" && typeof ao.name === "string" && ao.name.trim()) {
+          aliasNames[ao.doctor_uid.trim()] = ao.name.trim();
+        }
+      }
+    }
     out.push({
       doctor_uid: uid,
       name,
       mobile_last4: m.length === 4 ? m : null,
       alias_uids: aliases,
+      ...(Object.keys(aliasNames).length > 0 ? { alias_names: aliasNames } : {}),
       disabled: o.disabled === true,
     });
   }
   return out;
+}
+
+/** Aliases of this doctor whose identity the directory proves (a name that matches the canonical's). */
+export function provenAliases(d: DirectoryDoctor): string[] {
+  const want = normalizeName(d.name);
+  return d.alias_uids.filter((a) => {
+    const n = d.alias_names?.[a];
+    return !!n && normalizeName(n) === want;
+  });
 }
 
 function coverage(
@@ -168,6 +205,7 @@ export function matchDirectory(directory: DirectoryDoctor[], physicians: Physici
   const handled = new Set<string>(); // directory uids resolved by an existing link
   const autoLinks: AutoLink[] = [];
   const aliasUpdates: MappingResult["alias_updates"] = [];
+  const review: ReviewItem[] = [];
   let alreadyLinked = 0;
 
   for (const p of physicians) {
@@ -181,11 +219,27 @@ export function matchDirectory(directory: DirectoryDoctor[], physicians: Physici
       continue;
     }
     const d = dirByUid.get(canonical)!;
+    const sameName = normalizeName(p.full_name) === normalizeName(d.name);
+    if (canonical !== uid && !sameName) {
+      // The directory says this uid was collapsed into another doctor's, but the names differ
+      // (e.g. two doctors on a shared phone). Never move them; a person decides. They keep their
+      // link, and the canonical doctor stays free to be matched on its own name.
+      alreadyLinked += 1;
+      review.push({
+        uid: d.doctor_uid,
+        name: d.name,
+        reason: "alias_name_mismatch",
+        candidates: [{ physician_id: p.id, physician_name: p.full_name }],
+        disabled: d.disabled,
+      });
+      continue;
+    }
     handled.add(canonical);
     linkedUidsBefore.add(canonical);
     if (canonical !== uid) {
-      // Linked through an alias: move to the canonical uid, keep the old one as an alias.
-      const aliases = Array.from(new Set([...d.alias_uids, uid])).sort();
+      // Linked through an alias under a matching name: move to the canonical uid and keep the old
+      // one recorded as a (proven) alias.
+      const aliases = Array.from(new Set([...provenAliases(d), uid])).sort();
       autoLinks.push({
         uid: canonical,
         name: d.name,
@@ -198,9 +252,13 @@ export function matchDirectory(directory: DirectoryDoctor[], physicians: Physici
       continue;
     }
     alreadyLinked += 1;
+    if (!sameName) continue; // an existing link under a different name: leave it and its aliases alone
+    // Keep aliases already on record that the directory still lists, plus newly proven ones.
+    const kept = (p.cdmss_alias_uids ?? []).filter((a) => d.alias_uids.includes(a));
+    const proven = Array.from(new Set([...kept, ...provenAliases(d)])).sort();
     const have = [...(p.cdmss_alias_uids ?? [])].sort().join("|");
-    if (have !== d.alias_uids.join("|")) {
-      aliasUpdates.push({ physician_id: p.id, uid: canonical, alias_uids: d.alias_uids });
+    if (have !== proven.join("|")) {
+      aliasUpdates.push({ physician_id: p.id, uid: canonical, alias_uids: proven });
     }
   }
 
@@ -226,7 +284,6 @@ export function matchDirectory(directory: DirectoryDoctor[], physicians: Physici
     (dirByKey.get(k) ?? dirByKey.set(k, []).get(k)!).push(d);
   }
 
-  const review: ReviewItem[] = [];
   const unmatched: MappingResult["unmatched"] = [];
   const cand = (ps: PhysicianRow[]) =>
     ps.map((p) => ({ physician_id: p.id, physician_name: p.full_name })).sort((a, b) => a.physician_id.localeCompare(b.physician_id));
@@ -237,7 +294,7 @@ export function matchDirectory(directory: DirectoryDoctor[], physicians: Physici
       physician_id: p.id,
       physician_name: p.full_name,
       reason,
-      alias_uids: d.alias_uids,
+      alias_uids: provenAliases(d),
       disabled: d.disabled,
     });
 

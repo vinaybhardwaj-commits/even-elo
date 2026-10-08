@@ -190,22 +190,25 @@ async function hospitalId(code: string, cache: Map<string, string | null>): Prom
 
 async function physicianId(doctorUid: string, cache: Map<string, string | null>): Promise<string | null> {
   if (cache.has(doctorUid)) return cache.get(doctorUid) ?? null;
-  let rows: Array<{ id: string }>;
-  try {
-    // The export may still carry a retired duplicate uid; the mapping tool records those as aliases.
-    rows = (await sql`
-      SELECT id::text AS id FROM physicians
-      WHERE cdmss_doctor_uid = ${doctorUid} OR ${doctorUid} = ANY(cdmss_alias_uids)
-      ORDER BY (cdmss_doctor_uid = ${doctorUid}) DESC
-      LIMIT 1
-    `) as unknown as Array<{ id: string }>;
-  } catch {
-    // Migration 036 not applied yet: fall back to the canonical-uid lookup.
-    rows = (await sql`
-      SELECT id::text AS id FROM physicians WHERE cdmss_doctor_uid = ${doctorUid} LIMIT 1
-    `) as unknown as Array<{ id: string }>;
+  // Whoever holds the uid directly owns it. Always the first and strongest answer.
+  const direct = (await sql`
+    SELECT id::text AS id FROM physicians WHERE cdmss_doctor_uid = ${doctorUid} LIMIT 1
+  `) as unknown as Array<{ id: string }>;
+  let id: string | null = direct[0]?.id ?? null;
+  if (!id) {
+    // The export may still carry a retired duplicate uid. The mapping tool records an alias only
+    // when it is proven (matching name), so it is trusted here, but only when exactly ONE physician
+    // holds it: two holders means the alias is ambiguous and the audit stays unmapped rather than
+    // landing on the wrong doctor.
+    try {
+      const viaAlias = (await sql`
+        SELECT id::text AS id FROM physicians WHERE ${doctorUid} = ANY(cdmss_alias_uids) LIMIT 2
+      `) as unknown as Array<{ id: string }>;
+      id = viaAlias.length === 1 ? viaAlias[0].id : null;
+    } catch {
+      id = null; // migration 036 not applied yet: no alias lookup
+    }
   }
-  const id = rows[0]?.id ?? null;
   cache.set(doctorUid, id);
   return id;
 }
