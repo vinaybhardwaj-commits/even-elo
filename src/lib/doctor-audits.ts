@@ -45,6 +45,8 @@ export function normalizeNoteClass(raw: unknown): NoteClass {
 export function parseNoteClassQuery(raw: string | null | undefined): NoteClass | null {
   if (!raw || raw === "all") return null;
   if (raw === "opd" || raw === "discharge_summary" || raw === "ot") return raw;
+  // CDMSS accepts both spellings of the discharge class.
+  if (raw === "discharge") return "discharge_summary";
   return null;
 }
 
@@ -59,7 +61,7 @@ export interface DoctorAuditSignal {
   label?: string;
   response_required?: string;
   status?: string;
-  instances?: number | unknown[];
+  instances?: number;
   representative?: Record<string, unknown> | null;
   response?: unknown | null;
   routed?: boolean | null;

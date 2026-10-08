@@ -55,6 +55,7 @@ function signal(over: Partial<DoctorAuditSignal> = {}): DoctorAuditSignal {
     signal_id: "sig-1",
     doctor_uid: "cdmss-uid-must-never-ship",
     signal_type: "antibiotic_stewardship",
+    note_class: "discharge",
     label: "Antibiotic stewardship",
     importance: "high",
     response_required: "acknowledgment",

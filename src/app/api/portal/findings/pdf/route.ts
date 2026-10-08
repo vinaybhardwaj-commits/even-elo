@@ -85,15 +85,12 @@ export async function GET(request: NextRequest) {
     try {
       const upstream = await fetchDoctorAudits(uid, { window: 90, status: "all" });
       const list = Array.isArray(upstream?.signals) ? upstream.signals : [];
-      // A finding marked not routed never grants a file. When the new contract sends the findings
-      // as an instance list, the first routed one stands in for the representative.
-      signals = list.map((s) => {
-        const first = Array.isArray(s.instances)
-          ? (s.instances as Array<Record<string, unknown>>).find((i) => i && i.routed !== false)
-          : undefined;
-        const rep = (s.representative ?? first ?? null) as AuditPdfSignal["representative"];
-        return { ...s, representative: rep } as AuditPdfSignal;
-      }).filter((s) => (s as { routed?: unknown }).routed !== false && (s.representative as { routed?: unknown } | null)?.routed !== false);
+      // A finding marked not routed never grants a file.
+      signals = (list as unknown as AuditPdfSignal[]).filter(
+        (s) =>
+          (s as { routed?: unknown }).routed !== false &&
+          (s.representative as { routed?: unknown } | null)?.routed !== false,
+      );
     } catch {
       listFailed = true;
     }

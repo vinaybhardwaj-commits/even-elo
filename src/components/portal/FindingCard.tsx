@@ -212,6 +212,7 @@ export function FindingCard({
       {card.subject && (
         <p className="mt-2.5 text-sm font-medium break-words">{card.subject}</p>
       )}
+      {card.seen_in && <div className="mt-1 text-[12px] text-stone-500">{card.seen_in}</div>}
 
       {card.why_it_matters && (
         <div className="mt-2.5">
@@ -225,7 +226,7 @@ export function FindingCard({
       {hasEvidence && (
         <details className="mt-2.5 group">
           <summary className="cursor-pointer text-[12.5px] font-medium text-brand select-none">
-            Evidence
+            Basis
           </summary>
           <div className="mt-1.5 space-y-2">
             {card.excerpt && (

@@ -77,6 +77,8 @@ export interface DoctorCard {
   can_respond: boolean;
   response: CardResponse | null;
   view_note_href: string | null;
+  /** "Seen in 4 notes" when the finding recurs; plain words, never a raw count. */
+  seen_in: string | null;
   /** The doctor's own private reaction value, if any (live cards only). */
   reaction: string | null;
   can_react: boolean;
@@ -98,6 +100,7 @@ export const CARD_KEYS = [
   "can_respond",
   "response",
   "view_note_href",
+  "seen_in",
   "reaction",
   "can_react",
 ] as const;
@@ -250,6 +253,7 @@ export function sanitizeCard(raw: unknown): DoctorCard | null {
   const noteDate = str(o.note_date, 10);
   const excerpt = str(o.excerpt, EXCERPT_MAX * 2);
   const href = str(o.view_note_href, 300);
+  const seenIn = str(o.seen_in, 40);
 
   return {
     id,
@@ -267,6 +271,7 @@ export function sanitizeCard(raw: unknown): DoctorCard | null {
     response,
     // Only same-origin portal proxy hrefs are ever allowed through; never a CDMSS host.
     view_note_href: href && href.startsWith("/api/portal/findings/pdf?ref=") ? href : null,
+    seen_in: seenIn && /^Seen in \d{1,4} notes$/.test(seenIn) ? seenIn : null,
     reaction: str(o.reaction, 40),
     can_react: o.can_react === true,
   };
@@ -278,17 +283,15 @@ export interface LiveReaction {
   reaction: string;
 }
 
-/** The finding this card describes: the representative, or the first routed entry of an instance list. */
+/** The finding this card describes: the signal's `representative`. `instances` is only a count. */
 function representativeOf(s: Record<string, unknown>): Record<string, unknown> | null {
-  const rep = rec(s.representative);
-  if (rep) return rep;
-  if (Array.isArray(s.instances)) {
-    for (const i of s.instances) {
-      const r = rec(i);
-      if (r && r.routed !== false) return r;
-    }
-  }
-  return null;
+  return rec(s.representative);
+}
+
+/** PURE. "Seen in 4 notes" only when the finding recurs (more than one); otherwise null. */
+export function seenInText(count: unknown): string | null {
+  const n = typeof count === "number" ? Math.floor(count) : NaN;
+  return Number.isFinite(n) && n > 1 ? `Seen in ${n} notes` : null;
 }
 
 /**
@@ -305,11 +308,7 @@ export function toLiveCard(raw: unknown, reaction: LiveReaction | null = null): 
   // Per-finding visibility: a finding marked not routed is never shown, on either level.
   if (s.routed === false || rep?.routed === false) return null;
 
-  const count = Array.isArray(s.instances)
-    ? s.instances.length
-    : typeof s.instances === "number"
-      ? s.instances
-      : 0;
+  const count = typeof s.instances === "number" ? s.instances : 0;
   const attached = hasAttachedInstances(count);
   const ask = askOf(s.response_required);
   const response = readResponse(s.response);
@@ -317,11 +316,15 @@ export function toLiveCard(raw: unknown, reaction: LiveReaction | null = null): 
 
   const noteClass = cardNoteClass(pick("note_class", rep, s)) ?? "opd";
   const subject = rep ? scrubText(rep.subject, 600) : null;
-  const view = findingsCardPdfHref({
-    instances: count,
-    representative: { audit_id: rep ? str(rep.audit_id, 80) : null },
-    pdf_url: str(s.pdf_url, 600) ?? (rep ? str(rep.pdf_url, 600) : null),
-  });
+  // The CDMSS file endpoint has no OPD audits, so an OPD card offers no "View note".
+  const view =
+    noteClass === "opd"
+      ? null
+      : findingsCardPdfHref({
+          instances: count,
+          representative: { audit_id: rep ? str(rep.audit_id, 80) : null },
+          pdf_url: str(s.pdf_url, 600) ?? (rep ? str(rep.pdf_url, 600) : null),
+        });
 
   return sanitizeCard({
     id,
@@ -338,6 +341,7 @@ export function toLiveCard(raw: unknown, reaction: LiveReaction | null = null): 
     can_respond: ask !== null && status === "routed" && attached && response === null,
     response,
     view_note_href: view,
+    seen_in: seenInText(count),
     reaction: reaction?.reaction ?? null,
     can_react: true,
   });
@@ -414,6 +418,8 @@ export function toDocumentCard(row: DocumentFindingRow): DoctorCard | null {
   if (!view && isAuditUuid(row.source_audit_id)) view = portalFindingsPdfHref(row.source_audit_id);
   // Local rows only ever offer the portal proxy; a blob/CDN URL is not a doctor-session route.
   if (view && !view.startsWith("/api/portal/findings/pdf?ref=")) view = null;
+  // No file exists for OPD audits upstream, so none is offered.
+  if (cardNoteClass(row.note_class) === "opd" || cardNoteClass(row.doc_type) === "opd") view = null;
 
   const canRespond = response === null && !closed;
   return sanitizeCard({
@@ -431,6 +437,7 @@ export function toDocumentCard(row: DocumentFindingRow): DoctorCard | null {
     can_respond: canRespond,
     response,
     view_note_href: view,
+    seen_in: null,
     reaction: null,
     can_react: false,
   });

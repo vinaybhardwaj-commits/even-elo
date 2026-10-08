@@ -179,7 +179,29 @@ describe("the card allowlist: hostile upstream in, exact keys out", () => {
     });
     expect(card.ask).toBe("acknowledge");
     expect(card.can_respond).toBe(true);
-    expect(card.view_note_href).toBe(`/api/portal/findings/pdf?ref=${AUDIT}`);
+    // OPD audits have no file upstream, so an OPD card offers no "View note".
+    expect(card.view_note_href).toBeNull();
+    expect(card.seen_in).toBe("Seen in 2 notes");
+  });
+
+  it("View note is offered for discharge and OT cards only, never for OPD", () => {
+    const href = `/api/portal/findings/pdf?ref=${AUDIT}`;
+    expect(toLiveCard(live({ note_class: "opd" }))!.view_note_href).toBeNull();
+    expect(toLiveCard(live({ note_class: undefined }))!.view_note_href).toBeNull();
+    expect(toLiveCard(live({ note_class: "discharge" }))!.view_note_href).toBe(href);
+    expect(toLiveCard(live({ note_class: "discharge_summary" }))!.view_note_href).toBe(href);
+    expect(toLiveCard(live({ note_class: "ot" }))!.view_note_href).toBe(href);
+    expect(toDocumentCard(docRow({ note_class: "opd", doc_type: "opd" }))!.view_note_href).toBeNull();
+  });
+
+  it("recurrence is plain words above one and absent otherwise, never a number field", () => {
+    expect(toLiveCard(live({ instances: 4 }))!.seen_in).toBe("Seen in 4 notes");
+    expect(toLiveCard(live({ instances: 1 }))!.seen_in).toBeNull();
+    expect(toLiveCard(live({ instances: 0 }))!.seen_in).toBeNull();
+    expect(toLiveCard(live({ instances: [1, 2, 3] }))!.seen_in).toBeNull();
+    const text = JSON.stringify(toLiveCard(live({ instances: 4 })));
+    expect(text).not.toContain('"instances"');
+    expect(sanitizeCard({ ...toLiveCard(live())!, seen_in: "Seen in 4 notes; ref EHRC-AUD-2026-1" })!.seen_in).toBeNull();
   });
 
   it("scrubs pipeline sentences and ids from the rationale, and ids from the evidence excerpt", () => {
@@ -258,6 +280,7 @@ describe("contract fields are optional and per-finding visibility is enforced", 
     expect(card.note_date).toBe("2026-09-19");
     expect(card.citations).toHaveLength(1);
     expect(contextLine(card)).toBe("OPD note · 19 Sep 2026");
+    expect(card.view_note_href).toBeNull();
   });
 
   it("a finding whose routed flag is false is never shown, at either level", () => {
@@ -266,19 +289,81 @@ describe("contract fields are optional and per-finding visibility is enforced", 
     expect(toLiveCardsPayload({ signals: [live({ routed: false }), live({ signal_id: "sig-2" })] }).cards.map((c) => c.id)).toEqual(["sig-2"]);
   });
 
-  it("when the contract sends an instance list, the first routed instance is the card's finding", () => {
+  it("the finding is read from `representative` only; an instances array is not a source", () => {
     const card = toLiveCard(
       live({
         representative: null,
-        instances: [
-          { routed: false, subject: "Not for the doctor", audit_id: AUDIT },
-          { routed: true, subject: "Routed one", audit_id: AUDIT, patient: { name: "A B" } },
-        ],
+        instances: [{ routed: true, subject: "Smuggled", audit_id: AUDIT }],
       }),
     )!;
-    expect(card.subject).toBe("Routed one");
-    expect(card.patient?.name).toBe("A B");
-    expect(JSON.stringify(card)).not.toContain("Not for the doctor");
+    expect(card.subject).toBe("");
+    expect(JSON.stringify(card)).not.toContain("Smuggled");
+  });
+
+  it("the C1 payload shape: reference, uid and sla_due_at never pass; null patient fields collapse cleanly", () => {
+    const c1 = {
+      reference: "EHRC-AUD-2026-0007",
+      signal_id: "sig-c1",
+      doctor_uid: "uid-c1",
+      signal_type: "incomplete_dosing",
+      note_class: "discharge",
+      label: "Incomplete dosing",
+      response_required: "explanation",
+      status: "routed",
+      overdue: false,
+      sla_due_at: "2026-10-12T00:00:00Z",
+      routed_at: "2026-10-05T00:00:00Z",
+      instances: 4,
+      window: { from: "2026-09-01", to: "2026-10-01" },
+      response: null,
+      representative: {
+        audit_id: AUDIT,
+        routed: true,
+        note_class: "discharge",
+        note_date: "2026-10-02",
+        subject: "Discharge medicines lack doses",
+        verdict: "Needs attention",
+        rationale: "Doses let the patient follow the plan.",
+        evidence_excerpt: "Guideline: every discharge medicine lists dose, route and frequency.",
+        citations: [{ title: "Discharge checklist", url: null }],
+        patient: { name: null, age: null, sex: null, ip_number: "IP-77", uhid: null },
+      },
+    };
+    const card = toLiveCard(c1)!;
+    const text = JSON.stringify(card);
+    for (const banned of ["EHRC-AUD", "uid-c1", "sla_due_at", "2026-10-12", "reference"]) {
+      expect(text).not.toContain(banned);
+    }
+    expect(contextLine(card)).toBe("Discharge summary · 2 Oct 2026 · IP IP-77");
+    expect(card.seen_in).toBe("Seen in 4 notes");
+    expect(card.ask).toBe("explain");
+    expect(card.view_note_href).toBe(`/api/portal/findings/pdf?ref=${AUDIT}`);
+  });
+
+  it("the context line collapses with no dangling separators or empty labels", () => {
+    const base = toLiveCard(live({ note_class: "ot" }))!;
+    const none = { ...base, patient: null };
+    expect(contextLine(none)).toBe("OT note · 30 Sep 2026");
+    const uhidOnly = { ...base, patient: { name: null, age: null, sex: null, ip_number: null, uhid: "EH77" } };
+    expect(contextLine(uhidOnly)).toBe("OT note · 30 Sep 2026 · UHID EH77");
+    const noDate = { ...base, note_date: null, patient: uhidOnly.patient };
+    expect(contextLine(noDate)).toBe("OT note · UHID EH77");
+    const nameOnly = { ...base, patient: { name: "A B", age: null, sex: null, ip_number: null, uhid: null } };
+    expect(contextLine(nameOnly)).toBe("OT note · 30 Sep 2026 · A B");
+    const ageOnly = { ...base, patient: { name: null, age: "54", sex: null, ip_number: null, uhid: null } };
+    expect(contextLine(ageOnly)).toBe("OT note · 30 Sep 2026 · 54");
+    for (const c of [none, uhidOnly, noDate, nameOnly, ageOnly]) {
+      expect(contextLine(c)).not.toMatch(/·\s*·|^\s*·|·\s*$|Patient/);
+    }
+    expect(contextLine({ ...base, note_type: null, note_date: null, patient: null })).toBe("");
+  });
+
+  it("both spellings of the discharge class mean the same everywhere", () => {
+    expect(toLiveCard(live({ note_class: "discharge" }))!.note_type).toBe("Discharge summary");
+    expect(toLiveCard(live({ note_class: "discharge_summary" }))!.note_type).toBe("Discharge summary");
+    expect(toLiveCard(live({ note_class: "opd", representative: { ...h.hostileSignal.representative, note_class: "discharge" } }))!.note_type).toBe("Discharge summary");
+    expect(toDocumentCard(docRow({ note_class: "discharge_summary" }))!.note_type).toBe("Discharge summary");
+    expect(toDocumentCard(docRow({ note_class: "discharge" }))!.note_type).toBe("Discharge summary");
   });
 
   it("new contract fields on the signal level are used when the representative lacks them", () => {
@@ -486,6 +571,19 @@ describe("the doctor-facing components print no pipeline wording", () => {
       expect(src).not.toMatch(/\bRMO\b|\bCDMSS\b/);
     });
   }
+
+  it("the collapsed section is headed Basis (guideline points), not Evidence", () => {
+    const src = code("src/components/portal/FindingCard.tsx");
+    expect(src).toContain("Basis");
+    expect(src).not.toMatch(/>\s*Evidence\s*</);
+  });
+
+  it("the filter and the server accept both discharge spellings", async () => {
+    const { parseNoteClassQuery, normalizeNoteClass } = await import("@/lib/doctor-audits");
+    expect(parseNoteClassQuery("discharge")).toBe("discharge_summary");
+    expect(parseNoteClassQuery("discharge_summary")).toBe("discharge_summary");
+    expect(normalizeNoteClass("discharge")).toBe("discharge_summary");
+  });
 
   it("the card component never prints the opaque id", () => {
     const src = code("src/components/portal/FindingCard.tsx");
