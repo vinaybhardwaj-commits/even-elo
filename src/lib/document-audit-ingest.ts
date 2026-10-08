@@ -27,6 +27,7 @@
  * audit_id, finding_ref, reference EHRC-AUD-YYYY-NNNN.
  */
 
+import { createHash } from "node:crypto";
 import { normalizeDocType, normalizeSeverity, type DocType, type FindingSeverity } from "@/lib/document-audits";
 
 export const AUDIT_REF_RE = /^[A-Z]{2,8}-AUD-\d{4}-\d{3,6}$/;
@@ -42,6 +43,23 @@ export type SkipReason =
   | "unknown_doc_type"
   | "opd_not_stage4";
 
+/** Patient context the doctor sees on a card. Every field nullable; never fabricated. */
+export interface FindingPatient {
+  name: string | null;
+  age: string | null;
+  sex: string | null;
+  ip_number: string | null;
+  uhid: string | null;
+}
+
+export interface FindingCitation {
+  title: string;
+  url: string | null;
+}
+
+/** The excerpt cap from the shared contract. */
+export const EVIDENCE_EXCERPT_MAX = 600;
+
 export interface PlannedFinding {
   finding_ref: string;
   finding_label: string;
@@ -52,6 +70,14 @@ export interface PlannedFinding {
   note_class: string | null;
   signal_reference: string | null;
   recurrence_count: number;
+  /** CDMSS `routed`: true/false when the export says, null when it does not (older payloads). */
+  routed: boolean | null;
+  note_date: string | null;
+  evidence_excerpt: string | null;
+  citations: FindingCitation[];
+  patient: FindingPatient | null;
+  /** SHA-256 over every content field above. A changed hash means CDMSS changed the finding. */
+  content_hash: string;
 }
 
 export interface PlannedAudit {
@@ -72,6 +98,12 @@ export interface PlannedAudit {
 export interface ExistingAuditKey {
   external_ref: string;
   finding_refs: ReadonlyArray<string | null>;
+  /**
+   * finding_ref -> stored content_hash (null for rows written before migration 035). When present,
+   * an audit is only "already written" if every planned finding's hash matches too, so a content
+   * change in CDMSS is not skipped.
+   */
+  finding_hashes?: Readonly<Record<string, string | null>> | null;
 }
 
 export interface RoutedSignal {
@@ -110,6 +142,10 @@ export interface LocalFindingKey {
   queue_item_ref: string | null;
   signal_type: string | null;
   signal_reference: string | null;
+  /** CDMSS's own per-finding verdict from the last ingest: false vetoes a signal-key match. */
+  cdmss_routed?: boolean | null;
+  portal_visible?: boolean;
+  response_owner?: string | null;
 }
 
 export interface RouteHit {
@@ -258,17 +294,81 @@ function externalRefFor(row: Record<string, unknown>, doc: DocType): { ref: stri
   return { ref: null, auditId };
 }
 
+/**
+ * The clinical "why it matters" text. Rationale only: the old fallback to `evidence` put the note
+ * excerpt (or, historically, engine text) in the rationale slot. Evidence has its own field now.
+ */
 function findingBody(row: Record<string, unknown>): string | null {
   const rationale = str(row.rationale) || str(row.finding_body) || str(row.body);
   if (rationale) return clip(rationale, 8000);
-  if (typeof row.evidence === "string" && row.evidence.trim()) return clip(row.evidence.trim(), 8000);
   return null;
+}
+
+/** Note text that triggered the finding, trimmed to the contract cap. `evidence` is the legacy name. */
+export function evidenceExcerptOf(row: Record<string, unknown>): string | null {
+  const raw = str(row.evidence_excerpt) || str(row.evidence);
+  return raw ? clip(raw, EVIDENCE_EXCERPT_MAX) : null;
+}
+
+function scalarText(v: unknown, max: number): string | null {
+  if (typeof v === "number" && Number.isFinite(v)) return String(v);
+  const t = str(v);
+  return t ? clip(t, max) : null;
+}
+
+/** Patient block from the export. Anything that is not an object, or has no usable field, is null. */
+export function parsePatient(v: unknown): FindingPatient | null {
+  const o = asRecord(v);
+  if (!o) return null;
+  const patient: FindingPatient = {
+    name: scalarText(o.name, 120),
+    age: scalarText(o.age, 20),
+    sex: scalarText(o.sex, 20),
+    ip_number: scalarText(o.ip_number, 40),
+    uhid: scalarText(o.uhid, 40),
+  };
+  return Object.values(patient).some((x) => x !== null) ? patient : null;
+}
+
+/** Citations as {title, url|null}. A citation without a title is dropped; a non-http url becomes null. */
+export function parseCitations(v: unknown): FindingCitation[] {
+  const out: FindingCitation[] = [];
+  const seen = new Set<string>();
+  for (const item of asArray(v)) {
+    const row = typeof item === "string" ? { title: item } : asRecord(item);
+    if (!row) continue;
+    const title = str(row.title);
+    if (!title) continue;
+    const rawUrl = str(row.url);
+    const url = rawUrl && /^https?:\/\//i.test(rawUrl) ? clip(rawUrl, 1000) : null;
+    const key = `${title}|${url ?? ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ title: clip(title, 300), url });
+    if (out.length >= 10) break;
+  }
+  return out;
+}
+
+function boolOrNull(v: unknown): boolean | null {
+  return v === true ? true : v === false ? false : null;
+}
+
+function dayOrNull(v: unknown): string | null {
+  const raw = str(v);
+  const m = raw ? raw.match(/^(\d{4}-\d{2}-\d{2})/) : null;
+  return m ? m[1] : null;
 }
 
 function planFinding(
   raw: unknown,
   index: number,
-  audit: { noteClass: string | null; doctorUid: string },
+  audit: {
+    noteClass: string | null;
+    doctorUid: string;
+    noteDate: string | null;
+    patient: FindingPatient | null;
+  },
 ): PlannedFinding {
   const row = asRecord(raw) ?? {};
   const signalType = str(row.signal_type);
@@ -278,7 +378,7 @@ function planFinding(
   const findingRef = clip(providedRef || `synth:${signalType || "finding"}:${subject || String(index)}`, 200);
   const recurrenceRaw = Number(row.recurrence_count ?? row.instances ?? 1);
   const recurrence = Number.isFinite(recurrenceRaw) && recurrenceRaw >= 1 ? Math.floor(recurrenceRaw) : 1;
-  return {
+  const planned = {
     finding_ref: findingRef,
     finding_label: clip(subject || "Documentation finding", 500),
     finding_body: findingBody(row),
@@ -293,7 +393,36 @@ function planFinding(
     note_class: noteClass,
     signal_reference: preserveAuditReference(row.reference) || preserveAuditReference(row.signal_reference),
     recurrence_count: recurrence,
+    routed: boolOrNull(row.routed),
+    note_date: dayOrNull(row.note_date) ?? audit.noteDate,
+    evidence_excerpt: evidenceExcerptOf(row),
+    citations: parseCitations(row.citations),
+    patient: parsePatient(row.patient) ?? audit.patient,
   };
+  return { ...planned, content_hash: findingContentHash(planned) };
+}
+
+/** PURE. Stable digest of every content field, so ingest can tell "CDMSS changed this" from "same". */
+export function findingContentHash(f: Omit<PlannedFinding, "content_hash">): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify([
+        f.finding_label,
+        f.finding_body,
+        f.severity,
+        f.signal_type,
+        f.queue_item_ref,
+        f.note_class,
+        f.signal_reference,
+        f.recurrence_count,
+        f.routed,
+        f.note_date,
+        f.evidence_excerpt,
+        f.citations,
+        f.patient,
+      ]),
+    )
+    .digest("hex");
 }
 
 function isLiveRoute(status: unknown): boolean {
@@ -420,7 +549,14 @@ export function planDocumentAuditIngest(payload: unknown): IngestPlan | IngestPl
       source_audit_id: auditId,
       pdf_url: explicitPdf,
       pdf_probe_id: probeAllowed ? auditId : null,
-      findings: findingsRaw.map((f, i) => planFinding(f, i, { noteClass, doctorUid })),
+      findings: findingsRaw.map((f, i) =>
+        planFinding(f, i, {
+          noteClass,
+          doctorUid,
+          noteDate: noteDateOf(row),
+          patient: parsePatient(row.patient),
+        }),
+      ),
     });
   }
 
@@ -432,8 +568,11 @@ export function planDocumentAuditIngest(payload: unknown): IngestPlan | IngestPl
 }
 
 /**
- * A planned audit is already written only when its stable audit key matches and
- * every planned stable finding key is present. Extra local findings are retained.
+ * A planned audit is already written only when its stable audit key matches, every planned stable
+ * finding key is present, AND (when the stored hashes are supplied) every finding's content hash
+ * is unchanged. Extra local findings are retained. A changed hash, or a row written before
+ * content hashing existed (null hash), is not "already written": it is re-upserted so CDMSS
+ * content changes reach the doctor.
  */
 export function hasAllPlannedFindings(
   audit: Pick<PlannedAudit, "external_ref" | "findings">,
@@ -441,7 +580,10 @@ export function hasAllPlannedFindings(
 ): boolean {
   if (!existing || existing.external_ref !== audit.external_ref) return false;
   const existingRefs = new Set(existing.finding_refs.filter((ref): ref is string => !!ref));
-  return audit.findings.every((finding) => existingRefs.has(finding.finding_ref));
+  if (!audit.findings.every((finding) => existingRefs.has(finding.finding_ref))) return false;
+  const hashes = existing.finding_hashes;
+  if (!hashes) return true;
+  return audit.findings.every((finding) => hashes[finding.finding_ref] === finding.content_hash);
 }
 
 /** Probe only when the export has no audit PDF and the local row does not either. */
@@ -511,6 +653,9 @@ export function matchRoutedFindings(locals: LocalFindingKey[], signals: RoutedSi
   const hits: RouteHit[] = [];
   const seen = new Set<string>();
   for (const finding of locals) {
+    // CDMSS's own per-finding verdict wins: a finding it marked not-routed is never opened to the
+    // doctor by a signal-key match on its type.
+    if (finding.cdmss_routed === false) continue;
     const signal = signals.find((s) => signalMatchesFinding(finding, s));
     if (!signal || seen.has(finding.finding_id)) continue;
     seen.add(finding.finding_id);
@@ -525,6 +670,19 @@ export function matchRoutedFindings(locals: LocalFindingKey[], signals: RoutedSi
     });
   }
   return hits;
+}
+
+/** PURE. True when a route hit would change nothing the row already has (skip the write). */
+export function isRouteHitCurrent(local: LocalFindingKey | undefined, hit: RouteHit): boolean {
+  if (!local) return false;
+  return (
+    local.portal_visible === true &&
+    local.response_owner === "pipe_a" &&
+    (hit.signal_reference ?? null) === (local.signal_reference ?? null) &&
+    (hit.queue_item_ref ?? null) === (local.queue_item_ref ?? null) &&
+    (hit.note_class ?? null) === (local.note_class ?? null) &&
+    (hit.signal_type ?? null) === (local.signal_type ?? null)
+  );
 }
 
 export function countSkips(skips: Array<{ reason: SkipReason }>): Record<SkipReason, number> {

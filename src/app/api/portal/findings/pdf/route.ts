@@ -51,7 +51,7 @@ async function physicianHasLocalAuditPdf(physicianId: string, auditId: string): 
       FROM document_audit_findings f
       JOIN document_audits da ON da.id = f.audit_id
       WHERE f.physician_id = ${physicianId}::uuid
-        AND (f.portal_visible = true OR da.triage_routed_at IS NOT NULL)
+        AND f.portal_visible = true
         AND (
           lower(da.source_audit_id) = lower(${auditId})
           OR position(lower(${auditId}) in lower(coalesce(da.cdmss_pdf_url, ''))) > 0

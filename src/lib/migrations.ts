@@ -1471,5 +1471,23 @@ export const MIGRATIONS: Migration[] = [
         ON portal_login_failures (attempted_at);
     `,
   },
+  {
+    id: "035_document_audit_finding_card_fields",
+    description:
+      "F4/F5: per-finding card content from the CDMSS export (CDMSS routed verdict, note date, evidence excerpt, citations, patient context) and a content hash so ingest can refresh a finding when CDMSS changes it.",
+    sql: `
+      ALTER TABLE document_audit_findings
+        ADD COLUMN IF NOT EXISTS cdmss_routed boolean,
+        ADD COLUMN IF NOT EXISTS note_date date,
+        ADD COLUMN IF NOT EXISTS evidence_excerpt text,
+        ADD COLUMN IF NOT EXISTS citations_json jsonb,
+        ADD COLUMN IF NOT EXISTS patient_json jsonb,
+        ADD COLUMN IF NOT EXISTS content_hash text;
+
+      CREATE INDEX IF NOT EXISTS idx_daf_portal_visible
+        ON document_audit_findings (physician_id)
+        WHERE portal_visible = true;
+    `,
+  },
 ];
 
