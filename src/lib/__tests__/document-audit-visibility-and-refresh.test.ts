@@ -382,6 +382,14 @@ describe("runDocumentAuditIngest: refresh, preserve, and time (F5)", () => {
     expect(routed.values.some((v) => typeof v === "string" && v.includes("IP-1001"))).toBe(true);
   });
 
+  it("resolves the audit's doctor through a recorded alias uid as well as the canonical one", async () => {
+    respondWith(exportPayload());
+    await runDocumentAuditIngest();
+    const lookup = h.calls.find((c) => c.q.includes("FROM physicians"));
+    expect(lookup!.q).toContain("ANY(cdmss_alias_uids)");
+    expect(lookup!.values).toContain("DOC-1");
+  });
+
   it("an export that times out leaves a PARTIAL_RUN marker, marks the run not-successful, and throws", async () => {
     const err = new DOMException("The operation was aborted due to timeout", "TimeoutError");
     fetchMock.mockRejectedValue(err);

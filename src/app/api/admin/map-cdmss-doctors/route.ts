@@ -1,76 +1,132 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { sql } from "@/lib/db";
-import { getSeries, signalKey } from "@/lib/gov-signals";
+import { fetchDoctorDirectory } from "@/lib/cdmss-doctor-directory";
+import { matchDirectory, type MappingResult, type PhysicianRow } from "@/lib/cdmss-doctor-mapping";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /**
- * Populate physicians.cdmss_doctor_uid (PRD §6.5) by exact normalized-name
- * match against every affected[] doctor seen in the snapshot store — the
- * metabase_doctor_email pattern. uid is the stable key (v1.1 contract §3);
- * names can drift cosmetically, hence match-once-then-persist.
- * GET = preview, POST = apply unambiguous matches. super_admin only.
+ * Populate physicians.cdmss_doctor_uid (PRD §6.5) by matching EVERY active physician against the
+ * canonical CDMSS roster (GET /api/governance/doctor-directory). F1 rewrite: the old version only
+ * considered doctors who appeared in an OPD cohort signal's top-5 `affected[]`.
+ *
+ *   GET            dry run: before/after coverage, what would be linked, the review list. Writes nothing.
+ *   POST           apply the AUTO links only (exact-unique name, or name + mobile last-4).
+ *   POST ?dry_run=1  identical to GET (so a client can rehearse the exact request it will send).
+ *
+ * Weaker matches (ambiguous, mobile mismatch, partial name) are returned as `review` for governance
+ * staff to resolve; they are never applied and never doctor-facing. super_admin only.
  */
-function norm(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/^dr\.?\s+/i, "")
-    .replace(/[^a-z ]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
+
+async function loadPhysicians(): Promise<PhysicianRow[]> {
+  return (await sql`
+    SELECT id::text AS id, full_name, phone, cdmss_doctor_uid, cdmss_alias_uids
+    FROM physicians WHERE current_status = 'active'`) as unknown as PhysicianRow[];
 }
 
-async function compute() {
-  const series = await getSeries(120);
-  const seen = new Map<string, string>(); // uid -> latest name
-  for (const row of series) {
-    for (const s of row.payload.report?.signals ?? []) {
-      void signalKey(s);
-      for (const a of s.affected ?? []) if (a.uid) seen.set(a.uid, a.name);
-    }
-  }
-  const phys = (await sql`
-    SELECT id, full_name, cdmss_doctor_uid FROM physicians WHERE current_status='active'`) as unknown as Array<{
-    id: string;
-    full_name: string;
-    cdmss_doctor_uid: string | null;
-  }>;
-  const byNorm = new Map<string, Array<{ id: string; full_name: string }>>();
-  for (const p of phys) {
-    const k = norm(p.full_name);
-    if (!byNorm.has(k)) byNorm.set(k, []);
-    byNorm.get(k)!.push({ id: p.id, full_name: p.full_name });
-  }
-  const alreadyMapped = new Set(phys.filter((p) => p.cdmss_doctor_uid).map((p) => p.cdmss_doctor_uid as string));
-  const matches: Array<{ uid: string; name: string; physician_id: string; physician_name: string }> = [];
-  const ambiguous: Array<{ uid: string; name: string; candidates: number }> = [];
-  const unmatched: Array<{ uid: string; name: string }> = [];
-  for (const [uid, name] of Array.from(seen.entries())) {
-    if (alreadyMapped.has(uid)) continue;
-    const cands = byNorm.get(norm(name)) ?? [];
-    if (cands.length === 1) matches.push({ uid, name, physician_id: cands[0].id, physician_name: cands[0].full_name });
-    else if (cands.length > 1) ambiguous.push({ uid, name, candidates: cands.length });
-    else unmatched.push({ uid, name });
-  }
-  return { seen: seen.size, alreadyMapped: alreadyMapped.size, matches, ambiguous, unmatched };
+async function compute(): Promise<MappingResult & { directory_count: number }> {
+  const [directory, physicians] = await Promise.all([fetchDoctorDirectory(), loadPhysicians()]);
+  return { ...matchDirectory(directory, physicians), directory_count: directory.length };
+}
+
+function view(r: MappingResult & { directory_count: number }) {
+  return {
+    directory_count: r.directory_count,
+    coverage: r.coverage,
+    already_linked: r.already_linked,
+    would_link: r.auto,
+    alias_updates: r.alias_updates,
+    review: r.review,
+    unmatched: r.unmatched,
+  };
+}
+
+async function forbidden() {
+  const u = await getCurrentUser();
+  return !u || !u.is_super_admin;
 }
 
 export async function GET() {
-  const u = await getCurrentUser();
-  if (!u || !u.is_super_admin) return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
-  return NextResponse.json({ ok: true, mode: "preview", ...(await compute()) });
+  if (await forbidden()) return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+  try {
+    return NextResponse.json({ ok: true, mode: "dry_run", ...view(await compute()) });
+  } catch (e) {
+    return NextResponse.json(
+      { ok: false, error: "directory_unavailable", message: e instanceof Error ? e.message : "failed" },
+      { status: 502 },
+    );
+  }
 }
 
-export async function POST() {
-  const u = await getCurrentUser();
-  if (!u || !u.is_super_admin) return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
-  const r = await compute();
-  let applied = 0;
-  for (const m of r.matches) {
-    await sql`UPDATE physicians SET cdmss_doctor_uid=${m.uid} WHERE id=${m.physician_id}::uuid AND cdmss_doctor_uid IS NULL`;
-    applied++;
+export async function POST(req: NextRequest) {
+  if (await forbidden()) return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+  let r: MappingResult & { directory_count: number };
+  try {
+    r = await compute();
+  } catch (e) {
+    return NextResponse.json(
+      { ok: false, error: "directory_unavailable", message: e instanceof Error ? e.message : "failed" },
+      { status: 502 },
+    );
   }
-  return NextResponse.json({ ok: true, mode: "apply", applied, ambiguous: r.ambiguous, unmatched: r.unmatched });
+  if (req.nextUrl.searchParams.get("dry_run") === "1") {
+    return NextResponse.json({ ok: true, mode: "dry_run", ...view(r) });
+  }
+
+  let applied = 0;
+  const failed: Array<{ uid: string; physician_id: string; error: string }> = [];
+  for (const m of r.auto) {
+    try {
+      // A physician is only written when unlinked, or when moving from one of this doctor's aliases
+      // to the canonical uid. Never overwrites a link to some other uid.
+      const selfAndAliases = [m.uid, ...m.alias_uids];
+      const rows = (await sql`
+        UPDATE physicians
+        SET cdmss_doctor_uid = ${m.uid}, cdmss_alias_uids = ${m.alias_uids}::text[]
+        WHERE id = ${m.physician_id}::uuid
+          AND (cdmss_doctor_uid IS NULL OR cdmss_doctor_uid = ANY(${selfAndAliases}::text[]))
+        RETURNING id`) as unknown as Array<{ id: string }>;
+      if (rows.length > 0) applied += 1;
+      else failed.push({ uid: m.uid, physician_id: m.physician_id, error: "physician_changed_since_preview" });
+    } catch (e) {
+      failed.push({ uid: m.uid, physician_id: m.physician_id, error: e instanceof Error ? e.message.slice(0, 120) : "update_failed" });
+    }
+  }
+  let aliasesUpdated = 0;
+  for (const u of r.alias_updates) {
+    try {
+      await sql`UPDATE physicians SET cdmss_alias_uids = ${u.alias_uids}::text[]
+                WHERE id = ${u.physician_id}::uuid AND cdmss_doctor_uid = ${u.uid}`;
+      aliasesUpdated += 1;
+    } catch {
+      // Best effort: an alias list that did not update is retried on the next run.
+    }
+  }
+  try {
+    await sql`INSERT INTO audit_log_v2 (action, entity_type, entity_id, after_json)
+              VALUES ('cdmss_mapping_applied', 'physicians', 'bulk',
+              ${JSON.stringify({
+                applied,
+                failed: failed.length,
+                aliases_updated: aliasesUpdated,
+                review: r.review.length,
+                unmatched: r.unmatched.length,
+                coverage_before: r.coverage.before,
+                coverage_after: r.coverage.after,
+              })}::jsonb)`;
+  } catch {
+    // The links are already written; losing the log row costs nothing else.
+  }
+  return NextResponse.json({
+    ok: true,
+    mode: "apply",
+    applied,
+    failed,
+    aliases_updated: aliasesUpdated,
+    coverage: r.coverage,
+    review: r.review,
+    unmatched: r.unmatched,
+  });
 }

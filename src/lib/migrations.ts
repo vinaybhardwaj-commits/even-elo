@@ -1489,5 +1489,14 @@ export const MIGRATIONS: Migration[] = [
         WHERE portal_visible = true;
     `,
   },
+  {
+    id: "036_physician_cdmss_alias_uids",
+    description:
+      "F1: duplicate CDMSS identities collapsed into one canonical doctor uid. The physician keeps the canonical uid in cdmss_doctor_uid and the retired duplicates here, so audits that still carry an old uid resolve to the same physician.",
+    sql: `
+      ALTER TABLE physicians
+        ADD COLUMN IF NOT EXISTS cdmss_alias_uids text[];
+    `,
+  },
 ];
 

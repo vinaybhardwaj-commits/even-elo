@@ -190,9 +190,21 @@ async function hospitalId(code: string, cache: Map<string, string | null>): Prom
 
 async function physicianId(doctorUid: string, cache: Map<string, string | null>): Promise<string | null> {
   if (cache.has(doctorUid)) return cache.get(doctorUid) ?? null;
-  const rows = (await sql`
-    SELECT id::text AS id FROM physicians WHERE cdmss_doctor_uid = ${doctorUid} LIMIT 1
-  `) as unknown as Array<{ id: string }>;
+  let rows: Array<{ id: string }>;
+  try {
+    // The export may still carry a retired duplicate uid; the mapping tool records those as aliases.
+    rows = (await sql`
+      SELECT id::text AS id FROM physicians
+      WHERE cdmss_doctor_uid = ${doctorUid} OR ${doctorUid} = ANY(cdmss_alias_uids)
+      ORDER BY (cdmss_doctor_uid = ${doctorUid}) DESC
+      LIMIT 1
+    `) as unknown as Array<{ id: string }>;
+  } catch {
+    // Migration 036 not applied yet: fall back to the canonical-uid lookup.
+    rows = (await sql`
+      SELECT id::text AS id FROM physicians WHERE cdmss_doctor_uid = ${doctorUid} LIMIT 1
+    `) as unknown as Array<{ id: string }>;
+  }
   const id = rows[0]?.id ?? null;
   cache.set(doctorUid, id);
   return id;
