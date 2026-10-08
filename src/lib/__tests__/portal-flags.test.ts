@@ -111,14 +111,14 @@ describe("flag helpers", () => {
 describe("A2: flags are enforced in the API routes, not only the UI", () => {
   it("PORTAL_FINDINGS off: findings, document-audits and the PDF proxy answer 404 and do no work", async () => {
     setFlags({});
-    for (const res of [
-      await findingsGET(get("/api/portal/findings")),
-      await docsGET(),
-      await pdfGET(get(`/api/portal/findings/pdf?ref=${AUDIT}`)),
-    ]) {
+    for (const res of [await findingsGET(get("/api/portal/findings")), await docsGET()]) {
       expect(res.status).toBe(404);
       expect(await res.json()).toEqual({ ok: false, error: "disabled" });
     }
+    // The PDF route opens in a browser tab, so it answers a plain page rather than JSON.
+    const pdf = await pdfGET(get(`/api/portal/findings/pdf?ref=${AUDIT}`));
+    expect(pdf.status).toBe(404);
+    expect(await pdf.text()).toContain("isn't available right now");
     expect(fetchDoctorAudits).not.toHaveBeenCalled();
     expect(loadPortalRoutedFindings).not.toHaveBeenCalled();
   });

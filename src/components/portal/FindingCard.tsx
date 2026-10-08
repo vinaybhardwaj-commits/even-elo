@@ -131,13 +131,13 @@ function ResponseControls({
       const j = (await r.json()) as ActionResult;
       if (j.ok) {
         // Stay busy: this block is about to be replaced by the recorded response either way.
-        if (j.card) onReplace(j.card);
+        if (j.card && j.card.response) onReplace(j.card);
         else onChanged();
         return;
       }
       setBusy(false);
       setErr(sentence(j));
-      if (j.error === "already_responded" || j.error === "closed") onChanged();
+      if (j.error === "already_responded" || j.error === "closed" || j.error === "on_live_list") onChanged();
     } catch {
       setBusy(false);
       setErr(friendlyError("unavailable"));

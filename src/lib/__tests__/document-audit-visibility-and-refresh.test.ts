@@ -18,6 +18,8 @@ const h = vi.hoisted(() => ({
   /** Who holds the doctor uid directly (null = nobody), and who lists it as an alias. */
   directHolder: "00000000-0000-4000-8000-0000000000aa" as string | null,
   aliasHolders: [] as Array<{ id: string }>,
+  /** What the "why was nothing updated" lookup in recordDoctorFindingResponse finds. */
+  respondLookup: [] as Array<Record<string, unknown>>,
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -26,6 +28,7 @@ vi.mock("@/lib/db", () => ({
     h.calls.push({ q, values });
     if (q.includes("FROM document_audits da") && q.includes("ANY(")) return h.existing;
     if (q.includes("FROM hospitals")) return [{ id: "00000000-0000-4000-8000-000000000001" }];
+    if (q.includes("SELECT status, response_owner")) return h.respondLookup;
     if (q.includes("FROM physicians")) {
       if (q.includes("ANY(cdmss_alias_uids)")) return h.aliasHolders;
       return h.directHolder ? [{ id: h.directHolder }] : [];
@@ -479,5 +482,36 @@ describe("migration 035", () => {
     for (const col of ["cdmss_routed boolean", "note_date date", "evidence_excerpt text", "citations_json jsonb", "patient_json jsonb", "content_hash text"]) {
       expect(block).toContain(`ADD COLUMN IF NOT EXISTS ${col}`);
     }
+  });
+});
+
+describe("recordDoctorFindingResponse refuses what the card would not offer", () => {
+  const ask = () =>
+    recordDoctorFindingResponse({ findingId: "f1", physicianId: "p1", verb: "agree", comment: null });
+  afterEach(() => {
+    h.respondLookup = [];
+  });
+
+  it("the UPDATE itself excludes answered, closed and live-list findings", async () => {
+    h.calls.length = 0;
+    await ask();
+    const update = h.calls.find((c) => c.q.includes("UPDATE document_audit_findings"))!;
+    expect(update.q).toContain("doctor_responded_at IS NULL");
+    expect(update.q).toContain("status NOT IN ('remediated', 'escalated')");
+    expect(update.q).toContain("response_owner = 'local'");
+    expect(update.q).toContain("portal_visible = true");
+  });
+
+  it("names the reason for a refusal", async () => {
+    h.respondLookup = [{ status: "open", response_owner: "local", signal_reference: null, doctor_responded_at: "2026-10-03T00:00:00Z" }];
+    expect(await ask()).toEqual({ ok: false, error: "already_responded" });
+    h.respondLookup = [{ status: "remediated", response_owner: "local", signal_reference: null, doctor_responded_at: null }];
+    expect(await ask()).toEqual({ ok: false, error: "closed" });
+    h.respondLookup = [{ status: "open", response_owner: "pipe_a", signal_reference: "X", doctor_responded_at: null }];
+    expect(await ask()).toEqual({ ok: false, error: "on_live_list" });
+    h.respondLookup = [{ status: "open", response_owner: null, signal_reference: "EHRC-AUD-2026-0001", doctor_responded_at: null }];
+    expect(await ask()).toEqual({ ok: false, error: "on_live_list" });
+    h.respondLookup = []; // not this doctor's, or not visible: nothing is revealed
+    expect(await ask()).toEqual({ ok: false, error: "not_found" });
   });
 });

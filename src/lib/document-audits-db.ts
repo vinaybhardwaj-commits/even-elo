@@ -27,6 +27,7 @@ import {
   DOC_TYPE_LABEL,
   OPEN_PIPE,
   HIGH_SEV,
+  portalResponseOwner,
   formatAuditDate,
   ingestHonesty,
   isSystemAuditAuthor,
@@ -653,6 +654,7 @@ export interface PortalRoutedFindingRow {
   response_owner: string | null;
   signal_reference: string | null;
   signal_type: string | null;
+  cdmss_routed: boolean | null;
   note_class: string | null;
   note_date: string | null;
   evidence_excerpt: string | null;
@@ -689,6 +691,7 @@ export async function loadPortalRoutedFindings(physicianId: string): Promise<Por
         f.response_owner,
         f.signal_reference,
         f.signal_type,
+        f.cdmss_routed,
         COALESCE(f.note_class, da.note_class) AS note_class,
         to_char(COALESCE(f.note_date, da.note_date), 'YYYY-MM-DD') AS note_date,
         f.evidence_excerpt,
@@ -739,20 +742,38 @@ export async function recordDoctorFindingResponse(opts: {
         AND physician_id = ${opts.physicianId}::uuid
         AND portal_visible = true
         AND doctor_responded_at IS NULL
+        AND status NOT IN ('remediated', 'escalated')
+        AND (
+          response_owner = 'local'
+          OR (coalesce(response_owner, '') <> 'pipe_a' AND coalesce(btrim(signal_reference), '') = '')
+        )
       RETURNING id::text AS id
     `) as unknown as Array<{ id: string }>;
     if (!rows[0]) {
-      // Nothing updated: either the doctor already answered it (a finding is answered once, like
-      // the live list) or it is not theirs / not visible. Say which, without leaking the latter.
-      const prior = (await sql`
-        SELECT 1 AS answered FROM document_audit_findings
+      // Nothing updated. Say why, but only for a finding that is this doctor's and visible to them:
+      // already answered (a finding is answered once, like the live list), closed, or owned by the
+      // live Findings list. Anything else is "not found", which leaks nothing about other doctors.
+      const row = (await sql`
+        SELECT status, response_owner, signal_reference, doctor_responded_at
+        FROM document_audit_findings
         WHERE id = ${opts.findingId}::uuid
           AND physician_id = ${opts.physicianId}::uuid
           AND portal_visible = true
-          AND doctor_responded_at IS NOT NULL
         LIMIT 1
-      `) as unknown as Array<{ answered: number }>;
-      return { ok: false, error: prior[0] ? "already_responded" : "not_found" };
+      `) as unknown as Array<{
+        status: string;
+        response_owner: string | null;
+        signal_reference: string | null;
+        doctor_responded_at: unknown;
+      }>;
+      const r = row[0];
+      if (!r) return { ok: false, error: "not_found" };
+      if (r.doctor_responded_at) return { ok: false, error: "already_responded" };
+      if (r.status === "remediated" || r.status === "escalated") return { ok: false, error: "closed" };
+      if (portalResponseOwner(r.response_owner, r.signal_reference) === "pipe_a") {
+        return { ok: false, error: "on_live_list" };
+      }
+      return { ok: false, error: "not_found" };
     }
     return { ok: true };
   } catch {

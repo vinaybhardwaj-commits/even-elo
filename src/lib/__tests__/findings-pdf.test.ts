@@ -95,6 +95,12 @@ function pdfRequest(ref: string) {
   return new NextRequest(`https://portal.test/api/portal/findings/pdf?ref=${encodeURIComponent(ref)}`);
 }
 
+/** A failure the doctor sees in a new tab: one plain sentence, no JSON, no code. */
+function expectPlainPage(html: string) {
+  expect(html).toContain("This note isn't available right now. The quality team has been notified.");
+  expect(html).not.toMatch(/upstream_unavailable|not_found|"ok"|error/i);
+}
+
 function sqlText(strings: TemplateStringsArray): string {
   return Array.from(strings).join(" ");
 }
@@ -283,7 +289,7 @@ describe("GET /api/portal/findings/pdf", () => {
     vi.mocked(getCurrentPhysician).mockResolvedValue(null);
     const res = await GET(pdfRequest(AUDIT_ID));
     expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ ok: false, error: "Unauthorized" });
+    expect(await res.text()).toContain("Please sign in to the doctor portal again");
     expect(sql).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -292,7 +298,7 @@ describe("GET /api/portal/findings/pdf", () => {
     vi.mocked(getCurrentPhysician).mockResolvedValue(physician());
     const res = await GET(pdfRequest("EHRC-AUD-2026-0111"));
     expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ ok: false, error: "invalid" });
+    expectPlainPage(await res.text());
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -327,7 +333,7 @@ describe("GET /api/portal/findings/pdf", () => {
 
     const res = await GET(pdfRequest(AUDIT_ID));
     expect(res.status).toBe(404);
-    expect(await res.json()).toEqual({ ok: false, error: "not_found" });
+    expectPlainPage(await res.text());
     expect(fetchMock.mock.calls.some((c) => String(c[0]).includes("/audits/"))).toBe(false);
   });
 
@@ -361,9 +367,9 @@ describe("GET /api/portal/findings/pdf", () => {
 
     const res = await GET(pdfRequest(AUDIT_ID));
     expect(res.status).toBe(502);
-    const body = await res.json();
-    expect(body).toEqual({ ok: false, error: "upstream_unavailable" });
-    expect(JSON.stringify(body)).not.toContain(GOV_KEY);
+    const body = await res.text();
+    expectPlainPage(body);
+    expect(body).not.toContain(GOV_KEY);
   });
 
   it("does not pass a JSON 401 from CDMSS through as a download", async () => {
@@ -373,8 +379,8 @@ describe("GET /api/portal/findings/pdf", () => {
 
     const res = await GET(pdfRequest(AUDIT_ID));
     expect(res.status).toBe(502);
-    expect(res.headers.get("content-type")).toContain("application/json");
-    expect(await res.json()).toEqual({ ok: false, error: "upstream_unavailable" });
+    expect(res.headers.get("content-type")).toContain("text/html");
+    expectPlainPage(await res.text());
   });
 });
 

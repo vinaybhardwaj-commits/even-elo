@@ -103,6 +103,7 @@ import {
   contextLine,
   sanitizeCard,
   scrubText,
+  stripIds,
   toDocumentCard,
   toDocumentCards,
   toLiveCard,
@@ -192,6 +193,21 @@ describe("the card allowlist: hostile upstream in, exact keys out", () => {
     expect(toLiveCard(live({ note_class: "discharge_summary" }))!.view_note_href).toBe(href);
     expect(toLiveCard(live({ note_class: "ot" }))!.view_note_href).toBe(href);
     expect(toDocumentCard(docRow({ note_class: "opd", doc_type: "opd" }))!.view_note_href).toBeNull();
+  });
+
+  it("a document finding gets a note link only when CDMSS marked it routed", () => {
+    expect(toDocumentCard(docRow({ cdmss_routed: true }))!.view_note_href).toBe(`/api/portal/findings/pdf?ref=${AUDIT}`);
+    expect(toDocumentCard(docRow({ cdmss_routed: false }))!.view_note_href).toBeNull();
+    expect(toDocumentCard(docRow({ cdmss_routed: null }))!.view_note_href).toBeNull();
+    expect(toDocumentCard(docRow({ cdmss_routed: undefined }))!.view_note_href).toBeNull();
+  });
+
+  it("scrubs a reference from any hospital prefix", () => {
+    expect(scrubText("Fix the dose. See EBBR-AUD-2026-0042.")).toBe("Fix the dose.");
+    expect(scrubText("Ref AB-AUD-2025-7 applies to this note.")).toBe("applies to this note.");
+    expect(stripIds("x XYZ-AUD-2026-12 y")).toBe("x y");
+    const card = toLiveCard(live({ representative: { ...h.hostileSignal.representative, subject: "Dose issue ABCD-AUD-2026-9 here" } }))!;
+    expect(JSON.stringify(card)).not.toMatch(/AUD-\d/);
   });
 
   it("recurrence is plain words above one and absent otherwise, never a number field", () => {
@@ -471,6 +487,7 @@ function docRow(over: Partial<DocumentFindingRow> = {}): DocumentFindingRow {
     finding_label: "Discharge medication list missing doses",
     finding_body: "Doses are needed so the patient and pharmacist can follow the plan.",
     status: "open",
+    cdmss_routed: true,
     doc_type: "discharge",
     cdmss_pdf_url: `https://even-cdmss.vercel.app/api/governance/audits/${AUDIT}/pdf`,
     source_audit_id: AUDIT,
@@ -679,10 +696,24 @@ describe("routes answer cards only", () => {
 
     vi.mocked(recordDoctorFindingResponse).mockResolvedValueOnce({ ok: false, error: "already_responded" });
     const twice = await docsRespondPOST(req("https://portal.test/x", { finding_id: "f1", verb: "agree" }));
+    expect(twice.status).toBe(409);
     expect(await twice.json()).toEqual({
       ok: false,
       error: "already_responded",
       message: "You have already responded to this finding.",
     });
+
+    vi.mocked(recordDoctorFindingResponse).mockResolvedValueOnce({ ok: false, error: "closed" });
+    const closed = await docsRespondPOST(req("https://portal.test/x", { finding_id: "f1", verb: "agree" }));
+    expect(closed.status).toBe(409);
+    expect((await closed.json()).message).toBe("This finding is now closed, so no response is needed.");
+
+    vi.mocked(recordDoctorFindingResponse).mockResolvedValueOnce({ ok: false, error: "on_live_list" });
+    const live2 = await docsRespondPOST(req("https://portal.test/x", { finding_id: "f1", verb: "agree" }));
+    expect(live2.status).toBe(409);
+    expect((await live2.json()).message).toBe("This finding is on your main Findings list. Please respond to it there.");
+
+    vi.mocked(recordDoctorFindingResponse).mockResolvedValueOnce({ ok: false, error: "not_found" });
+    expect((await docsRespondPOST(req("https://portal.test/x", { finding_id: "f1", verb: "agree" }))).status).toBe(200);
   });
 });

@@ -206,6 +206,8 @@ export function friendlyError(code: unknown): string {
       return "You have already responded to this finding.";
     case "closed":
       return "This finding is now closed, so no response is needed.";
+    case "on_live_list":
+      return "This finding is on your main Findings list. Please respond to it there.";
     case "invalid":
     case "invalid_body":
     case "invalid_json":

@@ -91,11 +91,20 @@ export function FindingsForDoctor({
     load();
   }, [load]);
 
-  // One card swapped in place after a response: the other cards do not flicker, and the doctor sees
-  // the recorded response on the card they just answered.
+  // After a response only the response line changes: the card keeps its context line, Basis section
+  // and note link (the card the server hands back after a write can be thinner than the listed one).
   const replaceCard = useCallback((next: DoctorCard) => {
     setData((d) =>
-      d ? { ...d, cards: (d.cards ?? []).map((x) => (x.id === next.id ? next : x)) } : d,
+      d
+        ? {
+            ...d,
+            cards: (d.cards ?? []).map((x) =>
+              x.id === next.id
+                ? { ...x, response: next.response, can_respond: false, reaction: next.reaction ?? x.reaction }
+                : x,
+            ),
+          }
+        : d,
     );
   }, []);
 

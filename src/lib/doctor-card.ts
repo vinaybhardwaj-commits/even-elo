@@ -125,7 +125,8 @@ function str(v: unknown, max = TEXT_MAX): string | null {
 // ────────────────────────────── scrubbing ──────────────────────────────
 
 const ID_PATTERNS: readonly RegExp[] = [
-  /(?:\b(?:see|ref\.?|reference)\s*:?\s*)?\bEHRC-AUD-\d{4}-\d+\b/gi,
+  // Any hospital prefix: EHRC-AUD-2026-0042, EHBR-AUD-..., and so on.
+  /(?:\b(?:see|ref\.?|reference)\s*:?\s*)?\b[A-Z]{2,6}-AUD-\d{4}-\d+\b/gi,
   /\b(?:ot|ds|progress|synth|opd):[\w:.-]{3,}/gi,
   /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
 ];
@@ -137,6 +138,7 @@ export function stripIds(text: string): string {
   return t
     .replace(/\(\s*(?:see|ref\.?|reference)?\s*\)/gi, "")
     .replace(/[ \t]{2,}/g, " ")
+    .replace(/([.!?])(?:\s*\.)+/g, "$1") // a removed id at the end of a sentence leaves ". ."
     .replace(/\s+([,.;:])/g, "$1")
     .trim();
 }
@@ -386,6 +388,8 @@ export interface DocumentFindingRow {
   response_owner: string | null;
   signal_reference: string | null;
   signal_type: string | null;
+  /** CDMSS marked this finding routed. Absent/null on rows from before the field existed. */
+  cdmss_routed?: boolean | null;
   note_class: string | null;
   note_date: string | null;
   evidence_excerpt: string | null;
@@ -418,6 +422,9 @@ export function toDocumentCard(row: DocumentFindingRow): DoctorCard | null {
   if (!view && isAuditUuid(row.source_audit_id)) view = portalFindingsPdfHref(row.source_audit_id);
   // Local rows only ever offer the portal proxy; a blob/CDN URL is not a doctor-session route.
   if (view && !view.startsWith("/api/portal/findings/pdf?ref=")) view = null;
+  // The file holds only findings CDMSS routed. A finding made visible some other way (an RMO
+  // release) would open an empty file, so no link is offered unless CDMSS marked it routed.
+  if (row.cdmss_routed !== true) view = null;
   // No file exists for OPD audits upstream, so none is offered.
   if (cardNoteClass(row.note_class) === "opd" || cardNoteClass(row.doc_type) === "opd") view = null;
 

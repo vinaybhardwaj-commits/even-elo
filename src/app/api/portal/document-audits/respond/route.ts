@@ -45,7 +45,14 @@ export async function POST(request: NextRequest) {
   });
 
   if (!result.ok) {
-    return NextResponse.json({ ok: false, error: result.error, message: friendlyError(result.error) });
+    // A finding that cannot take a response (already answered, closed, on the live list) is a
+    // conflict with its current state; anything else keeps the portal's usual 200 + named reason.
+    const conflict =
+      result.error === "already_responded" || result.error === "closed" || result.error === "on_live_list";
+    return NextResponse.json(
+      { ok: false, error: result.error, message: friendlyError(result.error) },
+      { status: conflict ? 409 : 200 },
+    );
   }
   return NextResponse.json({ ok: true });
 }

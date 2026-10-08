@@ -23,8 +23,11 @@ export function LocalDocumentAuditsForDoctor({ respond = false }: { respond?: bo
     load();
   }, [load]);
 
+  // Only the response line changes; the rest of the card stays as listed.
   const replaceCard = useCallback((next: DoctorCard) => {
-    setCards((cs) => (cs ? cs.map((x) => (x.id === next.id ? next : x)) : cs));
+    setCards((cs) =>
+      cs ? cs.map((x) => (x.id === next.id ? { ...x, response: next.response, can_respond: false } : x)) : cs,
+    );
   }, []);
 
   if (cards === null || cards.length === 0) return null;

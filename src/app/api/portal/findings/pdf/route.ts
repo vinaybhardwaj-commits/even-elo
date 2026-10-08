@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentPhysician } from "@/lib/physician-auth";
 import { sql } from "@/lib/db";
-import { disabledRead, findingsEnabled } from "@/lib/portal-flags";
+import { findingsEnabled } from "@/lib/portal-flags";
 import { fetchDoctorAudits } from "@/lib/doctor-audits";
 import { doctorMayFetchAuditPdf, isAuditUuid, type AuditPdfSignal } from "@/lib/findings-pdf";
 import { fetchCdmssAuditPdf, pdfStreamResponse } from "@/lib/cdmss-pdf";
@@ -34,6 +34,27 @@ export const maxDuration = 30;
  * whether it belongs to someone else or does not exist. Upstream failure is
  * 502, never an empty PDF and never the upstream body.
  */
+
+/**
+ * "View note" opens this URL in a new tab, so every non-PDF answer is a small page a doctor can
+ * read, never JSON. The wording is one plain sentence with no code, and the status code is kept so
+ * logs and tests still tell the cases apart.
+ */
+const NOTE_UNAVAILABLE = "This note isn't available right now. The quality team has been notified.";
+
+function notePage(status: number, message: string = NOTE_UNAVAILABLE): NextResponse {
+  const safe = message.replace(/[<>&]/g, "");
+  const html =
+    '<!doctype html><html lang="en"><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width, initial-scale=1">' +
+    "<title>Note unavailable</title></head>" +
+    '<body style="font-family:system-ui,sans-serif;max-width:32rem;margin:15vh auto;padding:0 1.25rem;color:#292524">' +
+    `<p style="font-size:1.0625rem;line-height:1.5">${safe}</p></body></html>`;
+  return new NextResponse(html, {
+    status,
+    headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store, max-age=0" },
+  });
+}
 
 async function lookupDoctorUid(physicianId: string): Promise<string | null> {
   try {
@@ -69,12 +90,12 @@ async function physicianHasLocalAuditPdf(physicianId: string, auditId: string): 
 
 export async function GET(request: NextRequest) {
   const p = await getCurrentPhysician();
-  if (!p) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  if (!findingsEnabled()) return disabledRead();
+  if (!p) return notePage(401, "Please sign in to the doctor portal again to view this note.");
+  if (!findingsEnabled()) return notePage(404);
 
   const ref = (request.nextUrl.searchParams.get("ref") || "").trim();
   if (!isAuditUuid(ref)) {
-    return NextResponse.json({ ok: false, error: "invalid" }, { status: 400 });
+    return notePage(400);
   }
 
   const uid = await lookupDoctorUid(p.physicianId);
@@ -99,14 +120,14 @@ export async function GET(request: NextRequest) {
   const localMatch = await physicianHasLocalAuditPdf(p.physicianId, ref);
   if (!doctorMayFetchAuditPdf({ auditId: ref, signals, localMatch })) {
     if (listFailed && !localMatch) {
-      return NextResponse.json({ ok: false, error: "upstream_unavailable" }, { status: 502 });
+      return notePage(502);
     }
-    return NextResponse.json({ ok: false, error: "not_found" }, { status: 404 });
+    return notePage(404);
   }
 
   try {
     return pdfStreamResponse(await fetchCdmssAuditPdf(ref, { routedOnly: true }));
   } catch {
-    return NextResponse.json({ ok: false, error: "upstream_unavailable" }, { status: 502 });
+    return notePage(502);
   }
 }
