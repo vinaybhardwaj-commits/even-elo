@@ -313,7 +313,8 @@ describe("GET /api/portal/findings/pdf", () => {
     expect(list).toContain(`doctor_uid=${encodeURIComponent(DOCTOR_UID)}`);
     expect(list).not.toContain(PHYSICIAN_ID);
     const pdfCall = fetchMock.mock.calls.find((c) => String(c[0]).includes("/audits/"));
-    expect(String(pdfCall?.[0])).toBe(`https://cdmss.test/api/governance/audits/${AUDIT_ID}/pdf`);
+    // Doctor proxy: always routed_only=1 so the file holds only findings routed to this doctor.
+    expect(String(pdfCall?.[0])).toBe(`https://cdmss.test/api/governance/audits/${AUDIT_ID}/pdf?routed_only=1`);
     expect(new Headers(pdfCall?.[1]?.headers).get("x-api-key")).toBe(GOV_KEY);
   });
 
@@ -397,7 +398,8 @@ describe("Findings PDF wiring stays off the raw CDMSS URL", () => {
     expect(route).toContain("getCurrentPhysician()");
     expect(route).toContain("SELECT cdmss_doctor_uid FROM physicians WHERE id=");
     expect(route).toContain("fetchDoctorAudits");
-    expect(route).toContain('headers: { "x-api-key": key, accept: "application/pdf" }');
+    expect(route).toContain("fetchCdmssAuditPdf(ref, { routedOnly: true })");
+    expect(SRC("src/lib/cdmss-pdf.ts")).toContain('headers: { "x-api-key": key, accept: "application/pdf" }');
     expect(route).toContain("doctorMayFetchAuditPdf");
     expect(route).not.toContain("NEXT_PUBLIC");
 

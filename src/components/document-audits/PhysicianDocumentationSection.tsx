@@ -217,7 +217,7 @@ export function PhysicianDocumentationSection({ physicianId }: { physicianId: st
                   </Link>
                   {active.cdmss_pdf_url ? (
                   <a
-                    href={active.cdmss_pdf_url}
+                    href={`/api/document-audits/${active.audit_id}/pdf`}
                     target="_blank"
                     rel="noreferrer"
                     className="inline-flex rounded-lg bg-brand px-3 py-2 text-[12.5px] font-semibold text-white hover:opacity-90"

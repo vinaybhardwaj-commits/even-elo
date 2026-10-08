@@ -4,12 +4,11 @@ import { sql } from "@/lib/db";
 import { disabledRead, findingsEnabled } from "@/lib/portal-flags";
 import { fetchDoctorAudits, type DoctorAuditSignal } from "@/lib/doctor-audits";
 import { doctorMayFetchAuditPdf, isAuditUuid, type AuditPdfSignal } from "@/lib/findings-pdf";
+import { fetchCdmssAuditPdf, pdfStreamResponse } from "@/lib/cdmss-pdf";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 30;
-
-const PDF_TIMEOUT_MS = 20000;
 
 /**
  * GET /api/portal/findings/pdf?ref=<audit uuid>
@@ -24,6 +23,11 @@ const PDF_TIMEOUT_MS = 20000;
  * grants the file only when it has instances and a real audit UUID. A
  * portal-visible local document audit for this physician is the other grant,
  * so the local strip can download without exposing the CDMSS URL.
+ *
+ * The upstream call ALWAYS carries routed_only=1, so the file a doctor opens
+ * contains only the findings routed to them: no sibling findings, no internal
+ * ids, no triage text. There is no path from this route to the unfiltered PDF
+ * (staff use /api/document-audits/[id]/pdf for that).
  *
  * A missing session is 401. A reference that is not an audit UUID (including
  * EHRC-AUD-*) is 400. An audit this doctor cannot see is 404 — the same answer
@@ -43,7 +47,7 @@ async function lookupDoctorUid(physicianId: string): Promise<string | null> {
   }
 }
 
-/** Portal-visible local document audit whose CDMSS id is this audit UUID. */
+/** A finding of this physician, visible to them (its own portal_visible), on the audit with this CDMSS id. */
 async function physicianHasLocalAuditPdf(physicianId: string, auditId: string): Promise<boolean> {
   try {
     const rows = (await sql`
@@ -61,26 +65,6 @@ async function physicianHasLocalAuditPdf(physicianId: string, auditId: string): 
   } catch {
     return false;
   }
-}
-
-async function fetchCdmssAuditPdf(auditId: string): Promise<Response> {
-  const key = process.env.GOV_API_KEY;
-  if (!key) throw new Error("GOV_API_KEY not configured");
-  const base = process.env.GOV_API_BASE || "https://even-cdmss.vercel.app";
-  const res = await fetch(`${base}/api/governance/audits/${encodeURIComponent(auditId)}/pdf`, {
-    headers: { "x-api-key": key, accept: "application/pdf" },
-    cache: "no-store",
-    signal: AbortSignal.timeout(PDF_TIMEOUT_MS),
-  });
-  const ct = (res.headers.get("content-type") || "").toLowerCase();
-  if (!res.ok || !res.body) throw new Error(`CDMSS audit pdf ${res.status}`);
-  if (ct.includes("json") || ct.includes("text/html") || ct.includes("text/plain")) {
-    throw new Error(`CDMSS audit pdf content-type ${ct || "unknown"}`);
-  }
-  if (ct && !ct.includes("pdf") && !ct.includes("octet-stream")) {
-    throw new Error(`CDMSS audit pdf content-type ${ct}`);
-  }
-  return res;
 }
 
 export async function GET(request: NextRequest) {
@@ -116,13 +100,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const upstream = await fetchCdmssAuditPdf(ref);
-    const headers = new Headers();
-    headers.set("Content-Type", "application/pdf");
-    headers.set("Content-Disposition", 'inline; filename="audit-findings.pdf"');
-    headers.set("Cache-Control", "private, no-store");
-    headers.set("X-Content-Type-Options", "nosniff");
-    return new NextResponse(upstream.body, { status: 200, headers });
+    return pdfStreamResponse(await fetchCdmssAuditPdf(ref, { routedOnly: true }));
   } catch {
     return NextResponse.json({ ok: false, error: "upstream_unavailable" }, { status: 502 });
   }
