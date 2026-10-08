@@ -8,6 +8,12 @@
  * Past either limit the route answers 429 with a plain sentence and does NOT verify the PIN, so a
  * locked account cannot be used to keep guessing.
  *
+ * ⚠️ THE ATTEMPT IS RECORDED BEFORE THE PIN IS CHECKED. Count-then-verify-then-record lets a burst of
+ * parallel requests all read a low count and all get their PIN tested. Here every request INSERTs
+ * its attempt first and then counts (its own row included), so at most LIMIT requests can ever see
+ * a count within the limit: the one whose insert committed last always sees all the others. A
+ * correct PIN removes only that request's own rows; the failure history inside the window stays.
+ *
  * State lives in Postgres (table portal_login_failures, migration 034), not in memory: serverless
  * instances do not share memory, so an in-process counter is bypassed by simply being routed to a
  * fresh instance. Keys are stored as SHA-256 digests, never as the raw email or IP.
@@ -49,11 +55,11 @@ export interface FailureCounts {
   ip: number;
 }
 
-/** PURE. Over either limit -> blocked. The limit is the number of failures already allowed to have
- *  happened: with a limit of 5, the sixth attempt is the first refused. */
+/** PURE. Blocked when the count INCLUDING the current attempt exceeds a limit: with a limit of 5 the
+ *  sixth attempt in the window is the first refused. */
 export function evaluateLoginLimit(counts: FailureCounts): { blocked: boolean; scope: "account" | "ip" | null } {
-  if (counts.account >= ACCOUNT_FAILURE_LIMIT) return { blocked: true, scope: "account" };
-  if (counts.ip >= IP_FAILURE_LIMIT) return { blocked: true, scope: "ip" };
+  if (counts.account > ACCOUNT_FAILURE_LIMIT) return { blocked: true, scope: "account" };
+  if (counts.ip > IP_FAILURE_LIMIT) return { blocked: true, scope: "ip" };
   return { blocked: false, scope: null };
 }
 
@@ -72,44 +78,49 @@ export async function recentFailureCounts(sql: SqlTag, account: string, ip: stri
   return { account: Number(rows[0]?.account_failures ?? 0), ip: Number(rows[0]?.ip_failures ?? 0) };
 }
 
-/** Is this attempt allowed to proceed to PIN verification? Fails open on a storage error. */
-export async function checkLoginAllowed(
-  sql: SqlTag,
-  account: string,
-  ip: string,
-): Promise<{ allowed: boolean; scope: "account" | "ip" | null }> {
-  try {
-    const verdict = evaluateLoginLimit(await recentFailureCounts(sql, account, ip));
-    return { allowed: !verdict.blocked, scope: verdict.scope };
-  } catch (e) {
-    console.error("[portal-login-limit] check failed; allowing attempt", e instanceof Error ? e.message : e);
-    return { allowed: true, scope: null };
-  }
+export interface LoginAttempt {
+  allowed: boolean;
+  scope: "account" | "ip" | null;
+  /** Row ids of this attempt, so a correct PIN can remove exactly these and nothing else. */
+  attemptIds: string[];
 }
 
-/** Record one failed attempt against both the account and the IP. Never throws. */
-export async function recordLoginFailure(sql: SqlTag, account: string, ip: string): Promise<void> {
+/**
+ * Record this attempt, THEN count (own row included) and decide. A refused attempt removes its own
+ * rows so hammering a locked account cannot extend the lock. Fails open (and logs) on a storage
+ * error, with no ids to release.
+ */
+export async function beginLoginAttempt(sql: SqlTag, account: string, ip: string): Promise<LoginAttempt> {
   try {
     const a = hashLoginKey("account", account);
     const i = hashLoginKey("ip", ip);
-    await sql`
+    const inserted = (await sql`
       INSERT INTO portal_login_failures (subject_kind, subject_key)
-      VALUES ('account', ${a}), ('ip', ${i})`;
+      VALUES ('account', ${a}), ('ip', ${i})
+      RETURNING id::text AS id`) as Array<{ id: string }>;
+    const attemptIds = inserted.map((r) => String(r.id));
+    const verdict = evaluateLoginLimit(await recentFailureCounts(sql, account, ip));
+    if (verdict.blocked) {
+      await releaseLoginAttempt(sql, attemptIds);
+      return { allowed: false, scope: verdict.scope, attemptIds: [] };
+    }
     // Housekeeping: rows past a day have no bearing on a 15-minute window.
     if (Math.random() < 0.05) {
       await sql`DELETE FROM portal_login_failures WHERE attempted_at < now() - interval '1 day'`;
     }
+    return { allowed: true, scope: null, attemptIds };
   } catch (e) {
-    console.error("[portal-login-limit] could not record failure", e instanceof Error ? e.message : e);
+    console.error("[portal-login-limit] check failed; allowing attempt", e instanceof Error ? e.message : e);
+    return { allowed: true, scope: null, attemptIds: [] };
   }
 }
 
-/** A correct PIN clears that account's failures (the IP's count is left to age out). Never throws. */
-export async function clearAccountFailures(sql: SqlTag, account: string): Promise<void> {
+/** Remove exactly these attempt rows (a correct PIN, or a refused attempt). Never throws. */
+export async function releaseLoginAttempt(sql: SqlTag, attemptIds: string[]): Promise<void> {
+  if (attemptIds.length === 0) return;
   try {
-    const a = hashLoginKey("account", account);
-    await sql`DELETE FROM portal_login_failures WHERE subject_kind = 'account' AND subject_key = ${a}`;
+    await sql`DELETE FROM portal_login_failures WHERE id = ANY(${attemptIds}::bigint[])`;
   } catch (e) {
-    console.error("[portal-login-limit] could not clear failures", e instanceof Error ? e.message : e);
+    console.error("[portal-login-limit] could not release attempt", e instanceof Error ? e.message : e);
   }
 }

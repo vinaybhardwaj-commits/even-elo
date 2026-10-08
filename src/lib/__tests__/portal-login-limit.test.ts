@@ -5,13 +5,17 @@ import { NextRequest } from "next/server";
 
 /** In-memory stand-in for the portal_login_failures table plus the two other tables login reads. */
 const db = vi.hoisted(() => ({
-  failures: [] as Array<{ kind: string; key: string; at: number }>,
+  failures: [] as Array<{ id: string; kind: string; key: string; at: number }>,
+  nextId: 1,
+  /** Microtask yields before each query answers, so concurrent requests interleave. */
+  yields: 0,
   physician: null as null | Record<string, unknown>,
   throwOnFailuresRead: false,
 }));
 
 vi.mock("@neondatabase/serverless", () => ({
   neon: () => async (strings: TemplateStringsArray, ...values: unknown[]) => {
+    for (let y = 0; y < db.yields; y++) await Promise.resolve();
     const q = Array.from(strings).join("?");
     if (q.includes("account_failures")) {
       if (db.throwOnFailuresRead) throw new Error('relation "portal_login_failures" does not exist');
@@ -23,12 +27,16 @@ vi.mock("@neondatabase/serverless", () => ({
     }
     if (q.includes("INSERT INTO portal_login_failures")) {
       const [a, i] = values as [string, string];
-      db.failures.push({ kind: "account", key: a, at: Date.now() }, { kind: "ip", key: i, at: Date.now() });
-      return [];
+      const rows = [
+        { id: String(db.nextId++), kind: "account", key: a, at: Date.now() },
+        { id: String(db.nextId++), kind: "ip", key: i, at: Date.now() },
+      ];
+      db.failures.push(...rows);
+      return rows.map((r) => ({ id: r.id }));
     }
-    if (q.includes("DELETE FROM portal_login_failures WHERE subject_kind = 'account'")) {
-      const [a] = values as [string];
-      db.failures = db.failures.filter((f) => !(f.kind === "account" && f.key === a));
+    if (q.includes("DELETE FROM portal_login_failures WHERE id = ANY")) {
+      const [ids] = values as [string[]];
+      db.failures = db.failures.filter((f) => !ids.includes(f.id));
       return [];
     }
     if (q.includes("DELETE FROM portal_login_failures")) return [];
@@ -39,7 +47,10 @@ vi.mock("@neondatabase/serverless", () => ({
 }));
 
 vi.mock("@/lib/physician-auth", () => ({
-  verifyPortalPin: vi.fn(async (pin: string) => pin === "1234"),
+  verifyPortalPin: vi.fn(async (pin: string) => {
+    for (let y = 0; y < db.yields; y++) await Promise.resolve();
+    return pin === "1234";
+  }),
   createPhysicianToken: vi.fn(async () => "token"),
   setPhysicianCookie: vi.fn(async () => undefined),
 }));
@@ -65,15 +76,15 @@ function login(email: string, pin: string, ip = "203.0.113.7") {
   );
 }
 
-describe("evaluateLoginLimit (pure)", () => {
-  it("allows up to 4 prior failures per account and blocks at 5", () => {
-    expect(evaluateLoginLimit({ account: 4, ip: 0 }).blocked).toBe(false);
-    expect(evaluateLoginLimit({ account: ACCOUNT_FAILURE_LIMIT, ip: 0 })).toEqual({ blocked: true, scope: "account" });
+describe("evaluateLoginLimit (pure; counts include the current attempt)", () => {
+  it("allows the 5th attempt per account and blocks the 6th", () => {
+    expect(evaluateLoginLimit({ account: ACCOUNT_FAILURE_LIMIT, ip: 0 }).blocked).toBe(false);
+    expect(evaluateLoginLimit({ account: ACCOUNT_FAILURE_LIMIT + 1, ip: 0 })).toEqual({ blocked: true, scope: "account" });
   });
 
-  it("allows up to 19 prior failures per IP and blocks at 20", () => {
-    expect(evaluateLoginLimit({ account: 0, ip: 19 }).blocked).toBe(false);
-    expect(evaluateLoginLimit({ account: 0, ip: IP_FAILURE_LIMIT })).toEqual({ blocked: true, scope: "ip" });
+  it("allows the 20th attempt per IP and blocks the 21st", () => {
+    expect(evaluateLoginLimit({ account: 0, ip: IP_FAILURE_LIMIT }).blocked).toBe(false);
+    expect(evaluateLoginLimit({ account: 0, ip: IP_FAILURE_LIMIT + 1 })).toEqual({ blocked: true, scope: "ip" });
   });
 
   it("hashes keys and separates the account and ip namespaces", () => {
@@ -135,13 +146,21 @@ describe("POST /api/portal/auth/login rate limit (A3)", () => {
     expect((await res.json()).ok).toBe(true);
   });
 
-  it("a correct PIN before the limit succeeds and clears the account's failures", async () => {
+  it("a correct PIN succeeds but does NOT erase the failures already in the window", async () => {
     for (let n = 0; n < ACCOUNT_FAILURE_LIMIT - 1; n++) await login("doc@example.test", "0000");
     expect((await login("doc@example.test", "1234")).status).toBe(200);
-    // Counter was reset: four more failures are still tolerated.
-    for (let n = 0; n < ACCOUNT_FAILURE_LIMIT - 1; n++) {
-      expect((await login("doc@example.test", "0000")).status).toBe(401);
-    }
+    // Four failures stay on record; the success removed only its own attempt.
+    expect(db.failures.filter((f) => f.kind === "account")).toHaveLength(ACCOUNT_FAILURE_LIMIT - 1);
+    // So one more wrong PIN is tolerated (5th), and the next is refused (6th): history was kept.
+    expect((await login("doc@example.test", "0000")).status).toBe(401);
+    expect((await login("doc@example.test", "0000")).status).toBe(429);
+  });
+
+  it("a refused attempt leaves no row, so hammering a locked account does not extend the lock", async () => {
+    for (let n = 0; n < ACCOUNT_FAILURE_LIMIT; n++) await login("doc@example.test", "0000");
+    const before = db.failures.length;
+    for (let n = 0; n < 10; n++) expect((await login("doc@example.test", "0000")).status).toBe(429);
+    expect(db.failures).toHaveLength(before);
   });
 
   it("limits one IP to 20 failures across different accounts, and leaves other IPs alone", async () => {
@@ -184,6 +203,67 @@ describe("POST /api/portal/auth/login rate limit (A3)", () => {
     expect(res.status).toBe(200);
     expect(spy).toHaveBeenCalled();
     spy.mockRestore();
+  });
+});
+
+describe("parallel attempts cannot slip past the limit (insert first, then count)", () => {
+  beforeEach(() => {
+    process.env.DATABASE_URL = "postgres://test";
+    db.failures = [];
+    db.nextId = 1;
+    db.throwOnFailuresRead = false;
+    db.physician = {
+      id: "p1",
+      full_name: "Dr Example",
+      email: "doc@example.test",
+      portal_pin_hash: "hash",
+      portal_access: true,
+      portal_must_change_pin: false,
+      current_status: "active",
+    };
+    vi.mocked(verifyPortalPin).mockClear();
+  });
+  afterEach(() => {
+    db.yields = 0;
+  });
+
+  for (const yields of [0, 1, 3, 7]) {
+    it(`200 concurrent wrong-PIN requests for one account: at most 5 PINs are ever tested (yields=${yields})`, async () => {
+      db.yields = yields;
+      const results = await Promise.all(
+        Array.from({ length: 200 }, (_, n) => login("doc@example.test", String(1000 + n), `198.51.100.${n % 250}`)),
+      );
+      const statuses = results.map((r) => r.status);
+      expect(statuses.filter((s) => s === 401).length).toBeLessThanOrEqual(ACCOUNT_FAILURE_LIMIT);
+      expect(vi.mocked(verifyPortalPin).mock.calls.length).toBeLessThanOrEqual(ACCOUNT_FAILURE_LIMIT);
+      expect(statuses.filter((s) => s === 429).length).toBeGreaterThanOrEqual(200 - ACCOUNT_FAILURE_LIMIT);
+    });
+  }
+
+  it("200 concurrent requests from one IP across different accounts: at most 20 get an answer other than 429", async () => {
+    db.yields = 2;
+    db.physician = null; // unknown accounts: each is a failed attempt that never reaches bcrypt
+    const results = await Promise.all(
+      Array.from({ length: 200 }, (_, n) => login(`probe${n}@example.test`, "0000", "198.51.100.9")),
+    );
+    expect(results.filter((r) => r.status === 401).length).toBeLessThanOrEqual(IP_FAILURE_LIMIT);
+    expect(results.filter((r) => r.status === 429).length).toBeGreaterThanOrEqual(200 - IP_FAILURE_LIMIT);
+  });
+
+  it("the route records the attempt before it verifies the PIN", async () => {
+    const order: string[] = [];
+    vi.mocked(verifyPortalPin).mockImplementationOnce(async () => {
+      order.push(`verify (rows on record: ${db.failures.length})`);
+      return false;
+    });
+    await login("doc@example.test", "0000");
+    expect(order).toEqual(["verify (rows on record: 2)"]);
+  });
+
+  it("the route source calls beginLoginAttempt before verifyPortalPin", () => {
+    const src = readFileSync(join(process.cwd(), "src/app/api/portal/auth/login/route.ts"), "utf8");
+    expect(src.indexOf("beginLoginAttempt(")).toBeGreaterThan(0);
+    expect(src.indexOf("beginLoginAttempt(")).toBeLessThan(src.indexOf("verifyPortalPin(String"));
   });
 });
 

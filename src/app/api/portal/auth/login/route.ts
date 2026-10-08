@@ -3,10 +3,9 @@ import { neon } from "@neondatabase/serverless";
 import { createPhysicianToken, setPhysicianCookie, verifyPortalPin } from "@/lib/physician-auth";
 import {
   RATE_LIMIT_MESSAGE,
-  checkLoginAllowed,
-  clearAccountFailures,
+  beginLoginAttempt,
   clientIp,
-  recordLoginFailure,
+  releaseLoginAttempt,
   type SqlTag,
 } from "@/lib/portal-login-limit";
 
@@ -23,21 +22,21 @@ export async function POST(request: NextRequest) {
   const sql = neon(url);
   const limiter = sql as unknown as SqlTag;
 
-  // A3: throttle BEFORE touching the PIN. 5 failures per account and 20 per IP in 15 minutes, kept
-  // in Postgres so every serverless instance sees the same count.
+  // A3: throttle BEFORE touching the PIN. The attempt is recorded first and counted second (see
+  // portal-login-limit.ts), so parallel requests cannot all slip under the limit. 5 per account and
+  // 20 per IP in 15 minutes, kept in Postgres so every serverless instance sees the same count.
   const account = String(email).toLowerCase().trim();
   const ip = clientIp(request.headers);
-  const gate = await checkLoginAllowed(limiter, account, ip);
+  const gate = await beginLoginAttempt(limiter, account, ip);
   if (!gate.allowed) {
     return NextResponse.json(
       { ok: false, error: RATE_LIMIT_MESSAGE },
       { status: 429, headers: { ...NO_STORE, "Retry-After": "900" } },
     );
   }
-  const fail = async (body: { ok: false; error: string }, status: number) => {
-    await recordLoginFailure(limiter, account, ip);
-    return NextResponse.json(body, { status, headers: NO_STORE });
-  };
+  // The attempt is already on record, so a failure needs nothing more than the answer.
+  const fail = async (body: { ok: false; error: string }, status: number) =>
+    NextResponse.json(body, { status, headers: NO_STORE });
 
   const rows = (await sql`
     SELECT id::text AS id, full_name, email, portal_pin_hash, portal_access, portal_must_change_pin, current_status
@@ -53,7 +52,8 @@ export async function POST(request: NextRequest) {
   const ok = await verifyPortalPin(String(pin), p.portal_pin_hash as string);
   if (!ok) return fail({ ok: false, error: "Incorrect PIN." }, 401);
 
-  await clearAccountFailures(limiter, account);
+  // A correct PIN removes only this attempt's own rows; earlier failures stay inside the window.
+  await releaseLoginAttempt(limiter, gate.attemptIds);
 
   const token = await createPhysicianToken({
     kind: "physician", physicianId: p.id as string, email: p.email as string,
