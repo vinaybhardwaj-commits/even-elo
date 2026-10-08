@@ -3,8 +3,7 @@ import { neon } from "@neondatabase/serverless";
 import { sql } from "@/lib/db";
 import { MIGRATIONS } from "@/lib/migrations";
 import { auditWrite } from "@/lib/audit";
-import { getCurrentUser } from "@/lib/auth";
-import { checkMigrateAuth, migrateDenied } from "@/lib/migrate-auth";
+import { requireOps } from "@/lib/ops-auth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -75,18 +74,13 @@ function splitStatements(sqlText: string): string[] {
  *
  * Applies pending migrations idempotently. Uses a `_migrations` marker table.
  *
- * AUTH (Round 2 / F3): a signed-in super_admin session, or `Authorization: Bearer ${ADMIN_MIGRATE_TOKEN}`.
+ * AUTH (Round 2 / F3): a signed-in super_admin session, or `Authorization: Bearer ${ADMIN_OPS_TOKEN}`.
  * Neither = 401, and an unset token disables the bearer path (fail closed). The URL is no longer the gate.
  *
  * Returns: { ok, executed, skipped, errors, applied: [{ id, durationMs }] }
  */
-async function authorize(req: Request) {
-  const user = await getCurrentUser().catch(() => null);
-  return migrateDenied(checkMigrateAuth(req.headers.get("authorization"), process.env.ADMIN_MIGRATE_TOKEN, user));
-}
-
 export async function POST(req: Request) {
-  const denied = await authorize(req);
+  const denied = await requireOps(req);
   if (denied) return denied;
   const url = process.env.DATABASE_URL;
   if (!url) {
@@ -179,7 +173,7 @@ export async function POST(req: Request) {
  * GET /api/admin/migrate — read current marker state without applying. Same auth as POST.
  */
 export async function GET(req: Request) {
-  const denied = await authorize(req);
+  const denied = await requireOps(req);
   if (denied) return denied;
   try {
     await sql`

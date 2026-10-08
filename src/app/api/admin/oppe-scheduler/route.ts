@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { neon } from "@neondatabase/serverless";
 import { buildOppePacket } from "@/lib/oppe-packet";
+import { requireOps } from "@/lib/ops-auth";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -32,7 +33,9 @@ const NO_STORE = { "Cache-Control": "no-store, max-age=0" };
  * URL-gated: same pattern as other /api/admin/* bootstrap endpoints. Wire to
  * Vercel cron via vercel.json + CRON_SECRET when ready (PRD §C.6).
  */
-export async function POST() {
+export async function POST(req: Request) {
+  const denied = await requireOps(req);
+  if (denied) return denied;
   const url = process.env.DATABASE_URL;
   if (!url) return NextResponse.json({ ok: false, error: "DATABASE_URL not configured" }, { status: 500, headers: NO_STORE });
   const sql = neon(url);
@@ -158,7 +161,9 @@ export async function POST() {
  * GET /api/admin/oppe-scheduler — preview what the scheduler WOULD do
  * without writing anything.
  */
-export async function GET() {
+export async function GET(req: Request) {
+  const denied = await requireOps(req);
+  if (denied) return denied;
   const url = process.env.DATABASE_URL;
   if (!url) return NextResponse.json({ ok: false, error: "DATABASE_URL not configured" }, { status: 500, headers: NO_STORE });
   const sql = neon(url);

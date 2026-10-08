@@ -1,10 +1,13 @@
 import { NextResponse } from "next/server";
 import { neon } from "@neondatabase/serverless";
+import { requireOps } from "@/lib/ops-auth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-export async function GET() {
+export async function GET(req: Request) {
+  const denied = await requireOps(req);
+  if (denied) return denied;
   const url = process.env.DATABASE_URL;
   if (!url) return NextResponse.json({ ok: false, error: "no DATABASE_URL" }, { status: 500 });
   const sql = neon(url);

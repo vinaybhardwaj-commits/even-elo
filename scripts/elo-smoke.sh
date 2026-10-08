@@ -8,6 +8,17 @@ BASE_URL="${BASE_URL:-https://even-elo.vercel.app}"
 PASS=0
 FAIL=0
 
+# /api/admin/** ops routes (migrate, wipe, db-fresh, ...) need a super_admin session or
+# `Authorization: Bearer $ADMIN_OPS_TOKEN`. Export ADMIN_OPS_TOKEN to run the authenticated checks;
+# without it the matrix asserts the gate instead (401).
+AUTH_ARGS=()
+if [ -n "${ADMIN_OPS_TOKEN:-}" ]; then
+  AUTH_ARGS=(-H "Authorization: Bearer ${ADMIN_OPS_TOKEN}")
+  MIGRATE_EXPECT=200
+else
+  MIGRATE_EXPECT=401
+fi
+
 check() {
   local label="$1"
   local url="$2"
@@ -16,9 +27,9 @@ check() {
 
   local code
   if [ "$method" = "POST" ]; then
-    code=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "Content-Type: application/json" -d '{}' "$url")
+    code=$(curl -s -o /dev/null -w "%{http_code}" "${AUTH_ARGS[@]}" -X POST -H "Content-Type: application/json" -d '{}' "$url")
   else
-    code=$(curl -s -o /dev/null -w "%{http_code}" "$url")
+    code=$(curl -s -o /dev/null -w "%{http_code}" "${AUTH_ARGS[@]}" "$url")
   fi
   if [ "$code" = "$expected" ]; then
     echo "  ✓ $label  [$code]"
@@ -40,7 +51,7 @@ check "GET /"                                 "$BASE_URL/"
 check "GET /admin"                            "$BASE_URL/admin"
 check "GET /admin/vcs"                        "$BASE_URL/admin/vcs"
 check "GET /admin/positions"                  "$BASE_URL/admin/positions"
-check "GET /api/admin/migrate (state)"        "$BASE_URL/api/admin/migrate"
+check "GET /api/admin/migrate (state)"        "$BASE_URL/api/admin/migrate" "$MIGRATE_EXPECT"
 check "GET /api/vcs"                          "$BASE_URL/api/vcs"
 check "GET /api/vcs?status=all"               "$BASE_URL/api/vcs?status=all"
 check "GET /api/positions"                    "$BASE_URL/api/positions"

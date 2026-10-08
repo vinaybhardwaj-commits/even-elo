@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getCurrentUser } from "@/lib/auth";
+import { requireOps } from "@/lib/ops-auth";
 import { sql } from "@/lib/db";
 import { computeMapping } from "@/lib/cdmss-mapping-service";
 import type { MappingResult } from "@/lib/cdmss-doctor-mapping";
@@ -36,13 +36,9 @@ function view(r: MappingResult & { directory_count: number }) {
   };
 }
 
-async function forbidden() {
-  const u = await getCurrentUser();
-  return !u || !u.is_super_admin;
-}
-
-export async function GET() {
-  if (await forbidden()) return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+export async function GET(req: Request) {
+  const denied = await requireOps(req);
+  if (denied) return denied;
   try {
     return NextResponse.json({ ok: true, mode: "dry_run", ...view(await compute()) });
   } catch (e) {
@@ -54,7 +50,8 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  if (await forbidden()) return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+  const denied = await requireOps(req);
+  if (denied) return denied;
   let r: MappingResult & { directory_count: number };
   try {
     r = await compute();

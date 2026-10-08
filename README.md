@@ -51,7 +51,7 @@ Phone capture has no login. Staff review uses the existing Governance session (s
 Preview smoke:
 
 1. On the Preview environment set `FEATURE_OT_CAPTURE=true` and `BLOB_READ_WRITE_TOKEN` (private blob store). Optional `CAPTURE_IP_HASH_SALT`; otherwise the IP hash uses `JWT_SECRET`.
-2. Redeploy Preview. Apply the additive migration: `POST /api/admin/migrate`.
+2. Redeploy Preview. Apply the additive migration: `POST /api/admin/migrate` with the ops bearer.
 3. Open `/capture`, submit one image. Expect a `gov_document_captures` row with status `queued` and a private blob. The response does not include a public blob URL. Staff open the queue from inside Surgical Governance (`/surgical-governance`, then Capture queue). It is not a link on the main Governance home or sidebar. Image bytes come from the authenticated proxy.
 4. With the flag unset or any value other than `true`, `POST /api/capture/upload` is rejected and the staff queue shows a flag-off state.
 
@@ -74,9 +74,11 @@ OCR does not mint `surgical_cases` and does not fill OT stream cells.
 ## Database migrations
 
 ```bash
-# After deploying with a configured DATABASE_URL:
-curl -X POST https://even-elo.vercel.app/api/admin/migrate
+# After deploying with a configured DATABASE_URL (and ADMIN_OPS_TOKEN set on that environment):
+curl -X POST -H "Authorization: Bearer $ADMIN_OPS_TOKEN" https://even-elo.vercel.app/api/admin/migrate
 ```
+
+Every operator route under `/api/admin/**` that used to be open by URL (migrate, db-fresh, db-snapshot, wipe-smoke-residue, seed-epi-base, seed-profile, oppe-scheduler, oppe-kickstart, bulk-import-physicians, dedupe-physicians, map-cdmss-doctors) now answers 401 unless the request carries a signed-in super admin session or `Authorization: Bearer $ADMIN_OPS_TOKEN`. An unset or short (under 16 characters) `ADMIN_OPS_TOKEN` disables the bearer path; it never opens it. The renamed variable replaces `ADMIN_MIGRATE_TOKEN` (set `ADMIN_OPS_TOKEN` on Preview and Production before the next deploy script run). `scripts/elo-smoke.sh` reads the same variable.
 
 Idempotent — uses a `_migrations` marker table. 6 migrations applied at v1.
 
