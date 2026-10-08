@@ -399,13 +399,14 @@ describe("ingest wiring", () => {
     const vercel = readFileSync(join(root, "vercel.json"), "utf8");
     expect(vercel).toContain("/api/cron/document-audit-ingest");
     const cron = readFileSync(join(root, "src/app/api/cron/document-audit-ingest/route.ts"), "utf8");
-    expect(cron).toContain("vercel-cron/");
-    expect(cron).toContain("getCurrentUser");
+    // A1: bearer-only. No User-Agent trust, no session fallback.
+    expect(cron).not.toContain("vercel-cron/");
+    expect(cron).not.toContain("getCurrentUser");
+    expect(cron).toContain("cronGuard");
     expect(cron).toContain("runDocumentAuditIngest");
     expect(cron).toContain("maxDuration = 300");
     expect(cron).toContain("?note_class=ot");
     expect(cron).toContain("?window=30");
-    expect(cron).toMatch(/async function allowed\(/);
     const portal = readFileSync(join(root, "src/app/api/portal/document-audits/route.ts"), "utf8");
     expect(portal).toContain("portalPdfStatus");
     expect(portal).not.toContain("resolveAuditPdfUrl");
