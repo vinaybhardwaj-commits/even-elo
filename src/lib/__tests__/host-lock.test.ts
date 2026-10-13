@@ -44,9 +44,36 @@ describe("doctors host lock: forbidden prefixes 404", () => {
   });
 });
 
+describe("doctors host lock: permanent probes", () => {
+  it("/_next/data is blocked", async () => {
+    for (const p of ["/_next/data/abc/admin.json", "/_next/data/abc/portal.json", "/_next"]) {
+      expect((await middleware(req(doctors, p))).status, p).toBe(404);
+    }
+  });
+  it("RSC requests to staff routes are 404", async () => {
+    for (const p of ["/admin", "/physicians", "/api/admin/users"]) {
+      expect((await middleware(req(doctors, p, { RSC: "1" }))).status, p).toBe(404);
+      expect((await middleware(req(doctors, `${p}?_rsc=x`))).status, p).toBe(404);
+    }
+  });
+  it("prefetch requests to staff pages are 404", async () => {
+    for (const p of ["/admin", "/physicians", "/home"]) {
+      expect((await middleware(req(doctors, p, { "Next-Router-Prefetch": "1" }))).status, p).toBe(404);
+      expect((await middleware(req(doctors, p, { Purpose: "prefetch" }))).status, p).toBe(404);
+    }
+  });
+  it("encoded and traversal shapes never reach a staff page", async () => {
+    for (const p of ["/%61dmin", "/portal/../admin", "/portal/%2e%2e/admin", "/_next/../admin", "/PORTAL"]) {
+      const r = await middleware(req(doctors, p));
+      expect(r.status, p).not.toBe(200);
+      expect(r.headers.get("x-middleware-next"), p).toBeNull();
+    }
+  });
+});
+
 describe("doctors host lock: allowed paths", () => {
   it("not 404", async () => {
-    for (const p of ["/portal", "/portal/login", "/portal/set-pin", "/api/portal/auth/login", "/api/portal/me", "/_next/static/chunk.js", "/favicon.ico", "/robots.txt"]) {
+    for (const p of ["/portal", "/portal/login", "/portal/set-pin", "/api/portal/auth/login", "/api/portal/me", "/_next/static/chunk.js", "/_next/static/media/f.woff2", "/_next/image", "/favicon.ico", "/robots.txt"]) {
       expect((await middleware(req(doctors, p))).status, p).not.toBe(404);
     }
   });

@@ -71,7 +71,8 @@ export async function middleware(request: NextRequest) {
   const lockHost = (request.headers.get("host") || "").toLowerCase();
   if (isDoctorsHost(lockHost, request.headers.get("x-test-host"))) {
     if (pathname === "/") return NextResponse.redirect(new URL("/portal", request.url));
-    if (!isAllowedOnDoctorsHost(pathname)) return new NextResponse(null, { status: 404 });
+    // nextUrl strips /_next/data/<id>/...json down to the page path, so also check the raw URL path.
+    if (!isAllowedOnDoctorsHost(pathname) || !isAllowedOnDoctorsHost(new URL(request.url).pathname)) return new NextResponse(null, { status: 404 });
   }
 
   // OAuth discovery metadata — always public (RFC 9728 / 8414).
@@ -103,9 +104,6 @@ export async function middleware(request: NextRequest) {
     const url = request.nextUrl.clone();
     url.pathname = "/capture";
     return NextResponse.rewrite(url);
-  }
-  if (host.startsWith("doctors.") && pathname === "/") {
-    return NextResponse.redirect(new URL("/portal", request.url));
   }
 
   // Phone capture: shared staff link, no Governance session.

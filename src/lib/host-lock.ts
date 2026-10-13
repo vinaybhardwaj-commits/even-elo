@@ -8,8 +8,11 @@ export const DOCTORS_HOST_ALLOWLIST: readonly string[] = [
   // Portal APIs, including /api/portal/auth/* (login, logout, request-pin, set-pin), which is
   // where the portal login page actually posts. The portal never calls /auth or /api/auth.
   "/api/portal",
-  // Next.js build output: JS/CSS chunks, next/font self-hosted fonts, optimised images.
-  "/_next",
+  // Build output: JS/CSS chunks and next/font self-hosted fonts (/_next/static/media).
+  // Deliberately not all of /_next: /_next/data/* would expose page data for staff routes.
+  "/_next/static",
+  // Optimised images.
+  "/_next/image",
   // Browser icon request.
   "/favicon.ico",
   // Crawler file.
