@@ -1,0 +1,26 @@
+{
+  "synthetic": true,
+  "note": "Synthetic sample data for STUDIO_LIVE_READS=0 and tests. Not real physicians.",
+  "columns": [
+    "intervention_id",
+    "done_on",
+    "signal_key",
+    "signal_label",
+    "kind",
+    "action",
+    "physician_id",
+    "cdmss_sync_state"
+  ],
+  "rows": [
+    {
+      "intervention_id": "00000000-0000-4000-8000-0000000000a1",
+      "done_on": "2026-10-02",
+      "signal_key": "sample",
+      "signal_label": "Sample signal",
+      "kind": "huddle_briefing",
+      "action": null,
+      "physician_id": null,
+      "cdmss_sync_state": null
+    }
+  ]
+}

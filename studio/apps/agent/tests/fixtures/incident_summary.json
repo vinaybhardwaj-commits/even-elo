@@ -1,0 +1,24 @@
+{
+  "synthetic": true,
+  "note": "Synthetic sample data for STUDIO_LIVE_READS=0 and tests. Not real physicians.",
+  "columns": [
+    "status",
+    "polarity",
+    "severity",
+    "incidents"
+  ],
+  "rows": [
+    {
+      "status": "open",
+      "polarity": "negative",
+      "severity": "low",
+      "incidents": 3
+    },
+    {
+      "status": "closed",
+      "polarity": "negative",
+      "severity": "medium",
+      "incidents": 2
+    }
+  ]
+}

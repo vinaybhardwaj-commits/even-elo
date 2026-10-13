@@ -1,0 +1,38 @@
+{
+  "synthetic": true,
+  "note": "Synthetic sample data for STUDIO_LIVE_READS=0 and tests. Not real physicians.",
+  "columns": [
+    "metric",
+    "value"
+  ],
+  "rows": [
+    {
+      "metric": "physicians_active",
+      "value": 3
+    },
+    {
+      "metric": "physicians_total",
+      "value": 3
+    },
+    {
+      "metric": "hospitals_active",
+      "value": 1
+    },
+    {
+      "metric": "engagements_open",
+      "value": 3
+    },
+    {
+      "metric": "incidents_open",
+      "value": 3
+    },
+    {
+      "metric": "interventions_total",
+      "value": 1
+    },
+    {
+      "metric": "signal_snapshot_days",
+      "value": 1
+    }
+  ]
+}

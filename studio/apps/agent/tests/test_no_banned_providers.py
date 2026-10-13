@@ -41,14 +41,22 @@ def test_no_byok_headers_or_chat_latest_default():
         assert "chat-latest" not in text, path.name
 
 
-def test_agent_tools_list_is_minimal():
+def test_agent_tools_list_is_planning_plus_read_only_governance():
     import importlib
     import sys
 
     sys.modules.pop("main", None)
     try:
         main = importlib.import_module("main")
-        assert [t.name for t in main.TOOLS] == ["plan_visualization"]
+        assert [t.name for t in main.TOOLS] == [
+            "plan_visualization",
+            "list_physicians",
+            "physician_profile",
+            "signal_snapshots",
+            "interventions",
+            "incident_summary",
+            "overview_counts",
+        ]
     finally:
         sys.modules.pop("main", None)
 

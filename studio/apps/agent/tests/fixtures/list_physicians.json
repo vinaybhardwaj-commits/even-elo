@@ -1,0 +1,38 @@
+{
+  "synthetic": true,
+  "note": "Synthetic sample data for STUDIO_LIVE_READS=0 and tests. Not real physicians.",
+  "columns": [
+    "physician_id",
+    "full_name",
+    "primary_specialty",
+    "current_status",
+    "date_joined_network",
+    "hospitals"
+  ],
+  "rows": [
+    {
+      "physician_id": "00000000-0000-4000-8000-000000000001",
+      "full_name": "Sample Physician A",
+      "primary_specialty": "Cardiology",
+      "current_status": "active",
+      "date_joined_network": "2024-01-01",
+      "hospitals": "SAMPLE-1"
+    },
+    {
+      "physician_id": "00000000-0000-4000-8000-000000000002",
+      "full_name": "Sample Physician B",
+      "primary_specialty": "Orthopaedics",
+      "current_status": "active",
+      "date_joined_network": "2024-01-01",
+      "hospitals": "SAMPLE-1"
+    },
+    {
+      "physician_id": "00000000-0000-4000-8000-000000000003",
+      "full_name": "Sample Physician C",
+      "primary_specialty": "General Surgery",
+      "current_status": "active",
+      "date_joined_network": "2024-01-01",
+      "hospitals": "SAMPLE-1"
+    }
+  ]
+}

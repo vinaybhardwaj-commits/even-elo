@@ -1,0 +1,30 @@
+{
+  "synthetic": true,
+  "note": "Synthetic sample data for STUDIO_LIVE_READS=0 and tests. Not real physicians.",
+  "columns": [
+    "day",
+    "period",
+    "signal",
+    "severity",
+    "trend",
+    "scope",
+    "n",
+    "affected_doctors",
+    "physician_n",
+    "physician_value"
+  ],
+  "rows": [
+    {
+      "day": "2026-10-01",
+      "period": "day",
+      "signal": "Sample signal",
+      "severity": "watch",
+      "trend": "flat",
+      "scope": "mixed",
+      "n": 40,
+      "affected_doctors": 2,
+      "physician_n": null,
+      "physician_value": null
+    }
+  ]
+}
