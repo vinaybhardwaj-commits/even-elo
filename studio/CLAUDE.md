@@ -1,6 +1,6 @@
 # Even Studio (hardened private fork of CopilotKit OpenIntelligentUI)
 
-This repository builds a general assistant experience around **answers you can interact with**: understand a topic, compare options, or make a useful tool. The agent currently has one tool (`plan_visualization`); governance tools arrive in M1.
+This repository builds a general assistant experience around **answers you can interact with**: understand a topic, compare options, or make a useful tool. The agent has `plan_visualization` plus six read-only governance tools (M0-S2); write tools arrive later.
 
 ## Boundaries and source of truth
 
@@ -16,7 +16,7 @@ Use the product name in visible copy. Preserve repository URLs, package names, `
 
 Choose text for direct answers, native components when their schemas fit, and custom UI when a diagram or interaction helps. There is no mandatory acknowledgement/plan/build/narrate sequence. Distinct sections may use multiple tools; do not repeat a successful build merely because it returned "UI generated".
 
-Label sample assumptions and distinguish user inputs, retrieved evidence, and calculated values. There is no data connection yet and no built-in live weather or business-data source. Never imply a generated form authenticates or persists data.
+Label sample assumptions and distinguish user inputs, retrieved evidence, and calculated values. Governance data comes only from the read-only tools (results render as tables with a source); there is no other data connection and no built-in live weather or business-data source. Never imply a generated form authenticates or persists data.
 
 Generated controls must work, validate numerical edge cases, support keyboard access and narrow screens, and expose useful errors. Use the user's selected values when sending a deliberate follow-up. Each follow-up is a new turn/output; do not assume a cross-call patch API or persist iframe state through rerenders.
 

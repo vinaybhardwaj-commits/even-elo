@@ -49,7 +49,7 @@ A follow-up starts a new agent turn. Prior generated outputs serve as separate s
 
 ## Chat and evidence
 
-The page shows CopilotChat; New chat starts a fresh thread. The agent currently has one tool, `plan_visualization`; no data connection exists, and neither a renderer nor a native card establishes one. Governance tools arrive in M1.
+The page shows CopilotChat; New chat starts a fresh thread. The agent has `plan_visualization` and six read-only governance tools (see "Studio zone" below); a renderer or native card never establishes a data connection.
 
 ## Telemetry
 
@@ -62,3 +62,12 @@ CopilotKit's telemetry clients are patched to no-ops (`patches/`), Segment is re
 - Renderer: `apps/app/src/components/generative-ui/open-generative-ui/`.
 - Host bridge: `apps/app/src/lib/sandbox/`.
 
+
+## Studio zone (M0-S2)
+
+- **Path.** The app serves under basePath `/studio`. even-elo's root app rewrites `/studio` and `/studio/:path*` to `${STUDIO_ORIGIN}/studio/...` only when `STUDIO_ORIGIN` is set; the doctors host stays 404 for `/studio`.
+- **Browser to app.** `src/middleware.ts` verifies the `epi_session` JWT (HS256, `JWT_SECRET`), refuses `kind=physician` and any `epi_physician_session` cookie, re-reads the role from the governance DB on every request over `GOV_RO_DATABASE_URL` (super_admin only), and checks Origin/Host (`governance.evenos.app`; localhost outside production) on every non-GET.
+- **App to agent.** `/studio/api/copilotkit` calls `AGENT_URL` (ends in `/agent`) with `X-Studio-Service-Token` and a 45 s `X-Studio-Actor` JWT (aud `studio-agent`, random `jti`). Cookies are never forwarded.
+- **Agent.** `apps/agent/src/studio_auth.py` is the first ASGI middleware: service token, actor JWT, jti replay (LRU plus `studio_nonce`), per-staff token bucket (`STUDIO_RATE_PER_MIN`). Threads are namespaced `<staff id>:<thread id>`. The staff id reaches tools only via the graph config.
+- **Tools.** `studio_tools.py`: typed, parameterised, SELECT-only; one metadata-only `studio_audit` row per call; `STUDIO_LIVE_READS=0` serves synthetic fixtures without a redeploy. Results render through `SourceTable`, which refuses a payload without `source`.
+- **State.** Checkpoints in Postgres (`STUDIO_DATABASE_URL`, langgraph-checkpoint-postgres); `migrations/0001_studio.sql` plus `apply_migration.py` (never run by CI). Without the URL the dev in-memory saver is used.

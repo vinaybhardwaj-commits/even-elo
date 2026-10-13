@@ -14,6 +14,7 @@ import { PieChart, PieChartProps } from "@/components/generative-ui/charts/pie-c
 import { BarChart, BarChartProps } from "@/components/generative-ui/charts/bar-chart";
 import { ToolReasoning } from "@/components/tool-rendering";
 import { PlanCard } from "@/components/generative-ui/plan-card";
+import { GOVERNANCE_TOOL_NAMES, SourceTable } from "@/components/generative-ui/source-table";
 
 export const useGenerativeUIExamples = () => {
   const { theme, setTheme } = useTheme();
@@ -63,6 +64,20 @@ export const useGenerativeUIExamples = () => {
       return <PlanCard status={status} keyElements={keyElements} {...rest} />;
     },
   });
+
+  // --------------------------
+  // Governance read tools render ONLY through the typed SourceTable (requires `source`).
+  // The list is fixed, so these hook calls run in the same order on every render.
+  // --------------------------
+  for (const name of GOVERNANCE_TOOL_NAMES) {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    useRenderTool({
+      name,
+      parameters: z.object({}).passthrough(),
+      render: ({ status, result }) =>
+        status === "complete" ? <SourceTable result={result} /> : <ToolReasoning name={name} status={status} />,
+    });
+  }
 
   // --------------------------
   // 🪁 Default Tool Rendering: https://docs.copilotkit.ai/langgraph/generative-ui/backend-tools

@@ -71,6 +71,12 @@ describe("useGenerativeUIExamples registrations", () => {
     expect(captured.useFrontendTool.map((c) => c.name)).toEqual(["toggleTheme"]);
     expect(captured.useRenderTool.map((c) => c.name)).toEqual([
       "plan_visualization",
+      "list_physicians",
+      "physician_profile",
+      "signal_snapshots",
+      "interventions",
+      "incident_summary",
+      "overview_counts",
     ]);
     // The demo meeting picker was removed; the HITL pattern lives in a comment.
     expect(captured.useHumanInTheLoop).toEqual([]);
