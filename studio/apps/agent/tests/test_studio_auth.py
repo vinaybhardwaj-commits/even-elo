@@ -242,3 +242,16 @@ def test_cookies_are_ignored():
     client.cookies.set("epi_session", "x")
     r = client.post("/agent", headers=h(None))
     assert r.status_code == 401 and seen == []
+
+
+def test_rate_limited_request_does_not_burn_its_jti():
+    clock = [0.0]
+    client, seen = make_client(bucket=TokenBucket(1, clock=lambda: clock[0]))
+    assert client.post("/agent", headers=h(actor(sub="a"))).status_code == 200
+    held = actor(sub="a", jti="held-token")
+    assert client.post("/agent", headers=h(held)).status_code == 429
+    clock[0] += 61.0
+    # Same token, after Retry-After: still usable because the 429 did not consume the jti.
+    assert client.post("/agent", headers=h(held)).status_code == 200
+    clock[0] += 61.0
+    assert client.post("/agent", headers=h(held)).status_code == 401  # now it is spent

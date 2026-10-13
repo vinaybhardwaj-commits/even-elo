@@ -5,8 +5,9 @@ A request is served only when ALL of these hold:
   2. X-Studio-Actor is an HS256 JWT signed with env STUDIO_ACTOR_SECRET with aud
      "studio-agent", a role in ALLOWED_ROLES, exp not passed, exp - iat <= 60 s, and
      iat not more than 5 s in the future;
-  3. its jti has not been seen (in-memory LRU, then the studio_nonce table, insert-or-fail);
-  4. the staff id is within its token bucket (env STUDIO_RATE_PER_MIN, default 30).
+  3. the staff id is within its token bucket (env STUDIO_RATE_PER_MIN, default 30), checked before
+     the jti is consumed so a 429 does not burn the token;
+  4. its jti has not been seen (in-memory LRU, then the studio_nonce table, insert-or-fail).
 
 Failures answer a bare JSON code. Nothing from the request is echoed or logged beyond the
 staff id and the code. Cookies are never read.
@@ -213,10 +214,12 @@ class StudioAuthMiddleware:
         if not service_token_ok(headers.get("x-studio-service-token"), self._service_token()):
             raise Denied(401, "bad_service_token")
         claims = verify_actor(headers.get("x-studio-actor"), self._actor_secret())
-        if not await self.nonce_store.claim(claims["jti"], float(claims["exp"])):
-            raise Denied(401, "replay")
+        # Rate limit BEFORE burning the jti: a 429 must not consume the one-time token, so the
+        # client can retry the same token after Retry-After if it is still valid.
         if scope.get("path") != HEALTH_PATH and not self.bucket.allow(claims["sub"]):
             raise Denied(429, "rate_limited")
+        if not await self.nonce_store.claim(claims["jti"], float(claims["exp"])):
+            raise Denied(401, "replay")
         return claims
 
     async def _reject(self, send, status: int, code: str):

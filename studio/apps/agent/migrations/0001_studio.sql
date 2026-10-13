@@ -17,10 +17,13 @@ CREATE TABLE IF NOT EXISTS studio_audit (
   params_hash text        NOT NULL,
   row_count   integer     NOT NULL CHECK (row_count >= 0),
   duration_ms integer     NOT NULL CHECK (duration_ms >= 0),
-  mode        text        NOT NULL CHECK (mode IN ('live', 'fixture'))
+  mode        text        NOT NULL CHECK (mode IN ('live', 'fixture')),
+  outcome     text        NOT NULL DEFAULT 'ok' CHECK (outcome IN ('ok', 'error'))
 );
 CREATE INDEX IF NOT EXISTS idx_studio_audit_staff_ts ON studio_audit (staff_id, ts DESC);
 
+-- OWNER NOTE: whoever runs this file owns the tables and can disable the trigger below. Run it as a
+-- role that is NOT {{app_role}} (apply_migration.py enforces this).
 -- Append-only: the trigger blocks UPDATE/DELETE/TRUNCATE for every role, the REVOKE below
 -- removes the privileges from the app role (defence in depth).
 CREATE OR REPLACE FUNCTION studio_audit_append_only() RETURNS trigger

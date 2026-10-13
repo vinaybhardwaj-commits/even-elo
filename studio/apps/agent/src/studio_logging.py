@@ -2,15 +2,19 @@
 
 ContentFilter is installed on every handler (root and the uvicorn loggers) because a filter on a
 logger does not see records propagated from child loggers, but a handler filter sees all of them.
-A record is DROPPED when it carries content:
-  * an attribute `content`, `messages`, `prompt`, `completion` or `studio_content`;
-  * a LangChain message object, or a mapping/sequence holding content-bearing keys, in its args;
-  * it comes from a chat/tool library at a level below WARNING (these emit prompts and payloads
-    at DEBUG/INFO).
+
+  * Records from chat/tool libraries (CHATTY_LOGGER_PREFIXES) are DROPPED below WARNING and
+    REWRITTEN at WARNING and above: their message and args are replaced by a fixed text, so no
+    argument (resume payload, tool-call args excerpt, exception text) can be emitted.
+  * Any record carrying content (attributes, LangChain messages, content-keyed args) is dropped.
+  * Exception text and tracebacks are never emitted by any logger: only the exception class and a
+    short hash of its text (so repeated errors can be correlated without revealing them).
+  * uvicorn.access loses its query string.
 """
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 from typing import Any
@@ -25,6 +29,7 @@ CHATTY_LOGGER_PREFIXES = (
     "deepagents",
     "ag_ui",
     "copilotkit",
+    "uvicorn.error",
     "httpx",
     "httpcore",
     "openai",
@@ -44,20 +49,48 @@ def _carries_content(value: Any, depth: int = 0) -> bool:
     return False
 
 
+def _exc_summary(record: logging.LogRecord) -> str:
+    exc = record.exc_info[1] if record.exc_info else None
+    if exc is None:
+        return ""
+    digest = hashlib.sha256(str(exc).encode("utf-8", "replace")).hexdigest()[:12]
+    return f" [exc={type(exc).__name__} hash={digest}]"
+
+
+def _strip_query(args: Any) -> Any:
+    if isinstance(args, tuple) and len(args) >= 3 and isinstance(args[2], str):
+        return args[:2] + (args[2].split("?", 1)[0],) + args[3:]
+    return args
+
+
 class ContentFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         if any(getattr(record, attr, None) is not None for attr in CONTENT_ATTRS):
             return False
+        chatty = record.name.startswith(CHATTY_LOGGER_PREFIXES)
+        if chatty and record.levelno < logging.WARNING:
+            return False
+        if record.name == "uvicorn.access":
+            record.args = _strip_query(record.args)
+        elif chatty:
+            # Fixed text only: the original message and args may embed payloads or exception text.
+            suffix = _exc_summary(record)
+            record.msg, record.args = f"{record.name} {record.levelname.lower()} (details suppressed){suffix}", None
+            record.exc_info = record.exc_text = record.stack_info = None
+            return True
         args = record.args
         if args:
             if isinstance(args, dict):
                 args = (args,)
             if any(_carries_content(a) for a in args):
                 return False
-        if record.levelno < logging.WARNING and record.name.startswith(CHATTY_LOGGER_PREFIXES):
-            return False
         if _carries_content(record.msg):
             return False
+        if record.exc_info or record.exc_text:
+            suffix = _exc_summary(record)
+            record.msg = f"{record.getMessage()}{suffix}"
+            record.args = None
+            record.exc_info = record.exc_text = record.stack_info = None
         return True
 
 

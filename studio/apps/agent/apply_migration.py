@@ -5,6 +5,8 @@
 --dsn-env NAMES the environment variable that holds the connection string (use the DIRECT,
 non-pooled Neon URL of a role that may create tables). The value is never printed.
 Steps: (1) langgraph checkpointer setup(); (2) migrations/*.sql in order, each in one transaction.
+The migrating role becomes the OWNER of studio_audit and must differ from --app-role (checked): an
+owner can disable the append-only trigger, the app role cannot.
 Do not run this against a real database from CI or from a build step.
 """
 
@@ -32,7 +34,13 @@ def apply(dsn: str, app_role: str, migrations_dir: Path = MIGRATIONS) -> list[st
 
     applied: list[str] = []
     # Neon: autocommit + no prepared statements; setup() runs its own DDL.
-    with psycopg.connect(dsn, autocommit=True, prepare_threshold=0) as conn:
+    with psycopg.connect(dsn, autocommit=True, prepare_threshold=None) as conn:
+        me = conn.execute("SELECT current_user").fetchone()[0]
+        if me == app_role:
+            raise SystemExit(
+                "refusing to run: the migrating role and --app-role are the same ('%s'). The table owner "
+                "must be a separate role, or the app role could disable the studio_audit trigger." % me
+            )
         exists = conn.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (app_role,)).fetchone()
         if not exists:
             raise SystemExit(f"app role '{app_role}' does not exist; create it first (this script never creates roles)")

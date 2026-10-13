@@ -2,7 +2,7 @@
 
 Static checks always run. The Postgres checks run against a throw-away local server: set
 STUDIO_TEST_PG_URI to a SUPERUSER uri of a scratch database, or have `pgserver` importable
-(`uv run --with pgserver pytest tests/test_studio_migration.py`). Otherwise they skip.
+(`uv run --python 3.12 --with pgserver python -m pytest tests/test_studio_migration.py`). Otherwise they skip.
 Nothing here ever touches a real database.
 """
 
@@ -151,6 +151,42 @@ def test_checkpointer_works_for_the_app_role(migrated):
         cfg = {"configurable": {"thread_id": "staff:t", "checkpoint_ns": ""}}
         saver.put(cfg, empty_checkpoint(), {"source": "input", "step": 0, "parents": {}}, {})
         assert saver.get_tuple(cfg) is not None
+
+
+def test_runner_refuses_when_the_migrating_role_is_the_app_role(migrated, pg_uri):
+    with psycopg.connect(pg_uri, autocommit=True) as c:
+        me = c.execute("SELECT current_user").fetchone()[0]
+    with pytest.raises(SystemExit, match="same"):
+        apply_migration.apply(pg_uri, me)
+
+
+def test_audit_has_an_outcome_column_defaulting_to_ok(migrated):
+    with as_app(migrated) as c:
+        c.execute("INSERT INTO studio_audit (staff_id, tool, params_hash, row_count, duration_ms, mode, outcome) VALUES ('s','t','h',0,1,'live','error')")
+        assert c.execute("SELECT outcome FROM studio_audit WHERE staff_id = 's' AND outcome = 'error' LIMIT 1").fetchone()[0] == "error"
+        with pytest.raises(psycopg.errors.CheckViolation):
+            c.execute("INSERT INTO studio_audit (staff_id, tool, params_hash, row_count, duration_ms, mode, outcome) VALUES ('s','t','h',0,1,'live','weird')")
+
+
+def test_connect_read_only_is_really_read_only_even_for_a_write_capable_role(pg_uri, monkeypatch):
+    """The superuser can write anywhere; through connect_read_only() it still must not."""
+    from src import studio_db
+
+    async def go():
+        monkeypatch.setenv("GOV_RO_DATABASE_URL", pg_uri)
+        conn = await studio_db.connect_read_only()
+        try:
+            cur = await conn.execute("SHOW transaction_read_only")
+            assert (await cur.fetchone())["transaction_read_only"] == "on"
+            for stmt in ("CREATE TABLE ro_probe (x int)", "CREATE TEMP TABLE ro_probe_t (x int)", "INSERT INTO studio_audit (staff_id, tool, params_hash, row_count, duration_ms, mode) VALUES ('x','x','x',0,0,'live')"):
+                with pytest.raises(psycopg.errors.ReadOnlySqlTransaction):
+                    await conn.execute(stmt)
+                await conn.rollback()
+            assert (await (await conn.execute("SELECT 1 AS one")).fetchone())["one"] == 1
+        finally:
+            await conn.close()
+
+    asyncio.run(go())
 
 
 def test_threads_archive_flag_defaults_false(migrated):

@@ -36,13 +36,66 @@ def test_records_carrying_message_content_are_dropped():
     assert out.getvalue() == ""
 
 
-def test_chat_and_tool_libraries_are_silenced_below_warning_only():
-    for name in ("langchain_core.callbacks", "langgraph.pregel", "ag_ui_langgraph.agent", "copilotkit.x", "httpx", "deepagents.graph"):
+def test_chatty_libraries_are_dropped_below_warning_and_fully_sanitised_above():
+    for name in ("langchain_core.callbacks", "langgraph.pregel", "ag_ui_langgraph.agent", "copilotkit.x", "httpx", "deepagents.graph", "uvicorn.error"):
         logger, out = capture(name)
         logger.debug("prompt: %s", "text that could be anything")
         logger.info("tool call args %s", "x")
-        logger.warning("retrying after timeout")
-        assert out.getvalue().count("\n") == 1, name  # only the WARNING survives
+        assert out.getvalue() == "", name
+        logger.warning("retrying with %s", "PHYSICIAN NAME Dr Sample")
+        logger.error("boom %r", "tool args {'name': 'Dr Sample'}")
+        text = out.getvalue()
+        assert text.count("\n") == 2 and "details suppressed" in text, name
+        assert "Dr Sample" not in text and "PHYSICIAN" not in text and "retrying" not in text
+
+
+def test_ag_ui_resume_and_tool_args_records_are_sanitised():
+    """The exact shapes at ag_ui_langgraph/agent.py:572 (WARNING) and :783 (ERROR)."""
+    logger, out = capture("ag_ui_langgraph.agent")
+    logger.warning(
+        "failed to parse resume_input as JSON, treating as string (thread_id=%r, run_id=%r, error=%s): %r",
+        "staff-1:t1", "run-1", "Expecting value: line 1 column 1", '{"resume": "list physicians named Dr Sample with ...',
+    )
+    logger.error(
+        "Resetting tool_call args after JSON decode failure (tool_call_id=%r, error=%s): %r",
+        "call_1", "Unterminated string", '{"filter": {"name_contains": "Sample Physician"',
+    )
+    text = out.getvalue()
+    assert "Sample" not in text and "resume" not in text and "Expecting" not in text and "call_1" not in text
+    assert text.count("details suppressed") == 2
+
+
+def test_exception_text_and_tracebacks_never_emitted_only_class_and_hash():
+    for name in ("uvicorn.error", "studio.test", "ag_ui_langgraph.agent"):
+        logger, out = capture(name)
+        try:
+            raise ValueError("secret physician list: Dr Sample")
+        except ValueError:
+            logger.exception("Exception in ASGI application")
+        text = out.getvalue()
+        assert "Traceback" not in text and "Dr Sample" not in text and "secret" not in text, name
+        assert "exc=ValueError hash=" in text, name
+
+
+def test_same_exception_text_gives_the_same_hash_for_correlation():
+    import re
+
+    hashes = []
+    for _ in range(2):
+        logger, out = capture("studio.test")
+        try:
+            raise KeyError("same text")
+        except KeyError:
+            logger.exception("failed")
+        hashes.append(re.search(r"hash=([0-9a-f]{12})", out.getvalue()).group(1))
+    assert hashes[0] == hashes[1]
+
+
+def test_uvicorn_access_log_drops_the_query_string():
+    logger, out = capture("uvicorn.access")
+    logger.info('%s - "%s %s HTTP/%s" %d', "127.0.0.1:1", "GET", "/agent/health?name=Dr+Sample&x=1", "1.1", 200)
+    text = out.getvalue()
+    assert "/agent/health" in text and "?" not in text and "Sample" not in text
 
 
 def test_filter_reaches_propagated_records_through_the_handler():

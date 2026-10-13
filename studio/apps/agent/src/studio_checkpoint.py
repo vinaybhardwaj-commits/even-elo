@@ -1,7 +1,9 @@
 """Checkpoint storage. Production: langgraph-checkpoint-postgres on STUDIO_DATABASE_URL.
 
-Neon rules: autocommit, prepare_threshold=0 (pooled endpoint has no server-side prepared
-statements). Tables are created by apply_migration.py (setup() on the DIRECT url), never here.
+Neon rules: autocommit and prepare_threshold=None (NO prepared statements; 0 would mean
+"prepare on first use", which a transaction-pooled endpoint may reject). Tables are created by apply_migration.py (setup() on the DIRECT url), never here.
+Retention: checkpoints keep full chat and tool-result rows. Never delete them from the app; ops
+archives a thread (studio_threads.archived) and moves cold rows under a retention decision.
 Dev fallback (STUDIO_DATABASE_URL unset): bounded in-memory saver, with a warning.
 """
 
@@ -20,7 +22,7 @@ logger = logging.getLogger("studio.checkpoint")
 
 
 def pool_kwargs() -> dict:
-    return {"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row}
+    return {"autocommit": True, "prepare_threshold": None, "row_factory": dict_row}
 
 
 def dev_checkpointer() -> BoundedMemorySaver:

@@ -20,9 +20,16 @@ def _dsn(env_name: str) -> str:
 
 
 async def connect_read_only() -> psycopg.AsyncConnection:
-    """SELECT-only governance connection (GOV_RO_DATABASE_URL). Also forced read-only per session."""
+    """SELECT-only governance connection (GOV_RO_DATABASE_URL), read-only at the session level too.
+
+    NOT autocommit: set_read_only() only applies to transactions psycopg BEGINs, so with autocommit
+    it is a silent no-op (a write-capable role could then write). Each statement therefore runs in
+    an implicit `BEGIN READ ONLY` transaction that is rolled back on close. Startup `options` are
+    avoided because Neon's pooled endpoint rejects them. prepare_threshold=None: no prepared
+    statements (0 would mean "prepare on first use").
+    """
     conn = await psycopg.AsyncConnection.connect(
-        _dsn("GOV_RO_DATABASE_URL"), autocommit=True, prepare_threshold=0, row_factory=dict_row
+        _dsn("GOV_RO_DATABASE_URL"), autocommit=False, prepare_threshold=None, row_factory=dict_row
     )
     await conn.set_read_only(True)
     return conn
@@ -31,7 +38,7 @@ async def connect_read_only() -> psycopg.AsyncConnection:
 async def connect_studio() -> psycopg.AsyncConnection:
     """Studio state connection (STUDIO_DATABASE_URL): audit, nonce, checkpoints."""
     return await psycopg.AsyncConnection.connect(
-        _dsn("STUDIO_DATABASE_URL"), autocommit=True, prepare_threshold=0, row_factory=dict_row
+        _dsn("STUDIO_DATABASE_URL"), autocommit=True, prepare_threshold=None, row_factory=dict_row
     )
 
 

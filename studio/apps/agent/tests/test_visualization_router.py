@@ -226,6 +226,41 @@ def test_real_graph_filters_injected_frontend_tools_and_routes_once(monkeypatch)
     )
 
 
+def test_jev_context_has_human_turns_only_never_ai_or_tool_text():
+    from langchain_core.messages import ToolMessage
+
+    state = {
+        "messages": [
+            HumanMessage(content="who are our cardiologists?", id="h1"),
+            AIMessage(content="Dr Sample Physician A and Dr Sample Physician B (signals: ...)"),
+            ToolMessage(content="LEAK-ROWS physician names", tool_call_id="t"),
+            HumanMessage(content="chart it", id="h2"),
+            AIMessage(content="LEAK-AI-TEXT"),
+            HumanMessage(content="as a table", id="h3"),
+        ]
+    }
+    turn, context = routing_input(state)
+    assert turn == "h3"
+    assert [c["role"] for c in context] == ["human", "human", "human"]
+    blob = str(context)
+    assert "LEAK" not in blob and "Dr Sample" not in blob
+
+
+def test_jev_request_body_never_carries_ai_text(monkeypatch):
+    from src.visualization_router import request_options
+
+    monkeypatch.setenv("TYPESAFE_API_KEY", "env-key")
+    state = {"messages": [HumanMessage(content="hi", id="a"), AIMessage(content="LEAK-AI"), HumanMessage(content="more", id="b")]}
+    _, context = routing_input(state)
+    assert "LEAK-AI" not in str(request_options(context))
+
+
+def test_last_four_human_texts_only():
+    state = {"messages": [HumanMessage(content=f"q{i}", id=str(i)) for i in range(7)]}
+    _, context = routing_input(state)
+    assert [c["content"] for c in context] == ["q3", "q4", "q5", "q6"]
+
+
 def test_idless_continuation_has_stable_turn_key():
     state = {"messages": [HumanMessage(content="table")]}
     turn, _ = routing_input(state)

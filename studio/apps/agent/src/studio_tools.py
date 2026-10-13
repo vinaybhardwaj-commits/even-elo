@@ -38,7 +38,8 @@ from src.studio_db import connect_read_only
 logger = logging.getLogger("studio.tools")
 
 STAFF_KEY = "studio_staff_id"
-FIXTURE_DIR = Path(__file__).resolve().parents[1] / "tests" / "fixtures"
+# Inside src/ so the kill switch works in a deploy image that ships no tests/ directory.
+FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures"
 MAX_LIMIT = 200
 
 # ---------------------------------------------------------------------------------------------
@@ -225,32 +226,46 @@ async def run_read_tool(
     staff_id = staff_id_from(config)
     started = time.monotonic()
     live = live_reads_enabled()
+    mode = "live" if live else "fixture"
+
+    async def audit(row_count: int, outcome: str) -> None:
+        await studio_audit.audit_sink(
+            studio_audit.AuditRow(
+                staff_id=staff_id,
+                tool=tool_name,
+                params_hash=studio_audit.params_hash(params),
+                row_count=row_count,
+                duration_ms=int((time.monotonic() - started) * 1000),
+                mode=mode,
+                outcome=outcome,
+            )
+        )
+
+    failure: Optional[str] = None
+    rows: list[dict] = []
     try:
         if live:
             raw = await fetch_rows(ALL_SQL[tool_name], sql_params)
             rows = [{k: _json_safe(v) for k, v in dict(r).items()} for r in raw]
         else:
             rows = load_fixture(tool_name, limit)
-    except ToolError:
-        raise
+    except ToolError as exc:
+        failure = str(exc)
     except Exception as exc:  # DB/driver error: never leak its text (can embed hostnames/DSN fragments)
         logger.warning("tool=%s failed type=%s", tool_name, type(exc).__name__)
-        raise ToolError("The governance database read failed.") from None
-    duration_ms = int((time.monotonic() - started) * 1000)
+        failure = "The governance database read failed."
+    if failure is not None:
+        try:  # a failed read is audited too (row_count 0); an audit failure must not mask the error
+            await audit(0, "error")
+        except Exception as exc:
+            logger.error("tool=%s audit write failed type=%s", tool_name, type(exc).__name__)
+        raise ToolError(failure)
     try:
-        await studio_audit.audit_sink(
-            studio_audit.AuditRow(
-                staff_id=staff_id,
-                tool=tool_name,
-                params_hash=studio_audit.params_hash(params),
-                row_count=len(rows),
-                duration_ms=duration_ms,
-                mode="live" if live else "fixture",
-            )
-        )
+        await audit(len(rows), "ok")
     except Exception as exc:  # fail closed: no audit row, no data
         logger.error("tool=%s audit write failed type=%s", tool_name, type(exc).__name__)
         raise ToolError("The audit log is unavailable, so this read was refused.") from None
+    duration_ms = int((time.monotonic() - started) * 1000)
     logger.info("tool=%s staff=%s rows=%d ms=%d mode=%s", tool_name, staff_id, len(rows), duration_ms, "live" if live else "fixture")
     columns = list(rows[0].keys()) if rows else []
     return json.dumps(

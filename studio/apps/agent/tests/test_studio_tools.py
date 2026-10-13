@@ -141,7 +141,8 @@ async def test_connect_read_only_sets_session_read_only(monkeypatch):
     from src.studio_db import connect_read_only
 
     await connect_read_only()
-    assert seen["ro"] is True and seen["kw"]["prepare_threshold"] == 0 and seen["kw"]["autocommit"] is True
+    # autocommit would make set_read_only() a silent no-op; no prepared statements (None, not 0).
+    assert seen["ro"] is True and seen["kw"]["prepare_threshold"] is None and seen["kw"]["autocommit"] is False
 
 
 @pytest.mark.anyio
@@ -179,7 +180,8 @@ async def test_audit_row_has_no_content(db):
     _, audits = db
     await call("list_physicians", {"filter": {"name_contains": "Sample"}, "limit": 5})
     row = audits[0]
-    assert set(vars(row)) == {"staff_id", "tool", "params_hash", "row_count", "duration_ms", "mode"}
+    assert set(vars(row)) == {"staff_id", "tool", "params_hash", "row_count", "duration_ms", "mode", "outcome"}
+    assert row.outcome == "ok"
     blob = json.dumps(vars(row))
     assert "Sample" not in blob and '"x"' not in blob
 
@@ -255,7 +257,9 @@ async def test_audit_failure_returns_no_data(db, monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_db_error_text_is_not_leaked(db, monkeypatch):
+async def test_db_error_text_is_not_leaked_and_the_failed_read_is_audited(db, monkeypatch):
+    _, audits = db
+
     async def boom(sql, params):
         raise RuntimeError("connection to host db.internal user=admin failed")
 
@@ -263,6 +267,36 @@ async def test_db_error_text_is_not_leaked(db, monkeypatch):
     with pytest.raises(ToolError) as e:
         await call("overview_counts", {})
     assert "internal" not in str(e.value) and "admin" not in str(e.value)
+    assert [(a.tool, a.row_count, a.outcome, a.staff_id) for a in audits] == [("overview_counts", 0, "error", STAFF)]
+
+
+@pytest.mark.anyio
+async def test_missing_fixture_read_is_audited_as_an_error_too(db, monkeypatch):
+    _, audits = db
+    monkeypatch.setenv("STUDIO_LIVE_READS", "0")
+    monkeypatch.setattr(studio_tools, "FIXTURE_DIR", studio_tools.FIXTURE_DIR / "nope")
+    with pytest.raises(ToolError):
+        await call("overview_counts", {})
+    assert [(a.row_count, a.outcome, a.mode) for a in audits] == [(0, "error", "fixture")]
+
+
+@pytest.mark.anyio
+async def test_audit_failure_on_the_error_path_does_not_mask_the_read_error(db, monkeypatch):
+    async def boom(sql, params):
+        raise RuntimeError("x")
+
+    async def broken(row):
+        raise RuntimeError("audit down")
+
+    monkeypatch.setattr(studio_tools, "fetch_rows", boom)
+    monkeypatch.setattr(studio_audit, "audit_sink", broken)
+    with pytest.raises(ToolError, match="read failed"):
+        await call("overview_counts", {})
+
+
+def test_fixtures_ship_inside_src_so_the_kill_switch_works_without_tests_dir():
+    assert studio_tools.FIXTURE_DIR.parent.name == "src" and "tests" not in studio_tools.FIXTURE_DIR.parts
+    assert {p.stem for p in studio_tools.FIXTURE_DIR.glob("*.json")} == set(ALL_SQL)
 
 
 def test_kill_switch_values(monkeypatch):

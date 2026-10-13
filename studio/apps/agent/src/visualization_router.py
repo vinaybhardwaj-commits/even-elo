@@ -102,10 +102,12 @@ def routing_input(state):
     )
     if state.get("visualization_turn") == turn and state.get("visualization_decision"):
         return None
+    # HUMAN turns only (gov-orch ruling): AI turns can retell governance tool results (physician
+    # names, signals, interventions) and must never leave for the routing provider.
     context = [
         {"role": m.type, "content": message_text(m)[:6000]}
         for m in messages
-        if m.type in {"human", "ai"} and message_text(m)
+        if m.type == "human" and message_text(m)
     ][-4:]
     return turn, context
 
