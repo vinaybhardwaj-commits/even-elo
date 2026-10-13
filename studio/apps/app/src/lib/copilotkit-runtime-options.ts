@@ -9,6 +9,8 @@ class NoRedirectLangGraphAgent extends LangGraphHttpAgent {
 
 export interface RuntimeOptionsEnv {
   langgraphUrl?: string;
+  /** Per-request headers for the agent call (service token + actor JWT). Never cookies. */
+  headers?: Record<string, string>;
 }
 
 // Normalize Render's fromService hostport (bare host:port) into a full URL
@@ -22,6 +24,7 @@ export function buildRuntimeOptions(env: RuntimeOptionsEnv) {
     agents: {
       default: new NoRedirectLangGraphAgent({
         url: normalizeLanggraphUrl(env.langgraphUrl),
+        headers: env.headers ?? {},
       }),
     },
     a2ui: { injectA2UITool: true },

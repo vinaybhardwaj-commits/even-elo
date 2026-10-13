@@ -10,6 +10,8 @@ const NO_TELEMETRY_ENV = {
 };
 
 const nextConfig: NextConfig = {
+  // The Studio lives at /studio behind even-elo's rewrite. Every route and asset is under it.
+  basePath: "/studio",
   output: "standalone",
   serverExternalPackages: ["@copilotkit/runtime"],
   env: NO_TELEMETRY_ENV,
@@ -18,7 +20,7 @@ const nextConfig: NextConfig = {
       {
         source: "/:path*",
         headers: [
-          { key: "Content-Security-Policy", value: buildHostCsp(process.env.LANGGRAPH_DEPLOYMENT_URL) },
+          { key: "Content-Security-Policy", value: buildHostCsp() },
           { key: "X-Content-Type-Options", value: "nosniff" },
           { key: "Referrer-Policy", value: "no-referrer" },
         ],

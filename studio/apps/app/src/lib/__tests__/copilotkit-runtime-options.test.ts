@@ -35,3 +35,11 @@ describe("buildRuntimeOptions", () => {
     expect(buildRuntimeOptions({})).not.toHaveProperty("mcpApps");
   });
 });
+
+describe("agent headers", () => {
+  it("passes per-request headers to the agent and defaults to none", () => {
+    const h = { "X-Studio-Service-Token": "t" };
+    expect(buildRuntimeOptions({ headers: h }).agents.default.headers).toEqual(h);
+    expect(buildRuntimeOptions({}).agents.default.headers).toEqual({});
+  });
+});

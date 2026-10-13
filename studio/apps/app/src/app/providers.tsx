@@ -33,7 +33,7 @@ function ChatProviders({ children }: { children: React.ReactNode }) {
   return (
     <CopilotKit
       key={session}
-      runtimeUrl="/api/copilotkit"
+      runtimeUrl="/studio/api/copilotkit"
       showDevConsole={false}
       enableInspector={false}
       renderActivityMessages={renderActivityMessages}
