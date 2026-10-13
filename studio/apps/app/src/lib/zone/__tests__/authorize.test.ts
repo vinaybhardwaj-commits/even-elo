@@ -8,12 +8,12 @@ const key = new TextEncoder().encode(SECRET);
 const ENV = { JWT_SECRET: SECRET, NODE_ENV: "production" };
 const STAFF = "11111111-1111-4111-8111-111111111111";
 
-async function session(claims: Record<string, unknown> = {}, opts: { alg?: "HS256" | "HS384"; secret?: Uint8Array; exp?: string } = {}) {
-  return new SignJWT({ profileId: STAFF, status: "active", is_super_admin: true, ...claims })
+async function session(claims: Record<string, unknown> = {}, opts: { alg?: "HS256" | "HS384"; secret?: Uint8Array; exp?: string | null } = {}) {
+  const jwt = new SignJWT({ profileId: STAFF, status: "active", is_super_admin: true, ...claims })
     .setProtectedHeader({ alg: opts.alg ?? "HS256" })
-    .setIssuedAt()
-    .setExpirationTime(opts.exp ?? "1h")
-    .sign(opts.secret ?? key);
+    .setIssuedAt();
+  if (opts.exp !== null) jwt.setExpirationTime(opts.exp ?? "1h");
+  return jwt.sign(opts.secret ?? key);
 }
 
 async function req(over: Partial<ZoneRequest> & { token?: string | null } = {}): Promise<ZoneRequest> {
@@ -30,7 +30,7 @@ async function req(over: Partial<ZoneRequest> & { token?: string | null } = {}):
 }
 
 const live = (v: LiveStaff | null) => ({ loadLiveStaff: vi.fn(async () => v) });
-const SUPER: LiveStaff = { status: "active", is_super_admin: true };
+const SUPER: LiveStaff = { status: "active", is_super_admin: true, must_change_pin: false };
 
 describe("studio auth zone", () => {
   it("admits an active super_admin and returns the staff id from the token", async () => {
@@ -61,6 +61,19 @@ describe("studio auth zone", () => {
     }
   });
 
+  it("401 for a staff token with no exp claim (requiredClaims)", async () => {
+    const d = await authorizeStudioRequest(await req({ token: await session({}, { exp: null }) }), ENV, live(SUPER));
+    expect(d).toMatchObject({ ok: false, status: 401, reason: "bad-session" });
+  });
+
+  it("403 while the DB says the PIN must be changed (like the root middleware), whatever the token claims", async () => {
+    const d = await authorizeStudioRequest(await req({ token: await session({ must_change_pin: false }) }), ENV, live({ ...SUPER, must_change_pin: true }));
+    expect(d).toMatchObject({ ok: false, status: 403, reason: "must-change-pin" });
+    // A stale token claim alone does not block when the DB says it is done.
+    const ok = await authorizeStudioRequest(await req({ token: await session({ must_change_pin: true }) }), ENV, live(SUPER));
+    expect(ok).toMatchObject({ ok: true });
+  });
+
   it("401 for kind=physician tokens", async () => {
     const d = await authorizeStudioRequest(await req({ token: await session({ kind: "physician" }) }), ENV, live(SUPER));
     expect(d).toMatchObject({ ok: false, status: 401, reason: "physician-token" });
@@ -87,13 +100,13 @@ describe("studio auth zone", () => {
     expect(l.loadLiveStaff).toHaveBeenCalledTimes(2);
     expect(l.loadLiveStaff).toHaveBeenCalledWith(STAFF);
     // Token says super admin; DB says revoked.
-    const revoked = await authorizeStudioRequest(await req(), ENV, live({ status: "active", is_super_admin: false }));
+    const revoked = await authorizeStudioRequest(await req(), ENV, live({ status: "active", is_super_admin: false, must_change_pin: false }));
     expect(revoked).toMatchObject({ ok: false, status: 403 });
   });
 
   it("403 for a deactivated account and for non-super_admin staff", async () => {
-    expect(await authorizeStudioRequest(await req(), ENV, live({ status: "suspended", is_super_admin: true }))).toMatchObject({ ok: false, status: 403 });
-    expect(await authorizeStudioRequest(await req(), ENV, live({ status: "active", is_super_admin: false }))).toMatchObject({ ok: false, status: 403 });
+    expect(await authorizeStudioRequest(await req(), ENV, live({ status: "suspended", is_super_admin: true, must_change_pin: false }))).toMatchObject({ ok: false, status: 403 });
+    expect(await authorizeStudioRequest(await req(), ENV, live({ status: "active", is_super_admin: false, must_change_pin: false }))).toMatchObject({ ok: false, status: 403 });
   });
 
   it("401 when the DB cannot confirm the profile (fail closed)", async () => {

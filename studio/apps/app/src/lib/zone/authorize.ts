@@ -5,13 +5,21 @@ import { jwtVerify } from "jose";
 export const SESSION_COOKIE = "epi_session";
 export const PHYSICIAN_COOKIE = "epi_physician_session";
 export const ALLOWED_HOST = "governance.evenos.app";
-// Headers the middleware sets for route handlers. Always stripped from inbound requests first.
-export const ACTOR_ID_HEADER = "x-studio-staff-id";
-export const ACTOR_ROLE_HEADER = "x-studio-staff-role";
+// Internal headers the proxy sets for route handlers. Deliberately NOT x-* (CopilotKit forwards every
+// x-* browser header to the agent); always overwritten, and any client copy is removed first.
+export const ACTOR_ID_HEADER = "studio-internal-staff-id";
+export const ACTOR_ROLE_HEADER = "studio-internal-staff-role";
+// Client headers that must never reach the agent through CopilotKit's header forwarding.
+export function isForbiddenClientHeader(name: string): boolean {
+  const n = name.toLowerCase();
+  return n.startsWith("x-studio-") || n.startsWith("studio-internal-") || n === "authorization";
+}
 
 export interface LiveStaff {
   status: string;
   is_super_admin: boolean;
+  /** even-elo forces a PIN change on first login; the root middleware enforces it, so must we. */
+  must_change_pin: boolean;
 }
 
 export interface ZoneRequest {
@@ -81,7 +89,7 @@ export async function authorizeStudioRequest(req: ZoneRequest, env: ZoneEnv, dep
   if (!env.JWT_SECRET) return deny(401, "not-configured");
   let payload: Record<string, unknown>;
   try {
-    const res = await jwtVerify(token, new TextEncoder().encode(env.JWT_SECRET), { algorithms: ["HS256"] });
+    const res = await jwtVerify(token, new TextEncoder().encode(env.JWT_SECRET), { algorithms: ["HS256"], requiredClaims: ["exp"] });
     payload = res.payload as Record<string, unknown>;
   } catch {
     return deny(401, "bad-session");
@@ -95,6 +103,7 @@ export async function authorizeStudioRequest(req: ZoneRequest, env: ZoneEnv, dep
   if (!live) return deny(401, "profile-unconfirmed");
   if (live.status !== "active") return deny(403, "inactive");
   if (!live.is_super_admin) return deny(403, "role"); // M0-S2: super_admin only
+  if (live.must_change_pin) return deny(403, "must-change-pin");
 
   return { ok: true, staffId, role: "super_admin" };
 }

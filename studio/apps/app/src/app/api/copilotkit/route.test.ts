@@ -17,7 +17,7 @@ describe("/studio/api/copilotkit", () => {
     expect((await call()).status).toBe(401);
   });
   it("503 when the agent or its secrets are not configured", async () => {
-    const h = { "x-studio-staff-id": "s", "x-studio-staff-role": "super_admin" };
+    const h = { "studio-internal-staff-id": "s", "studio-internal-staff-role": "super_admin" };
     expect((await call(h)).status).toBe(503);
     process.env.AGENT_URL = "https://agent.invalid/agent";
     expect((await call(h)).status).toBe(503);

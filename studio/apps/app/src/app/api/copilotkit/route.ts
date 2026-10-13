@@ -11,7 +11,7 @@ import { ACTOR_ID_HEADER, ACTOR_ROLE_HEADER } from "@/lib/zone/authorize";
 
 disableTelemetry();
 
-// The middleware (src/middleware.ts) has already authenticated the staff member and overwritten
+// The middleware (src/proxy.ts) has already authenticated the staff member and overwritten
 // the actor headers read here. Rate limiting is enforced by the agent, per staff id.
 export const POST = async (req: NextRequest) => {
   const staffId = req.headers.get(ACTOR_ID_HEADER);
@@ -32,7 +32,8 @@ export const POST = async (req: NextRequest) => {
 
   const runtimeOptions = buildRuntimeOptions({ langgraphUrl: agentUrl, headers });
   const { handleRequest } = copilotRuntimeNextJSAppRouterEndpoint({
-    endpoint: "/studio/api/copilotkit",
+    // Next strips basePath before the handler sees the URL, so the endpoint is WITHOUT /studio.
+    endpoint: "/api/copilotkit",
     serviceAdapter: new ExperimentalEmptyAdapter(),
     runtime: new CopilotRuntime(runtimeOptions),
   });
