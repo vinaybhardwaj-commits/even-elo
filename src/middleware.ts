@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { jwtVerify } from "jose";
 import { isPublicCaptureApi, isPublicCapturePage, isUploadCaptureHost } from "@/lib/capture/access";
 import { checkCronAuth } from "@/lib/cron-auth";
+import { isAllowedOnDoctorsHost, isDoctorsHost } from "@/lib/host-lock";
 
 const COOKIE_NAME = "epi_session";
 
@@ -65,6 +66,15 @@ interface MiddlewarePayload {
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
+  // M0-B doctors host lock: runs before every other rule (including the static and
+  // .well-known bypasses) so nothing outside the portal allowlist can be served there.
+  const lockHost = (request.headers.get("host") || "").toLowerCase();
+  if (isDoctorsHost(lockHost, request.headers.get("x-test-host"))) {
+    if (pathname === "/") return NextResponse.redirect(new URL("/portal", request.url));
+    // nextUrl strips /_next/data/<id>/...json down to the page path, so also check the raw URL path.
+    if (!isAllowedOnDoctorsHost(pathname) || !isAllowedOnDoctorsHost(new URL(request.url).pathname)) return new NextResponse(null, { status: 404 });
+  }
+
   // OAuth discovery metadata — always public (RFC 9728 / 8414).
   if (request.nextUrl.pathname.startsWith("/.well-known/")) {
     return NextResponse.next();
@@ -94,9 +104,6 @@ export async function middleware(request: NextRequest) {
     const url = request.nextUrl.clone();
     url.pathname = "/capture";
     return NextResponse.rewrite(url);
-  }
-  if (host.startsWith("doctors.") && pathname === "/") {
-    return NextResponse.redirect(new URL("/portal", request.url));
   }
 
   // Phone capture: shared staff link, no Governance session.
