@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
+import { portalJson } from "@/lib/portal/forbidden-keys";
 import { randomUUID } from "node:crypto";
 import { getCurrentPhysician } from "@/lib/physician-auth";
 import { sql } from "@/lib/db";
@@ -35,7 +36,7 @@ export const runtime = "nodejs";
 
 export async function POST(request: NextRequest) {
   const p = await getCurrentPhysician();
-  if (!p) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  if (!p) return portalJson({ ok: false, error: "Unauthorized" }, { status: 401 });
   if (!respondEnabled()) return disabledWrite();
 
   let uid: string | null = null;
@@ -48,12 +49,12 @@ export async function POST(request: NextRequest) {
   } catch {
     uid = null;
   }
-  if (!uid) return NextResponse.json({ ok: false, error: "unmapped", message: friendlyError("unmapped") });
+  if (!uid) return portalJson({ ok: false, error: "unmapped", message: friendlyError("unmapped") });
 
   const parsed = parseRespondBody(await request.json().catch(() => null));
   if (!parsed.ok) {
     // The parser's own wording is for developers; the doctor gets a plain sentence.
-    return NextResponse.json({ ok: false, error: "invalid", message: friendlyError("invalid") });
+    return portalJson({ ok: false, error: "invalid", message: friendlyError("invalid") });
   }
   const { signalId, verb, comment } = parsed;
   const clientRequestId = randomUUID();
@@ -70,7 +71,7 @@ export async function POST(request: NextRequest) {
 
   if (!result.ok) {
     // `message` is a plain sentence; CDMSS's own error text is never relayed to a physician.
-    return NextResponse.json({ ok: false, error: result.error, message: friendlyError(result.error) });
+    return portalJson({ ok: false, error: result.error, message: friendlyError(result.error) });
   }
 
   // The response is recorded upstream; this row is the portal's record of it. Best-effort, same as
@@ -89,5 +90,5 @@ export async function POST(request: NextRequest) {
     // Upstream said yes but sent no readable response: the doctor's own submission is the record.
     state.response = { verb, comment, at: new Date().toISOString() };
   }
-  return NextResponse.json({ ok: true, state });
+  return portalJson({ ok: true, state });
 }

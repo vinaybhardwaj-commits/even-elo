@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
+import { portalJson } from "@/lib/portal/forbidden-keys";
 import { getCurrentPhysician } from "@/lib/physician-auth";
 import { sql } from "@/lib/db";
 import { disabledRead, findingsEnabled } from "@/lib/portal-flags";
@@ -57,7 +58,7 @@ export const runtime = "nodejs";
  */
 export async function GET(request: NextRequest) {
   const p = await getCurrentPhysician();
-  if (!p) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  if (!p) return portalJson({ ok: false, error: "Unauthorized" }, { status: 401 });
   if (!findingsEnabled()) return disabledRead();
 
   // The JWT does not carry the CDMSS identifier — it is looked up per request, never cached into
@@ -72,7 +73,7 @@ export async function GET(request: NextRequest) {
   } catch {
     uid = null; // fail-safe → the unmapped state, never a 500
   }
-  if (!uid) return NextResponse.json({ ok: true, mapped: false, cards: [] });
+  if (!uid) return portalJson({ ok: true, mapped: false, cards: [] });
 
   const noteClass = parseNoteClassQuery(request.nextUrl.searchParams.get("note_class"));
 
@@ -90,8 +91,8 @@ export async function GET(request: NextRequest) {
     }
     // The allowlist builder is where everything a physician must not see is simply never read. It is
     // also where the reactions map is merged onto the cards, keyed by signal_id.
-    return NextResponse.json(toLiveCardsPayload(upstream, reactions));
+    return portalJson(toLiveCardsPayload(upstream, reactions));
   } catch {
-    return NextResponse.json({ ok: false, mapped: true, error: "upstream_unavailable" });
+    return portalJson({ ok: false, mapped: true, error: "upstream_unavailable" });
   }
 }

@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
+import { portalJson } from "@/lib/portal/forbidden-keys";
 import { getCurrentPhysician } from "@/lib/physician-auth";
 
 export const dynamic = "force-dynamic";
@@ -21,9 +22,9 @@ const TIERS = new Set(["named", "confidential", "anonymous"]);
 
 export async function POST(req: NextRequest) {
   const p = await getCurrentPhysician();
-  if (!p) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  if (!p) return portalJson({ ok: false, error: "Unauthorized" }, { status: 401 });
   if (!ENABLED() || !BASE || !TOK) {
-    return NextResponse.json({ ok: false, error: "Incident reporting is not enabled yet" }, { status: 404 });
+    return portalJson({ ok: false, error: "Incident reporting is not enabled yet" }, { status: 404 });
   }
   let body: {
     tier?: string;
@@ -36,12 +37,12 @@ export async function POST(req: NextRequest) {
   try {
     body = await req.json();
   } catch {
-    return NextResponse.json({ ok: false, error: "Invalid JSON" }, { status: 400 });
+    return portalJson({ ok: false, error: "Invalid JSON" }, { status: 400 });
   }
   const tier = TIERS.has(body.tier ?? "") ? (body.tier as string) : "named";
   const inc = body.incident ?? {};
   if (!inc.narrative || inc.narrative.trim().length < 10) {
-    return NextResponse.json({ ok: false, error: "Please describe what happened (at least 10 characters)." }, { status: 400 });
+    return portalJson({ ok: false, error: "Please describe what happened (at least 10 characters)." }, { status: 400 });
   }
   const reporter =
     tier === "anonymous"
@@ -77,8 +78,8 @@ export async function POST(req: NextRequest) {
       signal: AbortSignal.timeout(10000),
     });
     const j = await res.json();
-    return NextResponse.json(j, { status: res.status });
+    return portalJson(j, { status: res.status });
   } catch {
-    return NextResponse.json({ ok: false, error: "Incident system unreachable — please try again." }, { status: 502 });
+    return portalJson({ ok: false, error: "Incident system unreachable — please try again." }, { status: 502 });
   }
 }

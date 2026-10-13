@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { portalJson } from "@/lib/portal/forbidden-keys";
 import { getCurrentPhysician } from "@/lib/physician-auth";
 import { loadPortalRoutedFindings } from "@/lib/document-audits-db";
 import { toDocumentCards } from "@/lib/doctor-card";
@@ -19,9 +19,9 @@ export const runtime = "nodejs";
  */
 export async function GET() {
   const p = await getCurrentPhysician();
-  if (!p) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  if (!p) return portalJson({ ok: false, error: "Unauthorized" }, { status: 401 });
   if (!findingsEnabled()) return disabledRead();
 
   const rows = await loadPortalRoutedFindings(p.physicianId);
-  return NextResponse.json({ ok: true, cards: toDocumentCards(rows) });
+  return portalJson({ ok: true, cards: toDocumentCards(rows) });
 }
