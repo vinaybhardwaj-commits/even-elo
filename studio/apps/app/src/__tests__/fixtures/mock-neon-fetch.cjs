@@ -11,8 +11,9 @@ globalThis.fetch = async (input, init) => {
         fields: [
           { name: "status", dataTypeID: 25 },
           { name: "is_super_admin", dataTypeID: 16 },
+          { name: "must_change_pin", dataTypeID: 16 },
         ],
-        rows: [["active", "t"]],
+        rows: [["active", "t", "f"]],
       }),
       { status: 200, headers: { "content-type": "application/json" } },
     );
