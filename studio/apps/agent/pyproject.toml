@@ -1,0 +1,31 @@
+[project]
+name = "sample-agent"
+version = "0.1.0"
+description = "A LangGraph agent"
+requires-python = ">=3.12"
+dependencies = [
+    "langchain==1.2.0",
+    "langgraph==1.0.10",  # pinned: BoundedMemorySaver relies on MemorySaver.storage internal
+    "fastapi==0.143.0",
+    "uvicorn==0.40.0",
+    "python-dotenv==1.2.4",
+    "copilotkit==0.1.94",
+    "ag-ui-langgraph==0.0.41",
+    "deepagents==0.3.3",
+    "langchain-aws==1.8.2",
+    "langchain-google-genai==4.2.1",
+    "httpx==0.28.1",
+    "boto3==1.43.112",
+    "google-auth==2.49.1",
+    "requests==2.34.2",
+]
+
+[dependency-groups]
+dev = [
+    "pytest==9.0.3",
+    "pip-audit==2.10.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

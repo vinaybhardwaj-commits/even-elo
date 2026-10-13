@@ -1,0 +1,2 @@
+# studio/ is a separate pnpm workspace with its own gates; never part of the root Vercel build.
+studio

@@ -217,6 +217,7 @@ export function checkFiles(files, opts = {}) {
   return out;
 }
 
+// studio/ (separate pnpm workspace) is out of scope: only <root>/src is walked.
 function walk(dir, acc = []) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     const p = path.join(dir, e.name);

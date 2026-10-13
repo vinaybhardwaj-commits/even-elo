@@ -1,0 +1,45 @@
+{
+  "name": "@repo/app",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --turbopack",
+    "build": "pnpm --filter @repo/design-system build && next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "pretest": "pnpm --filter @repo/design-system build",
+    "pretypecheck": "pnpm --filter @repo/design-system build"
+  },
+  "dependencies": {
+    "@ag-ui/a2ui-middleware": "0.0.2",
+    "@copilotkit/a2ui-renderer": "1.55.2-next.1",
+    "@copilotkit/react-core": "1.55.2-next.1",
+    "@copilotkit/runtime": "1.55.2-next.1",
+    "@copilotkitnext/shared": "1.54.1-next.6",
+    "@jetbrains/websandbox": "1.2.1",
+    "@repo/design-system": "workspace:*",
+    "next": "16.3.8",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "recharts": "3.7.0"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "3.3.3",
+    "@tailwindcss/postcss": "4.1.18",
+    "@testing-library/jest-dom": "6.9.1",
+    "@testing-library/react": "16.3.2",
+    "@types/node": "20.19.31",
+    "@types/react": "19.2.10",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.0.2",
+    "eslint": "9.39.2",
+    "eslint-config-next": "16.3.8",
+    "jsdom": "29.1.1",
+    "tailwindcss": "4.1.18",
+    "typescript": "5.9.3",
+    "vitest": "4.1.8",
+    "zod": "3.25.76"
+  }
+}

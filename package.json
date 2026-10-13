@@ -10,7 +10,10 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "architecture:check": "node scripts/architecture-check.mjs"
+    "architecture:check": "node scripts/architecture-check.mjs",
+    "studio:test": "cd studio && pnpm install --frozen-lockfile && pnpm -r test",
+    "studio:typecheck": "cd studio && pnpm -r typecheck",
+    "studio:build": "cd studio && pnpm --filter app build"
   },
   "dependencies": {
     "@google/genai": "^2.24.0",

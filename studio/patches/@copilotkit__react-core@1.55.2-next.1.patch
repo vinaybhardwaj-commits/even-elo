@@ -1,0 +1,52 @@
+diff --git a/dist/copilotkit-Cd-NrDyp.mjs b/dist/copilotkit-Cd-NrDyp.mjs
+index ccb394a4c167d14dee586e3c8f2bad8475e781cf..efdad4c932ee0bdf235126739c014a8966204dba 100644
+--- a/dist/copilotkit-Cd-NrDyp.mjs
++++ b/dist/copilotkit-Cd-NrDyp.mjs
+@@ -3015,7 +3015,7 @@ var CopilotKitCoreReact = class extends CopilotKitCore {
+ //#endregion
+ //#region src/v2/providers/CopilotKitProvider.tsx
+ const HEADER_NAME = "X-CopilotCloud-Public-Api-Key";
+-const COPILOT_CLOUD_CHAT_URL$1 = "https://api.cloud.copilotkit.ai/copilotkit/v1";
++const COPILOT_CLOUD_CHAT_URL$1 = "https://cloud.invalid/copilotkit/v1";
+ const DEFAULT_DESIGN_SKILL = `When generating UI with generateSandboxedUi, follow these design principles inspired by shadcn/ui:
+ 
+ - Use a minimal, flat aesthetic. Avoid drop shadows and gradients — rely on subtle borders (1px solid, light gray like #e5e7eb) to define surfaces.
+diff --git a/dist/copilotkit-Dgdpbqjt.cjs b/dist/copilotkit-Dgdpbqjt.cjs
+index 8e85f42e13573258f50d587604ac1140c54b2d01..3251580283f3f613b6cda83ae6c20e879b18aa17 100644
+--- a/dist/copilotkit-Dgdpbqjt.cjs
++++ b/dist/copilotkit-Dgdpbqjt.cjs
+@@ -3045,7 +3045,7 @@ var CopilotKitCoreReact = class extends _copilotkit_core.CopilotKitCore {
+ //#endregion
+ //#region src/v2/providers/CopilotKitProvider.tsx
+ const HEADER_NAME = "X-CopilotCloud-Public-Api-Key";
+-const COPILOT_CLOUD_CHAT_URL$1 = "https://api.cloud.copilotkit.ai/copilotkit/v1";
++const COPILOT_CLOUD_CHAT_URL$1 = "https://cloud.invalid/copilotkit/v1";
+ const DEFAULT_DESIGN_SKILL = `When generating UI with generateSandboxedUi, follow these design principles inspired by shadcn/ui:
+ 
+ - Use a minimal, flat aesthetic. Avoid drop shadows and gradients — rely on subtle borders (1px solid, light gray like #e5e7eb) to define surfaces.
+diff --git a/dist/index.umd.js b/dist/index.umd.js
+index 098ad144f31b7e7415b7ebd566488405f9964ad3..d59a03d89c978deb85429b7308e0b6cf3072ebab 100644
+--- a/dist/index.umd.js
++++ b/dist/index.umd.js
+@@ -1928,7 +1928,7 @@ window.parent.postMessage({jsonrpc:"2.0",method:"ui/notifications/sandbox-proxy-
+ //#endregion
+ //#region src/v2/providers/CopilotKitProvider.tsx
+ 	const HEADER_NAME = "X-CopilotCloud-Public-Api-Key";
+-	const COPILOT_CLOUD_CHAT_URL$1 = "https://api.cloud.copilotkit.ai/copilotkit/v1";
++	const COPILOT_CLOUD_CHAT_URL$1 = "https://cloud.invalid/copilotkit/v1";
+ 	const DEFAULT_DESIGN_SKILL = `When generating UI with generateSandboxedUi, follow these design principles inspired by shadcn/ui:
+ 
+ - Use a minimal, flat aesthetic. Avoid drop shadows and gradients — rely on subtle borders (1px solid, light gray like #e5e7eb) to define surfaces.
+diff --git a/dist/v2/index.umd.js b/dist/v2/index.umd.js
+index 2043f7faf67f75749b04a6b512cc6f7b61ce0e40..e9794366167fd651510b78c6dc97956903917695 100644
+--- a/dist/v2/index.umd.js
++++ b/dist/v2/index.umd.js
+@@ -3081,7 +3081,7 @@ window.parent.postMessage({jsonrpc:"2.0",method:"ui/notifications/sandbox-proxy-
+ //#endregion
+ //#region src/v2/providers/CopilotKitProvider.tsx
+ 	const HEADER_NAME = "X-CopilotCloud-Public-Api-Key";
+-	const COPILOT_CLOUD_CHAT_URL$1 = "https://api.cloud.copilotkit.ai/copilotkit/v1";
++	const COPILOT_CLOUD_CHAT_URL$1 = "https://cloud.invalid/copilotkit/v1";
+ 	const DEFAULT_DESIGN_SKILL = `When generating UI with generateSandboxedUi, follow these design principles inspired by shadcn/ui:
+ 
+ - Use a minimal, flat aesthetic. Avoid drop shadows and gradients — rely on subtle borders (1px solid, light gray like #e5e7eb) to define surfaces.
