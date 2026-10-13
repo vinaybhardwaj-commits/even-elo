@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
+import { portalJson } from "@/lib/portal/forbidden-keys";
 import { neon } from "@neondatabase/serverless";
 import { getCurrentPhysician } from "@/lib/physician-auth";
 import { sendEmail, wrapHtml } from "@/lib/email";
@@ -27,31 +28,31 @@ function rateOk(key: string): boolean {
  */
 export async function POST(req: NextRequest) {
   const me = await getCurrentPhysician();
-  if (!me) return NextResponse.json({ ok: false, error: "Unauthenticated" }, { status: 401, headers: NO_STORE });
-  if (!rateOk(me.physicianId)) return NextResponse.json({ ok: false, error: "You're submitting feedback too quickly — please slow down." }, { status: 429, headers: NO_STORE });
+  if (!me) return portalJson({ ok: false, error: "Unauthenticated" }, { status: 401, headers: NO_STORE });
+  if (!rateOk(me.physicianId)) return portalJson({ ok: false, error: "You're submitting feedback too quickly — please slow down." }, { status: 429, headers: NO_STORE });
 
   const body = await req.json().catch(() => ({}));
   const { target_physician_id, polarity, category, severity, commendation_category, narrative, anonymous_flag, evidence_urls } = body ?? {};
 
-  if (!target_physician_id || !UUID_RE.test(target_physician_id)) return NextResponse.json({ ok: false, error: "valid target_physician_id required" }, { status: 400, headers: NO_STORE });
-  if (target_physician_id === me.physicianId) return NextResponse.json({ ok: false, error: "You can't file feedback on yourself." }, { status: 400, headers: NO_STORE });
-  if (polarity !== "positive" && polarity !== "negative") return NextResponse.json({ ok: false, error: "polarity must be positive|negative" }, { status: 400, headers: NO_STORE });
-  if (!narrative || typeof narrative !== "string" || !narrative.trim()) return NextResponse.json({ ok: false, error: "narrative required" }, { status: 400, headers: NO_STORE });
+  if (!target_physician_id || !UUID_RE.test(target_physician_id)) return portalJson({ ok: false, error: "valid target_physician_id required" }, { status: 400, headers: NO_STORE });
+  if (target_physician_id === me.physicianId) return portalJson({ ok: false, error: "You can't file feedback on yourself." }, { status: 400, headers: NO_STORE });
+  if (polarity !== "positive" && polarity !== "negative") return portalJson({ ok: false, error: "polarity must be positive|negative" }, { status: 400, headers: NO_STORE });
+  if (!narrative || typeof narrative !== "string" || !narrative.trim()) return portalJson({ ok: false, error: "narrative required" }, { status: 400, headers: NO_STORE });
 
   let sevVal: string | null = null, catVal: string | null = null, commVal: string | null = null;
   let anon = false;
   if (polarity === "negative") {
-    if (!category || !CATEGORIES.has(category)) return NextResponse.json({ ok: false, error: "category required" }, { status: 400, headers: NO_STORE });
-    if (!severity || !SEVERITIES.has(severity)) return NextResponse.json({ ok: false, error: "severity required" }, { status: 400, headers: NO_STORE });
+    if (!category || !CATEGORIES.has(category)) return portalJson({ ok: false, error: "category required" }, { status: 400, headers: NO_STORE });
+    if (!severity || !SEVERITIES.has(severity)) return portalJson({ ok: false, error: "severity required" }, { status: 400, headers: NO_STORE });
     sevVal = severity; catVal = category; anon = Boolean(anonymous_flag);
   } else {
-    if (!commendation_category || !COMMENDATIONS.has(commendation_category)) return NextResponse.json({ ok: false, error: "commendation_category required for positive feedback" }, { status: 400, headers: NO_STORE });
+    if (!commendation_category || !COMMENDATIONS.has(commendation_category)) return portalJson({ ok: false, error: "commendation_category required for positive feedback" }, { status: 400, headers: NO_STORE });
     commVal = commendation_category; anon = false; // positives are always named
   }
   const urls: string[] = Array.isArray(evidence_urls) ? evidence_urls.filter((u: unknown) => typeof u === "string" && (u as string).trim()).slice(0, 10) : [];
 
   const url = process.env.DATABASE_URL;
-  if (!url) return NextResponse.json({ ok: false, error: "DATABASE_URL not configured" }, { status: 500, headers: NO_STORE });
+  if (!url) return portalJson({ ok: false, error: "DATABASE_URL not configured" }, { status: 500, headers: NO_STORE });
   const sql = neon(url);
 
   const tgt = (await sql`
@@ -59,9 +60,9 @@ export async function POST(req: NextRequest) {
       COALESCE((SELECT json_agg(e.hospital_id::text ORDER BY e.start_date DESC) FROM physician_engagements e WHERE e.physician_id = p.id AND e.status='active'), '[]'::json) AS active_hospital_ids
     FROM physicians p WHERE p.id = ${target_physician_id}::uuid AND p.current_status = 'active'
   `) as Array<{ id: string; full_name: string; email: string | null; active_hospital_ids: string[] }>;
-  if (tgt.length === 0) return NextResponse.json({ ok: false, error: "Target physician not found or not active." }, { status: 404, headers: NO_STORE });
+  if (tgt.length === 0) return portalJson({ ok: false, error: "Target physician not found or not active." }, { status: 404, headers: NO_STORE });
   const hospIds = Array.isArray(tgt[0].active_hospital_ids) ? tgt[0].active_hospital_ids : [];
-  if (hospIds.length === 0) return NextResponse.json({ ok: false, error: "Target physician has no active engagement to attach this to." }, { status: 400, headers: NO_STORE });
+  if (hospIds.length === 0) return portalJson({ ok: false, error: "Target physician has no active engagement to attach this to." }, { status: 400, headers: NO_STORE });
   const hospitalId = hospIds[0];
 
   const ip = (req.headers.get("x-forwarded-for") ?? "").split(",")[0].trim() || null;
@@ -94,5 +95,5 @@ export async function POST(req: NextRequest) {
     }).catch(() => undefined);
   }
 
-  return NextResponse.json({ ok: true, incident: inserted[0] }, { headers: NO_STORE });
+  return portalJson({ ok: true, incident: inserted[0] }, { headers: NO_STORE });
 }

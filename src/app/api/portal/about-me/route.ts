@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { portalJson } from "@/lib/portal/forbidden-keys";
 import { neon } from "@neondatabase/serverless";
 import { getCurrentPhysician } from "@/lib/physician-auth";
 
@@ -13,9 +13,9 @@ const NO_STORE = { "Cache-Control": "no-store, max-age=0" };
  */
 export async function GET() {
   const me = await getCurrentPhysician();
-  if (!me) return NextResponse.json({ ok: false, error: "Unauthenticated" }, { status: 401, headers: NO_STORE });
+  if (!me) return portalJson({ ok: false, error: "Unauthenticated" }, { status: 401, headers: NO_STORE });
   const url = process.env.DATABASE_URL;
-  if (!url) return NextResponse.json({ ok: false, error: "DATABASE_URL not configured" }, { status: 500, headers: NO_STORE });
+  if (!url) return portalJson({ ok: false, error: "DATABASE_URL not configured" }, { status: 500, headers: NO_STORE });
   const sql = neon(url);
 
   const rows = (await sql`
@@ -42,5 +42,5 @@ export async function GET() {
     WHERE i.target_physician_id = ${me.physicianId}::uuid
     ORDER BY i.submitted_at DESC
   `) as Array<Record<string, unknown>>;
-  return NextResponse.json({ ok: true, rows }, { headers: NO_STORE });
+  return portalJson({ ok: true, rows }, { headers: NO_STORE });
 }

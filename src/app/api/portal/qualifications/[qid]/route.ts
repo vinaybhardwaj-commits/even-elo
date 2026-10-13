@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
+import { portalJson } from "@/lib/portal/forbidden-keys";
 import { neon } from "@neondatabase/serverless";
 import { getCurrentPhysician } from "@/lib/physician-auth";
 
@@ -11,23 +12,23 @@ const TIER = new Set(["A", "B", "C", "Unknown"]);
 /** PATCH /api/portal/qualifications/[qid] — edit OWN qualification, only while unverified (#8). */
 export async function PATCH(req: NextRequest, ctx: { params: Promise<{ qid: string }> }) {
   const me = await getCurrentPhysician();
-  if (!me) return NextResponse.json({ ok: false, error: "Unauthenticated" }, { status: 401, headers: NO_STORE });
+  if (!me) return portalJson({ ok: false, error: "Unauthenticated" }, { status: 401, headers: NO_STORE });
   const { qid } = await ctx.params;
-  if (!UUID_RE.test(qid)) return NextResponse.json({ ok: false, error: "invalid id" }, { status: 400, headers: NO_STORE });
+  if (!UUID_RE.test(qid)) return portalJson({ ok: false, error: "invalid id" }, { status: 400, headers: NO_STORE });
 
   const url = process.env.DATABASE_URL;
-  if (!url) return NextResponse.json({ ok: false, error: "DATABASE_URL not configured" }, { status: 500, headers: NO_STORE });
+  if (!url) return portalJson({ ok: false, error: "DATABASE_URL not configured" }, { status: 500, headers: NO_STORE });
   const sql = neon(url);
 
   const cur = (await sql`SELECT physician_id::text AS physician_id, verified FROM qualifications WHERE id = ${qid}::uuid LIMIT 1`) as Array<{ physician_id: string; verified: boolean }>;
-  if (cur.length === 0) return NextResponse.json({ ok: false, error: "not found" }, { status: 404, headers: NO_STORE });
-  if (cur[0].physician_id !== me.physicianId) return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403, headers: NO_STORE });
-  if (cur[0].verified) return NextResponse.json({ ok: false, error: "This qualification has been verified and can no longer be edited. Ask an administrator." }, { status: 409, headers: NO_STORE });
+  if (cur.length === 0) return portalJson({ ok: false, error: "not found" }, { status: 404, headers: NO_STORE });
+  if (cur[0].physician_id !== me.physicianId) return portalJson({ ok: false, error: "Forbidden" }, { status: 403, headers: NO_STORE });
+  if (cur[0].verified) return portalJson({ ok: false, error: "This qualification has been verified and can no longer be edited. Ask an administrator." }, { status: 409, headers: NO_STORE });
 
   const body = await req.json().catch(() => ({}));
   const { degree, institution, institution_tier, year_completed, country } = body ?? {};
-  if (degree !== undefined && (!degree || !String(degree).trim())) return NextResponse.json({ ok: false, error: "degree cannot be empty" }, { status: 400, headers: NO_STORE });
-  if (institution_tier && !TIER.has(institution_tier)) return NextResponse.json({ ok: false, error: "invalid institution_tier" }, { status: 400, headers: NO_STORE });
+  if (degree !== undefined && (!degree || !String(degree).trim())) return portalJson({ ok: false, error: "degree cannot be empty" }, { status: 400, headers: NO_STORE });
+  if (institution_tier && !TIER.has(institution_tier)) return portalJson({ ok: false, error: "invalid institution_tier" }, { status: 400, headers: NO_STORE });
 
   await sql`
     UPDATE qualifications SET
@@ -40,5 +41,5 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ qid: stri
   `;
   await sql`INSERT INTO audit_log_v2 (action, entity_type, entity_id, after_json)
             VALUES ('update', 'qualification', ${qid}, ${JSON.stringify({ physician_id: me.physicianId, via: "portal" })}::jsonb)`;
-  return NextResponse.json({ ok: true }, { headers: NO_STORE });
+  return portalJson({ ok: true }, { headers: NO_STORE });
 }

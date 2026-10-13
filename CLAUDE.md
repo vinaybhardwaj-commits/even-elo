@@ -25,3 +25,21 @@
    a rule only by quoting it and saying so explicitly.
 7. Every report lists: files changed (from git show --stat), and one line
    confirming nothing outside the contract moved.
+
+## Overhaul gates and roles (13 Oct 2026)
+
+Every overhaul slice must pass, before commit and again in the refuter's rerun:
+
+- `npm test`
+- `npm run typecheck`
+- `npm run build`
+- `npm run architecture:check`
+
+Role ladder v3:
+
+- Orchestrator (Opus 5.5) specs and merges.
+- Builder (Sonnet 5.5) builds and runs the tests.
+- A separate Refuter (Opus 5.5) reruns the gates and reviews the diff.
+- Explorer (Haiku 5.5) explores.
+- Fable 5.1 gates any merge that touches patients, auth, PHI or migrations.
+- `jev_review` runs on each diff.

@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
+import { portalJson } from "@/lib/portal/forbidden-keys";
 import { neon } from "@neondatabase/serverless";
 import { createPhysicianToken, setPhysicianCookie, verifyPortalPin } from "@/lib/physician-auth";
 import {
@@ -15,10 +16,10 @@ const NO_STORE = { "Cache-Control": "no-store, max-age=0" };
 
 export async function POST(request: NextRequest) {
   const { email, pin } = (await request.json().catch(() => ({}))) as { email?: string; pin?: string };
-  if (!email || !pin) return NextResponse.json({ ok: false, error: "Email and PIN are required" }, { status: 400, headers: NO_STORE });
+  if (!email || !pin) return portalJson({ ok: false, error: "Email and PIN are required" }, { status: 400, headers: NO_STORE });
 
   const url = process.env.DATABASE_URL;
-  if (!url) return NextResponse.json({ ok: false, error: "DATABASE_URL not configured" }, { status: 500, headers: NO_STORE });
+  if (!url) return portalJson({ ok: false, error: "DATABASE_URL not configured" }, { status: 500, headers: NO_STORE });
   const sql = neon(url);
   const limiter = sql as unknown as SqlTag;
 
@@ -29,14 +30,14 @@ export async function POST(request: NextRequest) {
   const ip = clientIp(request.headers);
   const gate = await beginLoginAttempt(limiter, account, ip);
   if (!gate.allowed) {
-    return NextResponse.json(
+    return portalJson(
       { ok: false, error: RATE_LIMIT_MESSAGE },
       { status: 429, headers: { ...NO_STORE, "Retry-After": "900" } },
     );
   }
   // The attempt is already on record, so a failure needs nothing more than the answer.
   const fail = async (body: { ok: false; error: string }, status: number) =>
-    NextResponse.json(body, { status, headers: NO_STORE });
+    portalJson(body, { status, headers: NO_STORE });
 
   const rows = (await sql`
     SELECT id::text AS id, full_name, email, portal_pin_hash, portal_access, portal_must_change_pin, current_status
@@ -73,5 +74,5 @@ export async function POST(request: NextRequest) {
     // Intentionally ignored: see above.
   }
 
-  return NextResponse.json({ ok: true, must_change_pin: Boolean(p.portal_must_change_pin) }, { headers: NO_STORE });
+  return portalJson({ ok: true, must_change_pin: Boolean(p.portal_must_change_pin) }, { headers: NO_STORE });
 }

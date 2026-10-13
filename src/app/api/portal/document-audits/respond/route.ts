@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
+import { portalJson } from "@/lib/portal/forbidden-keys";
 import { getCurrentPhysician } from "@/lib/physician-auth";
 import { recordDoctorFindingResponse } from "@/lib/document-audits-db";
 import { disabledWrite, respondEnabled } from "@/lib/portal-flags";
@@ -25,14 +26,14 @@ const VERBS = new Set(["agree", "disagree", "needs_clarification"]);
  */
 export async function POST(request: NextRequest) {
   const p = await getCurrentPhysician();
-  if (!p) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  if (!p) return portalJson({ ok: false, error: "Unauthorized" }, { status: 401 });
   if (!respondEnabled()) return disabledWrite();
 
   let body: { finding_id?: unknown; verb?: unknown; comment?: unknown };
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ ok: false, error: "invalid_json", message: friendlyError("invalid_json") });
+    return portalJson({ ok: false, error: "invalid_json", message: friendlyError("invalid_json") });
   }
 
   const findingId = typeof body.finding_id === "string" ? body.finding_id : "";
@@ -40,7 +41,7 @@ export async function POST(request: NextRequest) {
   const comment = normalizeComment(body.comment);
   const needsComment = verb === "disagree" || verb === "needs_clarification";
   if (!findingId || !VERBS.has(verb) || (needsComment && !comment)) {
-    return NextResponse.json({ ok: false, error: "invalid_body", message: friendlyError("invalid_body") });
+    return portalJson({ ok: false, error: "invalid_body", message: friendlyError("invalid_body") });
   }
 
   const result = await recordDoctorFindingResponse({
@@ -55,11 +56,11 @@ export async function POST(request: NextRequest) {
     // conflict with its current state; anything else keeps the portal's usual 200 + named reason.
     const conflict =
       result.error === "already_responded" || result.error === "closed" || result.error === "on_live_list";
-    return NextResponse.json(
+    return portalJson(
       { ok: false, error: result.error, message: friendlyError(result.error) },
       { status: conflict ? 409 : 200 },
     );
   }
   await forwardResponseNow(findingId);
-  return NextResponse.json({ ok: true });
+  return portalJson({ ok: true });
 }

@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
+import { portalJson } from "@/lib/portal/forbidden-keys";
 import { neon } from "@neondatabase/serverless";
 import { randomInt } from "crypto";
 import { hashPortalPin } from "@/lib/physician-auth";
@@ -33,13 +34,13 @@ export async function POST(req: NextRequest) {
   const { email } = (await req.json().catch(() => ({}))) as { email?: string };
   const clean = typeof email === "string" ? email.toLowerCase().trim() : "";
   if (!clean || !clean.includes("@")) {
-    return NextResponse.json({ ok: false, error: "A valid email is required." }, { status: 400, headers: NO_STORE });
+    return portalJson({ ok: false, error: "A valid email is required." }, { status: 400, headers: NO_STORE });
   }
   // Rate-limit silently (still return generic success to avoid leaking timing/state).
-  if (!rateOk(clean)) return NextResponse.json(GENERIC, { headers: NO_STORE });
+  if (!rateOk(clean)) return portalJson(GENERIC, { headers: NO_STORE });
 
   const url = process.env.DATABASE_URL;
-  if (!url) return NextResponse.json({ ok: false, error: "DATABASE_URL not configured" }, { status: 500, headers: NO_STORE });
+  if (!url) return portalJson({ ok: false, error: "DATABASE_URL not configured" }, { status: 500, headers: NO_STORE });
   const sql = neon(url);
 
   const rows = (await sql`
@@ -76,5 +77,5 @@ export async function POST(req: NextRequest) {
     }).catch(() => undefined);
   }
 
-  return NextResponse.json(GENERIC, { headers: NO_STORE });
+  return portalJson(GENERIC, { headers: NO_STORE });
 }

@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { portalJson } from "@/lib/portal/forbidden-keys";
 import { neon } from "@neondatabase/serverless";
 import { getCurrentPhysician } from "@/lib/physician-auth";
 
@@ -17,14 +17,14 @@ const NO_STORE = { "Cache-Control": "no-store, max-age=0" };
  */
 export async function GET() {
   const me = await getCurrentPhysician();
-  if (!me) return NextResponse.json({ ok: false, error: "Unauthenticated" }, { status: 401, headers: NO_STORE });
+  if (!me) return portalJson({ ok: false, error: "Unauthenticated" }, { status: 401, headers: NO_STORE });
   const url = process.env.DATABASE_URL;
-  if (!url) return NextResponse.json({ ok: false, error: "DATABASE_URL not configured" }, { status: 500, headers: NO_STORE });
+  if (!url) return portalJson({ ok: false, error: "DATABASE_URL not configured" }, { status: 500, headers: NO_STORE });
   const sql = neon(url);
 
   const phys = (await sql`SELECT metabase_doctor_email AS mb FROM physicians WHERE id = ${me.physicianId}::uuid`) as Array<{ mb: string | null }>;
   const mb = phys[0]?.mb ?? null;
-  if (!mb) return NextResponse.json({ ok: true, mapped: false, rows: [], snapshot_at: null }, { headers: NO_STORE });
+  if (!mb) return portalJson({ ok: true, mapped: false, rows: [], snapshot_at: null }, { headers: NO_STORE });
 
   const rows = (await sql`
     SELECT week, doctor_specialty, doctor_channel_type, total_consults, csat_pct, csat_responses, positive_csat_count,
@@ -37,5 +37,5 @@ export async function GET() {
   `) as Array<Record<string, unknown>>;
 
   const snap = (await sql`SELECT max(snapshot_at) AS s FROM doctor_perf_weekly`) as Array<{ s: string | null }>;
-  return NextResponse.json({ ok: true, mapped: true, doctor_email: mb, rows, snapshot_at: snap[0]?.s ?? null }, { headers: NO_STORE });
+  return portalJson({ ok: true, mapped: true, doctor_email: mb, rows, snapshot_at: snap[0]?.s ?? null }, { headers: NO_STORE });
 }
