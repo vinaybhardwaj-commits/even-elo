@@ -60,9 +60,52 @@ def test_role_attributes_grant_nothing_beyond_login():
     assert row == "(f,f,f,f,f)", row
 
 
+def live_staff_sql():
+    import re
+    from pathlib import Path
+
+    ts = Path(__file__).resolve().parents[2] / "app" / "src" / "lib" / "zone" / "live-staff.ts"
+    m = re.search(r"export const LIVE_STAFF_SQL = `(.*?)`;", ts.read_text(), re.S)
+    assert m, "LIVE_STAFF_SQL not found"
+    return re.sub(r"\$1\b", "%s", m.group(1))
+
+
+def test_live_staff_statement_runs_with_the_documented_column_grants():
+    """The exact statement the studio app runs per request (zero rows for a random uuid is fine)."""
+    import uuid
+
+    with psycopg.connect(DSN, autocommit=False, prepare_threshold=None) as conn:
+        try:
+            assert conn.execute(live_staff_sql(), (str(uuid.uuid4()),)).fetchall() == []
+        finally:
+            conn.rollback()
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT password_hash FROM profiles WHERE false",
+        "SELECT email FROM profiles WHERE false",
+        "SELECT * FROM profiles WHERE false",
+        "SELECT password_hash FROM profiles_with_roles WHERE false",
+        "SELECT email FROM profiles_with_roles WHERE false",
+        "SELECT * FROM profiles_with_roles WHERE false",
+    ],
+)
+def test_credential_columns_are_denied_on_profiles_and_its_view(sql):
+    """Column grants only: password_hash and email must stay unreadable (the view is SELECT p.*)."""
+    assert attempt(sql) == "denied"
+
+
+def test_no_table_wide_select_on_profiles_or_its_view():
+    for rel in ("profiles", "profiles_with_roles"):
+        assert scalar("SELECT has_table_privilege(current_user, %s, 'SELECT')", (rel,)) is False, rel
+        assert scalar("SELECT has_column_privilege(current_user, %s, 'password_hash', 'SELECT')", (rel,)) is False, rel
+
+
 def test_zone_role_view_is_readable():
     """The Studio middleware re-reads roles from profiles_with_roles on the same RO connection."""
-    assert scalar("SELECT count(*) >= 0 FROM profiles_with_roles") is True
+    assert scalar("SELECT count(id) >= 0 FROM profiles_with_roles") is True  # column grant: never count(*)/p.*
 
 
 @pytest.mark.parametrize("table", GOV_TABLES)

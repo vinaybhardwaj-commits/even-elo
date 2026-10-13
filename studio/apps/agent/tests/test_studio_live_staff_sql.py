@@ -68,7 +68,10 @@ def db(uri):
         except Exception as exc:  # pragma: no cover - surfaced with the failing id
             raise AssertionError(f"even-elo migration {mid} failed to apply: {type(exc).__name__}") from exc
     conn.execute("CREATE ROLE ro_live_staff NOLOGIN")
-    conn.execute("GRANT SELECT ON profiles, profiles_with_roles TO ro_live_staff")
+    # EXACTLY the documented grants (docs/architecture.md): COLUMN grants on the view and on profiles.
+    # (The view is `SELECT p.*`, so a table-wide grant on it would expose password_hash.)
+    conn.execute("GRANT SELECT (id, status, is_super_admin) ON profiles_with_roles TO ro_live_staff")
+    conn.execute("GRANT SELECT (id, must_change_pin) ON profiles TO ro_live_staff")
     yield conn
     conn.close()
 
@@ -120,9 +123,47 @@ def test_other_roles_and_statuses_come_through(db):
     assert run_as_ro(db, add_profile(db, False, status="pending_approval"))[0][0] == "pending_approval"
 
 
+def as_ro_fails(conn, sql, exc):
+    conn.execute("SET ROLE ro_live_staff")
+    try:
+        with pytest.raises(exc):
+            conn.execute(sql)
+    finally:
+        conn.execute("RESET ROLE")
+
+
+def test_the_column_grant_is_enough_and_secrets_stay_denied(db):
+    add_profile(db, False)
+    assert run_as_ro(db, add_profile(db, True)) [0][2] is True  # LIVE_STAFF_SQL runs fine with only the column grant
+    for col in ("password_hash", "email", "full_name", "is_super_admin", "status"):
+        as_ro_fails(db, f"SELECT {col} FROM profiles", psycopg.errors.InsufficientPrivilege)
+    as_ro_fails(db, "SELECT * FROM profiles", psycopg.errors.InsufficientPrivilege)
+    as_ro_fails(db, "SELECT password_hash FROM profiles WHERE id = id", psycopg.errors.InsufficientPrivilege)
+    ok = db.execute("SELECT has_column_privilege('ro_live_staff', 'profiles', 'password_hash', 'SELECT'), has_table_privilege('ro_live_staff', 'profiles', 'SELECT')").fetchone()
+    assert ok == (False, False)
+    # The view is `SELECT p.*`, so it carries password_hash: only the column grant keeps it closed.
+    cols = {r[0] for r in db.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'profiles_with_roles'")}
+    assert "password_hash" in cols  # premise: a table-wide grant on the view WOULD leak it
+    for col in ("password_hash", "email", "full_name", "is_site_medical_head"):
+        as_ro_fails(db, f"SELECT {col} FROM profiles_with_roles", psycopg.errors.InsufficientPrivilege)
+    as_ro_fails(db, "SELECT * FROM profiles_with_roles", psycopg.errors.InsufficientPrivilege)
+    as_ro_fails(db, "SELECT password_hash FROM profiles_with_roles WHERE id = id", psycopg.errors.InsufficientPrivilege)
+
+
+def test_a_table_wide_grant_on_the_view_would_leak_the_hash(db):
+    db.execute("CREATE ROLE ro_wide NOLOGIN")
+    db.execute("GRANT SELECT ON profiles_with_roles TO ro_wide")
+    add_profile(db, False)
+    db.execute("SET ROLE ro_wide")
+    try:
+        assert db.execute("SELECT count(password_hash) FROM profiles_with_roles").fetchone()[0] >= 1  # the hole the docs forbid
+    finally:
+        db.execute("RESET ROLE")
+
+
 def test_the_read_only_role_needs_select_on_profiles(db):
     db.execute("CREATE ROLE ro_view_only NOLOGIN")
-    db.execute("GRANT SELECT ON profiles_with_roles TO ro_view_only")
+    db.execute("GRANT SELECT (id, status, is_super_admin) ON profiles_with_roles TO ro_view_only")
     pid = add_profile(db, False)
     db.execute("SET ROLE ro_view_only")
     try:
