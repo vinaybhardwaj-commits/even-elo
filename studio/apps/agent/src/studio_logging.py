@@ -32,6 +32,7 @@ CHATTY_LOGGER_PREFIXES = (
     "uvicorn.error",
     "httpx",
     "httpcore",
+    "psycopg",  # psycopg.pool logs "error connecting in %r: %s" with server host and user
     "openai",
     "anthropic",
 )

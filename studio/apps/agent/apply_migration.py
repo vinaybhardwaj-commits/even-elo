@@ -41,9 +41,26 @@ def apply(dsn: str, app_role: str, migrations_dir: Path = MIGRATIONS) -> list[st
                 "refusing to run: the migrating role and --app-role are the same ('%s'). The table owner "
                 "must be a separate role, or the app role could disable the studio_audit trigger." % me
             )
-        exists = conn.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (app_role,)).fetchone()
-        if not exists:
+        row = conn.execute(
+            "SELECT rolsuper, rolbypassrls, pg_has_role(rolname, current_user, 'MEMBER') FROM pg_roles WHERE rolname = %s",
+            (app_role,),
+        ).fetchone()
+        if row is None:
             raise SystemExit(f"app role '{app_role}' does not exist; create it first (this script never creates roles)")
+        superuser, bypass_rls, member_of_me = row
+        if superuser or bypass_rls:
+            raise SystemExit(f"refusing to run: app role '{app_role}' is SUPERUSER or BYPASSRLS")
+        if member_of_me:
+            raise SystemExit(
+                f"refusing to run: app role '{app_role}' is a member of the migrating role '{me}' (it would inherit "
+                "ownership and could disable the studio_audit trigger)"
+            )
+        owner = conn.execute(
+            "SELECT pg_get_userbyid(c.relowner) FROM pg_class c WHERE c.relname = 'studio_audit' AND c.relkind = 'r' "
+            "AND pg_table_is_visible(c.oid)"
+        ).fetchone()
+        if owner and conn.execute("SELECT pg_has_role(%s, %s, 'MEMBER')", (app_role, owner[0])).fetchone()[0]:
+            raise SystemExit(f"refusing to run: app role '{app_role}' is (a member of) the owner '{owner[0]}' of studio_audit")
         PostgresSaver(conn).setup()
         for path in sorted(migrations_dir.glob("*.sql")):
             sql = render(path.read_text(), app_role)

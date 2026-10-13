@@ -24,12 +24,15 @@ async function freePort(): Promise<number> {
   });
 }
 
-describe.skipIf(!BUILT)("built studio app under basePath /studio", () => {
+// Locally an unbuilt app skips this suite; with CI set it FAILS instead, so CI cannot pass without
+// exercising the basePath/endpoint path. Build first: pnpm --filter @repo/app build.
+describe.skipIf(!BUILT && !process.env.CI)("built studio app under basePath /studio", () => {
   let child: ChildProcess;
   let base = "";
   let cookie = "";
 
   beforeAll(async () => {
+    if (!BUILT) throw new Error("the app is not built (CI is set): run `pnpm --filter @repo/app build` before the tests");
     const port = await freePort();
     base = `http://127.0.0.1:${port}`;
     cookie = `epi_session=${await new SignJWT({ profileId: STAFF }).setProtectedHeader({ alg: "HS256" }).setIssuedAt().setExpirationTime("1h").sign(new TextEncoder().encode(SECRET))}`;

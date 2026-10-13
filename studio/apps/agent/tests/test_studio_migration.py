@@ -160,6 +160,25 @@ def test_runner_refuses_when_the_migrating_role_is_the_app_role(migrated, pg_uri
         apply_migration.apply(pg_uri, me)
 
 
+def test_runner_refuses_a_member_of_the_migrating_role_and_privileged_app_roles(migrated, pg_uri):
+    with psycopg.connect(pg_uri, autocommit=True) as c:
+        me = c.execute("SELECT current_user").fetchone()[0]
+        for r in ("app_in_owner", "app_super", "app_rls"):
+            c.execute(f"DROP ROLE IF EXISTS {r}")
+        c.execute("CREATE ROLE app_in_owner NOLOGIN")
+        c.execute(f'GRANT "{me}" TO app_in_owner')
+        c.execute("CREATE ROLE app_super NOLOGIN SUPERUSER")
+        c.execute("CREATE ROLE app_rls NOLOGIN BYPASSRLS")
+    with pytest.raises(SystemExit, match="member of the migrating role"):
+        apply_migration.apply(pg_uri, "app_in_owner")
+    with pytest.raises(SystemExit, match="SUPERUSER or BYPASSRLS"):
+        apply_migration.apply(pg_uri, "app_super")
+    with pytest.raises(SystemExit, match="SUPERUSER or BYPASSRLS"):
+        apply_migration.apply(pg_uri, "app_rls")
+    # The plain, unprivileged app role still works.
+    assert apply_migration.apply(pg_uri, "studio_app") == ["0001_studio"]
+
+
 def test_audit_has_an_outcome_column_defaulting_to_ok(migrated):
     with as_app(migrated) as c:
         c.execute("INSERT INTO studio_audit (staff_id, tool, params_hash, row_count, duration_ms, mode, outcome) VALUES ('s','t','h',0,1,'live','error')")

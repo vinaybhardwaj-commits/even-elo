@@ -1,6 +1,14 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it } from "vitest";
-import { loadLiveStaff } from "../live-staff";
+import { LIVE_STAFF_SQL, loadLiveStaff } from "../live-staff";
+
+describe("LIVE_STAFF_SQL", () => {
+  it("reads must_change_pin from the base table, never from the frozen view", () => {
+    expect(LIVE_STAFF_SQL).toMatch(/SELECT base\.must_change_pin FROM profiles base WHERE base\.id = p\.id/);
+    expect(LIVE_STAFF_SQL).not.toMatch(/p\.must_change_pin/);
+    expect(LIVE_STAFF_SQL).toContain("$1::uuid");
+  });
+});
 
 describe("loadLiveStaff", () => {
   afterEach(() => {

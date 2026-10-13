@@ -49,6 +49,21 @@ def test_chatty_libraries_are_dropped_below_warning_and_fully_sanitised_above():
         assert "Dr Sample" not in text and "PHYSICIAN" not in text and "retrying" not in text
 
 
+def test_psycopg_pool_error_connecting_record_is_suppressed():
+    """The shape psycopg_pool logs when a connection fails: it embeds the server host and user."""
+    logger, out = capture("psycopg.pool")
+    logger.warning(
+        "error connecting in %r: %s",
+        "pool-1",
+        'connection failed: connection to server at "db-host.internal" (10.0.0.5), port 5432 failed: FATAL: password authentication failed for user "studio_app"',
+    )
+    logger.info("pool %r ready", "pool-1")
+    text = out.getvalue()
+    assert text.count("\n") == 1 and "details suppressed" in text
+    for leak in ("db-host", "10.0.0.5", "studio_app", "password", "pool-1"):
+        assert leak not in text
+
+
 def test_ag_ui_resume_and_tool_args_records_are_sanitised():
     """The exact shapes at ag_ui_langgraph/agent.py:572 (WARNING) and :783 (ERROR)."""
     logger, out = capture("ag_ui_langgraph.agent")

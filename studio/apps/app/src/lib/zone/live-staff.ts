@@ -6,17 +6,24 @@ import type { LiveStaff } from "./authorize";
 type Row = { status: string | null; is_super_admin: boolean | null; must_change_pin: boolean | null };
 type Query = (profileId: string) => Promise<Row[]>;
 
+// The view profiles_with_roles is `SELECT p.*` frozen at even-elo migration 015, so it does NOT have
+// must_change_pin (added to profiles in 020). Read it from the base table exactly like even-elo's
+// login route does. The read-only role therefore needs SELECT on profiles as well as the view.
+// Exported as text so a real-Postgres test (apps/agent/tests/test_studio_live_staff_sql.py) can run
+// this exact statement against the even-elo migrations; $1 is the profile id.
+export const LIVE_STAFF_SQL = `
+SELECT p.status, p.is_super_admin,
+       (SELECT base.must_change_pin FROM profiles base WHERE base.id = p.id) AS must_change_pin
+FROM profiles_with_roles p
+WHERE p.id = $1::uuid
+LIMIT 1`;
+
 let cached: { url: string; query: Query } | null = null;
 
 function queryFor(url: string): Query {
   if (cached?.url === url) return cached.query;
   const sql = neon(url);
-  const query: Query = async (profileId) =>
-    (await sql`
-      SELECT p.status, p.is_super_admin, p.must_change_pin
-      FROM profiles_with_roles p
-      WHERE p.id = ${profileId}::uuid
-      LIMIT 1`) as unknown as Row[];
+  const query: Query = async (profileId) => (await sql(LIVE_STAFF_SQL, [profileId])) as unknown as Row[];
   cached = { url, query };
   return query;
 }
