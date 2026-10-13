@@ -78,6 +78,17 @@ describe("portalJson", () => {
   });
 });
 
+/** True if the source builds a JSON response without going through portalJson (whitespace/alias tolerant). */
+function findRawJson(text: string): boolean {
+  const names = new Set(["NextResponse", "Response"]);
+  Array.from(text.matchAll(/\b(?:Next)?Response\s+as\s+(\w+)/g)).forEach((m) => names.add(m[1]));
+  Array.from(text.matchAll(/\b(?:const|let|var)\s+(\w+)\s*=\s*(?:Next)?Response\b(?!\s*[.(])/g)).forEach((m) => names.add(m[1]));
+  const n = Array.from(names).join("|");
+  if (new RegExp(`\\b(?:${n})\\s*(?:\\.\\s*json\\b|\\[\\s*["'\`]json["'\`]\\s*\\])`).test(text)) return true;
+  if (/\b(?:const|let|var)\s*\{[^}]*\bjson\b[^}]*\}\s*=\s*(?:Next)?Response\b/.test(text)) return true;
+  return /new\s+(?:Next)?Response\s*\(\s*JSON\s*\.\s*stringify/.test(text);
+}
+
 describe("source guard: portal API routes", () => {
   const root = path.resolve(__dirname, "../../app/api/portal");
   const routes: string[] = [];
@@ -98,8 +109,23 @@ describe("source guard: portal API routes", () => {
   });
 
   it("no route builds a JSON response outside portalJson", () => {
-    const bad = routes.filter((p) => /(?:Next)?Response\.json\(|new (?:Next)?Response\(\s*JSON\.stringify/.test(fs.readFileSync(p, "utf8")));
+    const bad = routes.filter((p) => findRawJson(fs.readFileSync(p, "utf8")));
     expect(bad.map(rel)).toEqual([]);
+  });
+
+  it("findRawJson tolerates whitespace, aliasing, brackets and destructuring", () => {
+    expect(findRawJson("return NextResponse.json({});")).toBe(true);
+    expect(findRawJson("return NextResponse . json ({});")).toBe(true);
+    expect(findRawJson("return NextResponse\n  .json({});")).toBe(true);
+    expect(findRawJson('return NextResponse["json"]({});')).toBe(true);
+    expect(findRawJson("return Response.json({});")).toBe(true);
+    expect(findRawJson('import { NextResponse as NR } from "next/server";\nreturn NR.json({});')).toBe(true);
+    expect(findRawJson("const R = NextResponse;\nreturn R.json({});")).toBe(true);
+    expect(findRawJson("const { json } = NextResponse;\nreturn json({});")).toBe(true);
+    expect(findRawJson("const j = NextResponse.json.bind(NextResponse);")).toBe(true);
+    expect(findRawJson("return new Response(JSON.stringify(x));")).toBe(true);
+    expect(findRawJson("return portalJson({ ok: true });")).toBe(false);
+    expect(findRawJson("const j = await res.json();")).toBe(false);
   });
 
   it("every JSON-returning route goes through portalJson", () => {
