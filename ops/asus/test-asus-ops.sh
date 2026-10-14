@@ -18,7 +18,7 @@ out=$(./install-studio-agent.sh --dry-run --render-dir "$R" --tarball /tmp/none.
 for pat in 'useradd --system' 'tar -xf /tmp/none.tar' 'uv sync --frozen' 'releases/0123456789ab' \
   'mask tinyproxy' 'studio-proxy.service' 'ProtectSystem=strict' 'Requires=studio-agent-nft.service studio-proxy.service' \
   'mode 0600, owner root:studio-agent' 'studio-agent-egress-refresh.timer' 'nft -c ok' \
-  'api.*typesafe.*ai' 'TYPESAFE_API_KEY' 'VERTEX_MODEL' 'JEV_MODEL' 'rollback|not activating' ; do
+  'api.*typesafe.*ai' 'AWS_STS_REGIONAL_ENDPOINTS=regional' 'TYPESAFE_API_KEY' 'VERTEX_MODEL' 'JEV_MODEL' 'rollback|not activating' ; do
   if grep -Eq -- "$pat" <<<"$out"; then ok "dry-run: $pat"; else bad "dry-run missing: $pat"; fi
 done
 u=$R/studio-agent.service
@@ -33,7 +33,7 @@ if grep -q 'FilterDefaultDeny Yes' "$R/tinyproxy.conf" && grep -q 'Listen 127.0.
 
 if ./install-studio-agent.sh --dry-run --rollback | grep -q 'disable --now'; then ok "rollback dry-run"; else bad "rollback dry-run"; fi
 if ./install-studio-agent.sh --dry-run --purge-secrets | grep -q shred; then ok "purge dry-run"; else bad "purge dry-run"; fi
-if ./post-session-check.sh --dry-run | grep -q 'zgrep'; then ok "post-session dry-run"; else bad "post-session dry-run"; fi
+if ./post-session-check.sh --dry-run | grep -q 'STUDIO_LOG_LEVEL'; then ok "post-session dry-run"; else bad "post-session dry-run"; fi
 if ./install-studio-agent.sh --dry-run --tarball /tmp/a.tar --sha256 abc --neon-host a >/dev/null 2>&1; then bad "bad sha256 accepted"; else ok "rejects bad sha256"; fi
 
 if command -v systemd-analyze >/dev/null; then

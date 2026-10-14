@@ -89,4 +89,5 @@ rm -f "$tmp"
 allow="127.0.0.0/8 ::1/128"
 while read -r a; do allow+=" $a"; done < <(awk 'NF {print $2}' <<<"$pairs" | sort -u)
 systemctl set-property "$SVC.service" IPAddressAllow= "IPAddressAllow=$allow"
+date +%s >/var/lib/studio-agent-egress-ok  # last-success stamp, read by post-session-check.sh
 echo "egress refreshed: $(wc -l <<<"$pairs") neon address(es)"

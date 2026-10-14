@@ -5,7 +5,9 @@
 # never the canary and never file contents.
 #
 #   printf '%s' "$CANARY" | sudo ./post-session-check.sh [--dry-run]
-# Exit: 0 clean, 1 hit(s), 2 usage, 3 INCONCLUSIVE (an unreadable path or a journalctl failure; no hits seen).
+# Also checks: egress-refresh last success <= 15 min old, and STUDIO_LOG_LEVEL is INFO or higher (env file and running process).
+# Exit: 0 clean, 1 hit(s) or log-level violation, 2 usage, 3 INCONCLUSIVE (unreadable path, journalctl failure,
+# missing/stale egress-refresh stamp, unreadable env; nothing worse seen).
 set -uo pipefail
 
 DIRS=(/var /tmp /opt/studio-agent)
@@ -19,6 +21,8 @@ if [ "$DRY" = 1 ]; then
     echo "+ find $d -name '*.gz' | zgrep -qaF -f <canary fd>   # compressed rotated logs"
   done
   echo "+ journalctl --no-pager -a | grep -cF -f <canary fd>"
+  echo "+ egress-refresh last success: /var/lib/studio-agent-egress-ok age <= 900s else INCONCLUSIVE"
+  echo "+ STUDIO_LOG_LEVEL in /etc/studio-agent/env and in /proc/<MainPID>/environ must be INFO|WARNING|ERROR|CRITICAL"
   echo "expect: 0 hits (exit 0); exit 1 on hits; exit 3 if any path/journal was unreadable"
   exit 0
 fi
@@ -32,6 +36,7 @@ if [ -z "$canary" ] && [ ! -t 0 ]; then IFS= read -r canary || true; fi
 
 hits=0
 inconclusive=0
+violations=0
 errfile=$(mktemp)
 finderr=$(mktemp)
 trap 'rm -f "$errfile" "$finderr"' EXIT
@@ -70,7 +75,38 @@ fi
 echo "journal hits: $jc"
 hits=$((hits + jc))
 
-echo "total hits: $hits"
-[ "$hits" -eq 0 ] || exit 1
+# egress-refresh timer: last success stamp written by studio-agent-egress-refresh
+stamp=/var/lib/studio-agent-egress-ok
+if [ -r "$stamp" ] && [[ $(cat "$stamp") =~ ^[0-9]+$ ]]; then
+  age=$(( $(date +%s) - $(cat "$stamp") ))
+  if [ "$age" -gt 900 ]; then echo "INCONCLUSIVE: egress refresh last succeeded ${age}s ago (> 900s)"; inconclusive=1
+  else echo "egress refresh last success: ${age}s ago"; fi
+else
+  echo "INCONCLUSIVE: no egress refresh success stamp ($stamp)"; inconclusive=1
+fi
+
+# log level must not be below INFO in the live env (file and running process)
+level_ok() { case "${1^^}" in INFO|WARNING|WARN|ERROR|CRITICAL|FATAL) return 0 ;; *) return 1 ;; esac; }
+if [ -r /etc/studio-agent/env ]; then
+  lvl=$(grep -E '^STUDIO_LOG_LEVEL=' /etc/studio-agent/env | tail -1 | cut -d= -f2-)
+  lvl=${lvl:-INFO}  # the app defaults to INFO
+  if level_ok "$lvl"; then echo "STUDIO_LOG_LEVEL (env file): ${lvl^^}"; else echo "VIOLATION: STUDIO_LOG_LEVEL in env file is below INFO"; violations=$((violations + 1)); fi
+else
+  echo "INCONCLUSIVE: /etc/studio-agent/env unreadable"; inconclusive=1
+fi
+pid=$(systemctl show studio-agent -p MainPID --value 2>/dev/null)
+if [[ $pid =~ ^[1-9][0-9]*$ ]]; then
+  if plvl=$(tr '\0' '\n' <"/proc/$pid/environ" 2>/dev/null | grep -E '^STUDIO_LOG_LEVEL=' | cut -d= -f2-); then
+    plvl=${plvl:-INFO}
+    if level_ok "$plvl"; then echo "STUDIO_LOG_LEVEL (running process): ${plvl^^}"; else echo "VIOLATION: running process STUDIO_LOG_LEVEL is below INFO"; violations=$((violations + 1)); fi
+  else
+    echo "INCONCLUSIVE: cannot read environment of agent pid $pid"; inconclusive=1
+  fi
+else
+  echo "note: agent not running; process log level not checked"
+fi
+
+echo "total hits: $hits, violations: $violations"
+[ "$hits" -eq 0 ] && [ "$violations" -eq 0 ] || exit 1
 [ "$inconclusive" -eq 0 ] || { echo "result: INCONCLUSIVE"; exit 3; }
 exit 0

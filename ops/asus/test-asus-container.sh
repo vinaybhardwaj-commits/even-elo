@@ -131,13 +131,7 @@ check "agent runs from release 2" "pgrep -af uvicorn | grep -q '/opt/studio-agen
 checkno "broken release fails" "$INST --tarball /root/rel3.tar --sha256 $SHA3"
 check "failed upgrade leaves current and the old release running" "[ \"\$(readlink /opt/studio-agent/current)\" = /opt/studio-agent/releases/${SHA2:0:12} ] && [ ! -e /opt/studio-agent/releases/${SHA3:0:12} ] && systemctl is-active --quiet studio-agent"
 
-echo "--- rollback twice, purge"
-check "rollback 1" '/root/asus/install-studio-agent.sh --rollback && ! systemctl is-active --quiet studio-agent && ! systemctl is-enabled --quiet studio-agent'
-check "rollback 2 (idempotent)" '/root/asus/install-studio-agent.sh --rollback'
-check "funnel off after rollback (stub)" '! tailscale serve status --json | grep -q "/agent"'
-check "purge-secrets removes env and key" '/root/asus/install-studio-agent.sh --purge-secrets; [ ! -e /etc/studio-agent/env ] && [ ! -e /etc/studio-agent/gcp-sa.json ]'
-
-echo "--- post-session check"
+echo "--- post-session check (agent running, env present)"
 CAN=CANARY-PATIENT-7731904
 PSC=/root/asus/post-session-check.sh
 check "clean run exits 0" "printf %s $CAN | $PSC"
@@ -151,6 +145,24 @@ grep -q "$CAN" "$WORK/psc.out" && bad "canary printed in output" || ok "canary n
 x 'printf "#!/bin/sh\necho boom >&2\nexit 1\n" >/usr/local/bin/journalctl; chmod +x /usr/local/bin/journalctl'
 x "rm -f /var/lib/refute/* /var/log/rotated.log.2.gz; printf %s NOHITCANARY-1234567 | PATH=/usr/local/bin:\$PATH $PSC" >/dev/null 2>&1; rc=$?
 [ "$rc" = 3 ] && ok "journalctl failure -> INCONCLUSIVE exit 3" || bad "journalctl failure exit 3 (rc=$rc)"
+x "rm -f /usr/local/bin/journalctl"
+
+x 'sed -i "s#^STUDIO_LOG_LEVEL=.*#STUDIO_LOG_LEVEL=DEBUG#" /etc/studio-agent/env'
+x "printf %s NOHITCANARY-1234567 | $PSC" >"$WORK/psc.out" 2>&1; rc=$?
+[ "$rc" = 1 ] && grep -q 'VIOLATION' "$WORK/psc.out" && ok "DEBUG log level -> violation exit 1" || bad "DEBUG log level exit 1 (rc=$rc)"
+x 'sed -i "s#^STUDIO_LOG_LEVEL=.*#STUDIO_LOG_LEVEL=INFO#" /etc/studio-agent/env'
+x 'echo 1 >/var/lib/studio-agent-egress-ok'
+x "printf %s NOHITCANARY-1234567 | $PSC" >"$WORK/psc.out" 2>&1; rc=$?
+[ "$rc" = 3 ] && grep -q 'egress refresh last succeeded' "$WORK/psc.out" && ok "stale egress refresh -> INCONCLUSIVE exit 3" || bad "stale egress refresh exit 3 (rc=$rc)"
+x 'systemctl start studio-agent-egress-refresh.service'
+check "refresh service rewrites the success stamp; check clean again" "printf %s NOHITCANARY-1234567 | $PSC"
+check "env template pins AWS_STS_REGIONAL_ENDPOINTS=regional" 'grep -q "^AWS_STS_REGIONAL_ENDPOINTS=regional$" /etc/studio-agent/env'
+
+echo "--- rollback twice, purge"
+check "rollback 1" '/root/asus/install-studio-agent.sh --rollback && ! systemctl is-active --quiet studio-agent && ! systemctl is-enabled --quiet studio-agent'
+check "rollback 2 (idempotent)" '/root/asus/install-studio-agent.sh --rollback'
+check "funnel off after rollback (stub)" '! tailscale serve status --json | grep -q "/agent"'
+check "purge-secrets removes env and key" '/root/asus/install-studio-agent.sh --purge-secrets; [ ! -e /etc/studio-agent/env ] && [ ! -e /etc/studio-agent/gcp-sa.json ]'
 
 echo; [ "$fail" = 0 ] && echo "ALL CONTAINER CHECKS PASSED" || echo "SOME CONTAINER CHECKS FAILED"
 exit $fail
