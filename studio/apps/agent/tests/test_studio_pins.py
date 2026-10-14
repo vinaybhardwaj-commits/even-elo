@@ -341,3 +341,46 @@ def test_pins_file_directory_is_not_a_regular_file(tmp_path, monkeypatch):
     monkeypatch.setenv("STUDIO_REQUIRE_PINS", "1")
     with pytest.raises(PinError):
         pinned_conninfo(URL)
+
+
+def test_pins_parent_directory_must_be_root_owned_and_not_group_or_world_writable(tmp_path, monkeypatch):
+    d = tmp_path / "run"
+    d.mkdir()
+    path = d / "p.json"
+    path.write_text(json.dumps({HOST: ["203.0.113.7"]}))
+    path.chmod(0o640)
+    d.chmod(0o755)
+    monkeypatch.setenv("STUDIO_NEON_PINS", str(path))
+    monkeypatch.setenv("STUDIO_REQUIRE_PINS", "1")
+    monkeypatch.setattr(studio_pins, "TRUSTED_UID", os.getuid())
+    assert conninfo_to_dict(pinned_conninfo(URL))["hostaddr"] == "203.0.113.7"  # good directory: accepted
+    for mode in (0o775, 0o777, 0o757, 0o770):
+        d.chmod(mode)
+        with pytest.raises(PinError, match="writable"):
+            pinned_conninfo(URL)
+    d.chmod(0o755)
+    # Directory owned by someone else (file still owned by the trusted uid): refused.
+    real = os.lstat
+
+    def fake(p, *a, **k):
+        st = real(p, *a, **k)
+        if str(p) == str(d):
+            return os.stat_result((st.st_mode, st.st_ino, st.st_dev, st.st_nlink, os.getuid() + 1, st.st_gid, st.st_size, int(st.st_atime), int(st.st_mtime), int(st.st_ctime)))
+        return st
+
+    monkeypatch.setattr(studio_pins.os, "lstat", fake)
+    with pytest.raises(PinError, match="root-owned"):
+        pinned_conninfo(URL)
+
+
+def test_pins_in_a_world_writable_directory_are_ignored_without_require(tmp_path, monkeypatch):
+    d = tmp_path / "shared"
+    d.mkdir()
+    path = d / "p.json"
+    path.write_text(json.dumps({HOST: ["203.0.113.7"]}))
+    path.chmod(0o640)
+    d.chmod(0o777)
+    monkeypatch.setenv("STUDIO_NEON_PINS", str(path))
+    monkeypatch.setattr(studio_pins, "TRUSTED_UID", os.getuid())
+    monkeypatch.delenv("STUDIO_REQUIRE_PINS", raising=False)
+    assert pinned_conninfo(URL) == URL

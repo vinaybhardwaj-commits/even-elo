@@ -52,7 +52,13 @@ def test_grant_list_agrees_across_sql_tools_and_probe():
 
 def test_role_attributes_in_sql():
     sql = SQL.read_text()
-    assert sql.count("NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 5") == 2
+    # NOSUPERUSER only in CREATE ROLE (a non-superuser CREATEROLE owner cannot mention it in ALTER);
+    # LOGIN enabled by the very last statement; one transaction (run-roles.sh passes --single-transaction).
+    assert sql.count("NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 5") == 1
+    assert not re.search(r"ALTER ROLE[^;]*NOSUPERUSER", sql)
+    assert "CREATE ROLE studio_gov_ro NOLOGIN" in sql
+    assert sql.rstrip().splitlines()[-1] == "ALTER ROLE studio_gov_ro LOGIN;"
+    assert sql.count("LOGIN;") == 1 and "--single-transaction" in SCRIPT.read_text()
     for setting in ("default_transaction_read_only = on", "statement_timeout = '15s'", "idle_in_transaction_session_timeout = '30s'"):
         assert setting in sql
     assert "PASSWORD :'verifier'" in sql and not re.search(r"PASSWORD\s+'", sql) and ":'pw'" not in sql
@@ -337,3 +343,116 @@ def test_temp_dir_is_tmpfs_only_unless_allowed(pg, evenelo, tmp_path):
     out3 = tmp_path / "o3"
     r = subprocess.run(["bash", str(SCRIPT), str(owner_file), str(out3)], capture_output=True, text=True, env={**env, "XDG_RUNTIME_DIR": str(xdg)})
     assert r.returncode == 0 and not list(xdg.iterdir())
+
+
+# ----- R10: a NON-superuser CREATEROLE owner (Neon owners are never superusers) -----
+
+
+@pytest.fixture
+def pg_ns():
+    """A SEPARATE cluster: roles are cluster-wide and studio_gov_ro must not pre-exist (a role created by
+    another owner cannot be altered by a CREATEROLE owner without ADMIN OPTION)."""
+    if importlib.util.find_spec("pgserver") is None:
+        pytest.skip("pgserver not installed")
+    import pgserver
+
+    server = pgserver.get_server(tempfile.mkdtemp(prefix="studio-roles-ns-"))
+    yield server.get_uri(), str(Path(pgserver.__file__).parent / "pginstall" / "bin" / "psql")
+    server.cleanup()
+
+
+def _owner_db(pg, tag, attrs):
+    """A non-superuser owner role `attrs` (e.g. 'CREATEROLE') that OWNS a fresh database with the even-elo schema."""
+    uri, _ = pg
+    owner, name = f"own_{tag}_{uuid.uuid4().hex[:5]}", f"evenelo_{tag}_{uuid.uuid4().hex[:5]}"
+    with psycopg.connect(uri, autocommit=True) as c:
+        c.execute(f'CREATE ROLE "{owner}" LOGIN NOSUPERUSER {attrs}')
+        c.execute(f'CREATE DATABASE "{name}" OWNER "{owner}"')
+    sock = uri.split("host=")[1]
+    owner_uri = f"postgresql://{owner}:@/{name}?host={sock}"
+    with psycopg.connect(owner_uri, autocommit=True) as conn:
+        assert conn.execute("SELECT rolsuper FROM pg_roles WHERE rolname = current_user").fetchone()[0] is False
+        for _mid, sql in migrations():
+            conn.execute(sql.replace("CREATE EXTENSION IF NOT EXISTS pgcrypto;", ""), prepare=False)
+    return owner, owner_uri
+
+
+def test_wrapper_works_for_a_non_superuser_createrole_owner(pg_ns, tmp_path):
+    """Owner holds CREATEROLE + CREATEDB (so the ALTER re-asserts NOCREATEDB too); it owns the database."""
+    pg = pg_ns
+    owner, owner_uri = _owner_db(pg, "ns", "CREATEROLE CREATEDB")
+    r, out_file, scratch = run_wrapper(pg, owner_uri, tmp_path, "ns")
+    assert r.returncode == 0, r.stderr
+    assert not list(scratch.iterdir())
+    with psycopg.connect(owner_uri, autocommit=True) as c:
+        a = c.execute(
+            "SELECT rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls, rolinherit, rolconnlimit FROM pg_roles WHERE rolname = 'studio_gov_ro'"
+        ).fetchone()
+    assert a == (True, False, False, False, False, False, False, 5)
+    probe = subprocess.run(
+        [sys.executable, "-m", "pytest", str(PROBE), "-q", "-p", "no:cacheprovider"],
+        cwd=AGENT, env={**os.environ, "GOV_RO_DATABASE_URL": out_file.read_text().strip()}, capture_output=True, text=True,
+    )
+    assert probe.returncode == 0 and "skipped" not in probe.stdout and "failed" not in probe.stdout, probe.stdout[-2500:]
+    # Second run: no-op except the password.
+    r2, out2, _ = run_wrapper(pg, owner_uri, tmp_path, "ns2")
+    assert r2.returncode == 0, r2.stderr
+    assert out_file.read_text() != out2.read_text()
+
+
+def test_the_r5_alter_with_nosuperuser_really_fails_for_a_non_superuser_owner(pg_ns):
+    pg = pg_ns
+    """Regression guard for the verdict: mentioning NOSUPERUSER/NOREPLICATION/... in ALTER needs the attribute."""
+    _, owner_uri = _owner_db(pg, "old", "CREATEROLE")
+    with psycopg.connect(owner_uri, autocommit=True) as c:
+        c.execute("CREATE ROLE old_style NOLOGIN")
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            c.execute("ALTER ROLE old_style LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 5")
+
+
+def test_a_failure_part_way_leaves_no_loginable_role_without_grants(pg_ns, tmp_path):
+    pg = pg_ns
+    for attrs, tag in (("CREATEROLE", "atom1"),):
+        owner, owner_uri = _owner_db(pg, tag, attrs)
+        failing = tmp_path / f"fail-{tag}.sql"
+        text = SQL.read_text().replace("GRANT SELECT (id, must_change_pin) ON profiles", "GRANT SELECT (id, no_such_column) ON profiles")
+        failing.write_text(text)
+        owner_file = tmp_path / f"owner-{tag}"
+        owner_file.write_text(owner_uri + "\n")
+        owner_file.chmod(0o600)
+        scratch = tmp_path / f"tmp-{tag}"
+        scratch.mkdir()
+        r = subprocess.run(
+            ["bash", str(SCRIPT), str(owner_file), str(tmp_path / f"out-{tag}")],
+            capture_output=True, text=True,
+            env={"PATH": os.environ["PATH"], "PSQL": pg[1], "XDG_RUNTIME_DIR": str(scratch), "SQL_FILE": str(failing)},
+        )
+        assert r.returncode != 0 and not (tmp_path / f"out-{tag}").exists() and not list(scratch.iterdir())
+        with psycopg.connect(owner_uri, autocommit=True) as c:
+            # Everything rolled back: the role does not exist at all (first run), so it cannot be LOGIN-able.
+            assert c.execute("SELECT count(*) FROM pg_roles WHERE rolname = 'studio_gov_ro'").fetchone()[0] == 0
+
+
+def test_a_failing_rerun_keeps_the_previous_state_and_never_exposes_a_half_configured_login(pg_ns, tmp_path):
+    pg = pg_ns
+    owner, owner_uri = _owner_db(pg, "atom2", "CREATEROLE")
+    r, out_file, _ = run_wrapper(pg, owner_uri, tmp_path, "atom2")
+    assert r.returncode == 0
+    with psycopg.connect(owner_uri, autocommit=True) as c:
+        before = c.execute("SELECT rolcanlogin, rolconnlimit, rolconfig FROM pg_roles WHERE rolname = 'studio_gov_ro'").fetchone()
+        acl_before = c.execute("SELECT relacl::text FROM pg_class WHERE relname = 'physicians'").fetchone()
+    failing = tmp_path / "fail-atom2.sql"
+    failing.write_text(SQL.read_text().replace("GRANT SELECT (id, must_change_pin) ON profiles", "GRANT SELECT (id, no_such_column) ON profiles"))
+    owner_file = tmp_path / "owner-atom2"
+    owner_file.write_text(owner_uri + "\n")
+    owner_file.chmod(0o600)
+    scratch = tmp_path / "tmp-atom2b"
+    scratch.mkdir()
+    r = subprocess.run(
+        ["bash", str(SCRIPT), str(owner_file), str(tmp_path / "out-atom2b")],
+        capture_output=True, text=True, env={"PATH": os.environ["PATH"], "PSQL": pg[1], "XDG_RUNTIME_DIR": str(scratch), "SQL_FILE": str(failing)},
+    )
+    assert r.returncode != 0
+    with psycopg.connect(owner_uri, autocommit=True) as c:
+        after = c.execute("SELECT rolcanlogin, rolconnlimit, rolconfig FROM pg_roles WHERE rolname = 'studio_gov_ro'").fetchone()
+        assert after == before and c.execute("SELECT relacl::text FROM pg_class WHERE relname = 'physicians'").fetchone() == acl_before

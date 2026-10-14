@@ -24,7 +24,7 @@ if [[ ${1:-} == --dry-run ]]; then
   echo "-- dry run: nothing is connected, no password is generated"
   echo "-- would: umask 077; pick a tmpfs dir (\$XDG_RUNTIME_DIR, else /dev/shm); openssl rand -hex 24 > <0600 file>"
   echo "-- would: compute SCRAM-SHA-256\$4096:<salt>\$<StoredKey>:<ServerKey> from it; only the verifier is sent"
-  echo "-- would: $psql_bin -X -q -v ON_ERROR_STOP=1 -f $sql_file (service file from the owner url)"
+  echo "-- would: $psql_bin -X -q --single-transaction -v ON_ERROR_STOP=1 -f $sql_file (service file from the owner url)"
   echo "-- statements (the verifier is read from a file into a psql variable, never printed):"
   cat "$sql_file"
   echo "-- would write: the studio_gov_ro url with the plaintext password to OUT_FILE (0600)"
@@ -96,7 +96,7 @@ open(os.environ["VERIFIER_OUT"], "w").write(verifier + "\n")
 PY
 chmod 600 "$tmp/svc" "$VERIFIERFILE"
 
-PGSERVICEFILE="$tmp/svc" "$psql_bin" -X -q -v ON_ERROR_STOP=1 -f "$sql_file" "service=owner" >/dev/null
+PGSERVICEFILE="$tmp/svc" "$psql_bin" -X -q --single-transaction -v ON_ERROR_STOP=1 -f "$sql_file" "service=owner" >/dev/null
 
 # Build the GOV_RO url with bash string operations only (no argv exposure), keep the owner's host/db/params.
 raw=$(<"$owner_file"); pw=$(<"$pwfile")

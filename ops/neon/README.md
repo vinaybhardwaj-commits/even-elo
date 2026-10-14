@@ -13,6 +13,16 @@ GOV_RO_DATABASE_URL="$(<"$XDG_RUNTIME_DIR/gov-ro-url")" uv run --directory studi
 
 Then move the URL into the even-studio Vercel project and the Asus agent env (never even-elo), and destroy the files.
 
+## Before the first run: check the Postgres version
+```bash
+psql "service=owner" -Atc "SELECT version()"       # or any psql session as the owner
+```
+- **PG 15+**: PUBLIC has no CREATE on schema `public`; nothing to do.
+- **PG 14 or older**: run `REVOKE CREATE ON SCHEMA public FROM PUBLIC;` as the owner BEFORE the probe, or the probe's "no CREATE on any schema" / egress checks fail (PUBLIC's default grant). `0001_studio.sql` does this for the studio database; the governance database is the owner's to do.
+
+## Owner role
+Neon owners are never superusers. The SQL works for a non-superuser CREATEROLE owner: NOSUPERUSER appears only in `CREATE ROLE`, and NOCREATEDB / NOREPLICATION / NOBYPASSRLS are re-asserted only if the owner itself holds that attribute (Postgres refuses to even mention one you lack); the probe asserts them false either way. It runs as ONE transaction (`psql --single-transaction`) and enables LOGIN as its last statement, so a failure leaves nothing half-configured. If `studio_gov_ro` was created earlier by a different role, the owner needs CREATEROLE with ADMIN OPTION on it (or drop/recreate it).
+
 ## What it guarantees
 - The **plaintext password never reaches the server**: the script derives a SCRAM-SHA-256 verifier (RFC 5802/7677, 16-byte salt, 4096 iterations) and `0001_roles.sql` sets `PASSWORD :'verifier'`. Server logs (`log_statement=all`, `STATEMENT:` lines on errors) and `pg_stat_activity` only ever see the verifier. The plaintext exists only in the 0600 output file (inside the URL).
 - No secret on any command line or in the environment: the owner URL is read from a file and handed to psql as a service file.

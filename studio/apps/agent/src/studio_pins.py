@@ -8,7 +8,7 @@ pin FAILS CLOSED (PinError) instead of being resolved. Under REQUIRE the DSN mus
 host explicitly (multi-host, service= and host-less DSNs are refused, unix-socket paths excepted) and
 PGHOST/PGHOSTADDR/PGSERVICE/PGSERVICEFILE from the environment are ignored (removed), so nothing outside
 the DSN and the pins file can steer the address. The pins file must be a regular file, not a symlink,
-owned by root and not group/world-writable, else it is refused (PinError under REQUIRE, ignored otherwise). No pins file and REQUIRE unset: unchanged
+owned by root and not group/world-writable, and so must its parent directory, else it is refused (PinError under REQUIRE, ignored otherwise). No pins file and REQUIRE unset: unchanged
 behaviour (dev/CI). Unix-socket paths and IP-literal hosts never need DNS and are left alone.
 """
 
@@ -41,12 +41,21 @@ def _require(env) -> bool:
 
 
 def _file_trusted(path: Path) -> bool:
-    """Regular file (not a symlink), owned by TRUSTED_UID, not writable by group or others."""
+    """Regular file (not a symlink), owned by TRUSTED_UID, not writable by group or others; and its parent
+    directory owned by TRUSTED_UID and not group/world-writable (else the file could be swapped)."""
     try:
         st = os.lstat(path)
+        parent = os.lstat(path.parent)
     except OSError:
         return False
-    return stat.S_ISREG(st.st_mode) and st.st_uid == TRUSTED_UID and not (st.st_mode & 0o022)
+    return (
+        stat.S_ISREG(st.st_mode)
+        and st.st_uid == TRUSTED_UID
+        and not (st.st_mode & 0o022)
+        and stat.S_ISDIR(parent.st_mode)
+        and parent.st_uid == TRUSTED_UID
+        and not (parent.st_mode & 0o022)
+    )
 
 
 def load_pins(env=os.environ) -> Optional[dict[str, list[str]]]:
@@ -55,7 +64,7 @@ def load_pins(env=os.environ) -> Optional[dict[str, list[str]]]:
         return None
     if not _file_trusted(path):
         if _require(env):
-            raise PinError("pins file is a symlink, not root-owned, or group/world-writable")
+            raise PinError("pins file (or its directory) is a symlink, not root-owned, or group/world-writable")
         return None
     try:
         raw = json.loads(path.read_text())
