@@ -18,7 +18,7 @@ if [ "$DRY" = 1 ]; then
   echo "+ read canary from stdin or STUDIO_CANARY (not echoed, not in argv)"
   for d in "${DIRS[@]}"; do
     echo "+ grep -rlaF -D skip -f <canary fd> $d      # plain files"
-    echo "+ find $d -name '*.gz' | zgrep -qaF -f <canary fd>   # compressed rotated logs"
+    echo "+ find $d -name '*.gz|*.xz|*.zst' | zgrep/xzgrep/zstdgrep -qaF -f <canary fd>   # compressed rotated logs"
   done
   echo "+ journalctl --no-pager -a | grep -cF -f <canary fd>"
   echo "+ egress-refresh last success: /var/lib/studio-agent-egress-ok age <= 900s else INCONCLUSIVE"
@@ -58,19 +58,29 @@ for d in "${DIRS[@]}"; do
     echo "INCONCLUSIVE: $(wc -l <"$errfile") read error(s) under $d (first: ${first//"$canary"/<canary>})"
     inconclusive=1
   fi
-  while IFS= read -r -d '' f; do
-    zgrep -qaF -f <(printf '%s\n' "$canary") "$f" 2>"$errfile"
-    rc=$?
-    if [ "$rc" = 0 ]; then report_hit "$f"
-    elif [ "$rc" != 1 ]; then echo "INCONCLUSIVE: zgrep failed (rc=$rc) on path-sha256:$(printf '%s' "$f" | sha256sum | cut -c1-16)"; inconclusive=1
-    fi
-  done < <(find "$d" -xdev -type f -name '*.gz' -print0 2>"$finderr")
+  for pair in "gz:zgrep" "xz:xzgrep" "zst:zstdgrep"; do
+    ext=${pair%%:*} tool=${pair##*:}
+    while IFS= read -r -d '' f; do
+      if ! command -v "$tool" >/dev/null; then
+        echo "INCONCLUSIVE: $tool not installed but .$ext files exist under $d"; inconclusive=1; break
+      fi
+      "$tool" -qaF -f <(printf '%s\n' "$canary") "$f" 2>"$errfile"
+      rc=$?
+      if [ "$rc" = 0 ]; then report_hit "$f"
+      elif [ "$rc" != 1 ]; then echo "INCONCLUSIVE: $tool failed (rc=$rc) on path-sha256:$(printf '%s' "$f" | sha256sum | cut -c1-16)"; inconclusive=1
+      fi
+    done < <(find "$d" -xdev -type f -name "*.$ext" -print0 2>>"$finderr")
+  done
   if [ -s "$finderr" ]; then echo "INCONCLUSIVE: find could not read parts of $d"; inconclusive=1; fi
 done
 
-jc=$(journalctl --no-pager -a 2>"$errfile" | grep -cF -f <(printf '%s\n' "$canary"))
-if [ -s "$errfile" ] || ! [[ $jc =~ ^[0-9]+$ ]]; then
-  echo "INCONCLUSIVE: journalctl failed or printed errors"; inconclusive=1; jc=0
+jfile=$(mktemp)
+journalctl --no-pager -a >"$jfile" 2>"$errfile"
+jrc=$?
+jc=$(grep -cF -f <(printf '%s\n' "$canary") "$jfile")
+rm -f "$jfile"
+if [ "$jrc" != 0 ] || [ -s "$errfile" ]; then
+  echo "INCONCLUSIVE: journalctl exited $jrc or printed errors"; inconclusive=1
 fi
 echo "journal hits: $jc"
 hits=$((hits + jc))
