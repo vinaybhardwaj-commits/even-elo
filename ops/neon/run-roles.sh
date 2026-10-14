@@ -1,62 +1,57 @@
 #!/usr/bin/env bash
-# Apply ops/neon/0001_roles.sql with a fresh random password for studio_gov_ro.
+# Create / configure / enable the Studio database roles. NO password is ever handled here (not generated,
+# not sent, not written): passwords are issued by the Neon API (neon-role.sh reset-password).
 #
-#   ops/neon/run-roles.sh [--allow-disk-tmp] OWNER_URL_FILE OUT_FILE
-#   ops/neon/run-roles.sh [--allow-disk-tmp] --password-preset OWNER_URL_FILE
-#       OWNER_URL_FILE: 0600 file holding the OWNER's DIRECT url (e.g. from `vercel env pull`)
-#   ops/neon/run-roles.sh --dry-run                    # print the statements, connect to nothing
+#   Runbook order (O1):
+#     1. run-roles.sh [--role R] OWNER_URL_FILE            create R NOLOGIN by SQL + grants (one transaction)
+#     2. neon-role.sh reset-password KEY PROJECT BRANCH R OUT --dsn-from OWNER_URL_FILE   (Neon issues the password)
+#     3. run-roles.sh --login [--role R] OWNER_URL_FILE    memberships re-checked, then ALTER ROLE R LOGIN
+#     4. probe (tests/test_lc1_live_probe.py, tests/test_studio_app_role_probe.py)
 #
-# The PLAINTEXT password never reaches the server through SQL: this script computes a SCRAM-SHA-256
-# verifier client-side and the SQL sends only that (plaintext only in OUT_FILE, 0600, inside the GOV_RO url).
-# Neon's control plane rejects verifiers, and plaintext over SQL is not allowed (it would put the password in
-# server logs): on Neon create the role with the Neon API first (ops/neon/neon-role.sh), then run this with
-# --password-preset. That mode never touches the password: the role must already exist (with its login
-# password from the API), is switched to NOLOGIN first, gets limits/timeouts/revokes/grants, and LOGIN last,
-# all in one transaction. No OUT_FILE: the DSN was written by neon-role.sh.
-# The temp dir holds the owner-url service file; it lives on tmpfs ($XDG_RUNTIME_DIR, else /dev/shm);
-# a disk-backed temp dir is refused unless --allow-disk-tmp.
-# The output url keeps the owner url's host: swap in the pooler host if the app should use it.
-# Env: PSQL (default psql), SQL_FILE (default: 0001_roles.sql next to this script),
-#      STUDIO_ROLES_SHM (tmpfs fallback dir, default /dev/shm).
+#   --role studio_gov_ro (default, governance DB: 0001_roles.sql) | studio_app (studio DB: 0002_studio_app_role.sql;
+#   its table grants come from apply_migration.py, run before step 3)
+#   --dry-run                          print the SQL for the chosen step, connect to nothing
+#   --allow-disk-tmp                   allow a disk-backed temp dir (default: tmpfs only)
+#
+# Roles are created BY SQL because roles created through the Neon API/Console are granted neon_superuser,
+# which a non-superuser owner cannot revoke. Setup runs a membership PREFLIGHT and POST-CHECK inside its
+# transaction: a role that is a member of anything (neon_superuser or any other role) aborts and rolls back.
+# OWNER_URL_FILE: 0600 file with the OWNER's DIRECT url. psql reads it as a service file on tmpfs
+# ($XDG_RUNTIME_DIR, else /dev/shm), so nothing secret is on any command line.
+# Env: PSQL (default psql), SQL_FILE (override the SQL file), STUDIO_ROLES_SHM (tmpfs fallback dir).
 set -euo pipefail
 umask 077
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-sql_file=${SQL_FILE:-$here/0001_roles.sql}
 psql_bin=${PSQL:-psql}
 
-if [[ ${1:-} == --dry-run ]]; then
-  echo "-- dry run: nothing is connected, no password is generated"
-  echo "-- would: umask 077; pick a tmpfs dir (\$XDG_RUNTIME_DIR, else /dev/shm); openssl rand -hex 24 > <0600 file>"
-  echo "-- (--password-preset: no password step at all; the role must already exist, created by neon-role.sh)"
-  echo "-- would: compute SCRAM-SHA-256\$4096:<salt>\$<StoredKey>:<ServerKey> from it; only the verifier is sent"
-  echo "-- would: $psql_bin -X -q --single-transaction -v ON_ERROR_STOP=1 -f $sql_file (service file from the owner url)"
-  echo "-- statements (the verifier is read from a file into a psql variable, never printed):"
-  cat "$sql_file"
-  echo "-- would write: the studio_gov_ro url with the plaintext password to OUT_FILE (0600)"
-  exit 0
-fi
-
-allow_disk=0
-preset=0
+allow_disk=0 login=0 dry=0 role=studio_gov_ro
 while [[ ${1:-} == --* ]]; do
   case $1 in
     --allow-disk-tmp) allow_disk=1 ;;
-    --password-preset) preset=1 ;;
+    --login) login=1 ;;
+    --dry-run) dry=1 ;;
+    --role) role=${2:-}; shift ;;
     *) echo "unknown option $1" >&2; exit 2 ;;
   esac
   shift
 done
-if [[ $preset -eq 1 ]]; then
-  [[ $# -eq 1 ]] || { echo "usage: $0 [--allow-disk-tmp] --password-preset OWNER_URL_FILE" >&2; exit 2; }
-  owner_file=$1
-  out_file=
-else
-  [[ $# -eq 2 ]] || { echo "usage: $0 [--allow-disk-tmp] OWNER_URL_FILE OUT_FILE | [--allow-disk-tmp] --password-preset OWNER_URL_FILE | --dry-run" >&2; exit 2; }
-  owner_file=$1
-  out_file=$2
-  [[ ! -e $out_file ]] || { echo "refusing to overwrite $out_file" >&2; exit 2; }
+case $role in
+  studio_gov_ro) setup_sql=0001_roles.sql; probe_table=physicians; probe_priv=SELECT ;;
+  studio_app) setup_sql=0002_studio_app_role.sql; probe_table=studio_audit; probe_priv=INSERT ;;
+  *) echo "--role must be studio_gov_ro or studio_app" >&2; exit 2 ;;
+esac
+if [[ $login -eq 1 ]]; then sql_file=${SQL_FILE:-$here/0003_login.sql}; else sql_file=${SQL_FILE:-$here/$setup_sql}; fi
+
+if [[ $dry -eq 1 ]]; then
+  echo "-- dry run: nothing is connected; no password is generated, read or sent by this script"
+  echo "-- would: $psql_bin -X -q --single-transaction -v ON_ERROR_STOP=1 -v role=$role -v probe_table=$probe_table -v probe_priv=$probe_priv -f $sql_file (service file from the owner url, on tmpfs)"
+  cat "$sql_file"
+  exit 0
 fi
+
+[[ $# -eq 1 ]] || { echo "usage: $0 [--allow-disk-tmp] [--login] [--role studio_gov_ro|studio_app] OWNER_URL_FILE | --dry-run" >&2; exit 2; }
+owner_file=$1
 [[ -f $owner_file && -r $owner_file ]] || { echo "owner url file not readable" >&2; exit 2; }
 
 tmpbase=
@@ -79,21 +74,9 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-pwfile="$tmp/pw"
-verifierfile="$tmp/verifier"
-if [[ $preset -eq 1 ]]; then
-  # Password already set by the Neon API: no password file, no password statement; the role must exist.
-  unset ROLE_PASSWORD_FILE
-  export ROLE_MUST_EXIST=1
-else
-  export ROLE_PASSWORD_FILE=$verifierfile
-  openssl rand -hex 24 > "$pwfile"   # hex only: safe inside a url, no encoding needed
-fi
-
-# One python step (script on stdin, paths via env): owner url -> psql service file and, unless the password
-# is preset, the password -> SCRAM-SHA-256 verifier (RFC 5802 / 7677, as `\password` does).
-OWNER_URL_FILE=$owner_file SERVICE_FILE="$tmp/svc" PWFILE_IN=$pwfile VERIFIER_OUT=$verifierfile PRESET=$preset python3 - <<'PY'
-import base64, hashlib, hmac, os, urllib.parse as u
+# Owner url -> psql service file (script on stdin, paths via env).
+OWNER_URL_FILE=$owner_file SERVICE_FILE="$tmp/svc" python3 - <<'PY'
+import os, urllib.parse as u
 
 raw = open(os.environ["OWNER_URL_FILE"]).read().strip()
 p = u.urlsplit(raw)
@@ -109,35 +92,11 @@ if db: lines.append(f"dbname={u.unquote(db)}")
 for k, v in q.items():
     if k in ("sslmode", "channel_binding", "options", "sslrootcert"): lines.append(f"{k}={v}")
 open(os.environ["SERVICE_FILE"], "w").write("\n".join(lines) + "\n")
-
-if os.environ["PRESET"] != "1":
-    password = open(os.environ["PWFILE_IN"]).read().strip().encode()  # hex: SASLprep is the identity
-    salt = os.urandom(16)
-    iterations = 4096
-    salted = hashlib.pbkdf2_hmac("sha256", password, salt, iterations, 32)
-    client_key = hmac.new(salted, b"Client Key", hashlib.sha256).digest()
-    stored_key = hashlib.sha256(client_key).digest()
-    server_key = hmac.new(salted, b"Server Key", hashlib.sha256).digest()
-    b64 = lambda b: base64.b64encode(b).decode()
-    verifier = f"SCRAM-SHA-256${iterations}:{b64(salt)}${b64(stored_key)}:{b64(server_key)}"
-    open(os.environ["VERIFIER_OUT"], "w").write(verifier + "\n")
 PY
 chmod 600 "$tmp/svc"
-if [[ $preset -eq 0 ]]; then chmod 600 "$verifierfile"; fi
 
-PGSERVICEFILE="$tmp/svc" "$psql_bin" -X -q --single-transaction -v ON_ERROR_STOP=1 -f "$sql_file" "service=owner" >/dev/null
+PGSERVICEFILE="$tmp/svc" "$psql_bin" -X -q --single-transaction -v ON_ERROR_STOP=1 \
+  -v "role=$role" -v "probe_table=$probe_table" -v "probe_priv=$probe_priv" \
+  -f "$sql_file" "service=owner" >/dev/null
 
-if [[ $preset -eq 1 ]]; then
-  echo "studio_gov_ro configured (password preset: untouched, no url written)"
-  exit 0
-fi
-
-# Build the GOV_RO url with bash string operations only (no argv exposure), keep the owner's host/db/params.
-raw=$(<"$owner_file"); pw=$(<"$pwfile")
-scheme=${raw%%://*}://
-rest=${raw#*://}
-authority=${rest%%/*}
-rest=${authority##*@}${rest#"$authority"}   # drop any userinfo; host, db and params stay
-( umask 077; printf '%s%s:%s@%s\n' "$scheme" studio_gov_ro "$pw" "$rest" > "$out_file" )
-chmod 600 "$out_file"
-echo "studio_gov_ro configured; url written to $out_file (mode 600)"
+if [[ $login -eq 1 ]]; then echo "$role: LOGIN enabled (memberships and grants verified)"; else echo "$role: created/configured NOLOGIN (no password; next: neon-role.sh reset-password, then --login)"; fi

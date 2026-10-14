@@ -1,17 +1,15 @@
 """The live L-C1 probe must CATCH each over-privilege (scratch Postgres only). Each case grants one extra
-privilege to studio_gov_ro, runs the whole probe as that role, expects a failure in the named test, then
-reverts and expects the baseline to pass again."""
+privilege to studio_gov_ro (created by the R14 flow: SQL setup, mock-API password, login), runs the whole probe
+as that role, expects a failure in the named test, reverts, and expects the baseline to pass again."""
 
 import os
-import re
 import subprocess
 import sys
-from pathlib import Path
 
-import psycopg
 import pytest
 
-from tests.test_studio_roles import AGENT, PROBE, evenelo, pg, run_wrapper  # noqa: F401  (fixtures)
+from tests.neon_harness import PROBE, AGENT, cluster, full_flow, keyfile, neon, run_roles  # noqa: F401
+
 
 
 def run_probe(url):
@@ -22,22 +20,11 @@ def run_probe(url):
     return r.returncode, r.stdout
 
 
+WRITE = "test_no_write_privilege_on_any_table_in_any_schema"
 CASES = {
-    "column-level UPDATE": (
-        "GRANT UPDATE (status) ON incidents TO studio_gov_ro",
-        "REVOKE UPDATE (status) ON incidents FROM studio_gov_ro",
-        "test_no_write_privilege_on_any_table_in_any_schema",
-    ),
-    "column-level INSERT": (
-        "GRANT INSERT (status) ON incidents TO studio_gov_ro",
-        "REVOKE INSERT (status) ON incidents FROM studio_gov_ro",
-        "test_no_write_privilege_on_any_table_in_any_schema",
-    ),
-    "table-level DELETE": (
-        "GRANT DELETE ON hospitals TO studio_gov_ro",
-        "REVOKE DELETE ON hospitals FROM studio_gov_ro",
-        "test_no_write_privilege_on_any_table_in_any_schema",
-    ),
+    "column-level UPDATE": ("GRANT UPDATE (status) ON incidents TO studio_gov_ro", "REVOKE UPDATE (status) ON incidents FROM studio_gov_ro", WRITE),
+    "column-level INSERT": ("GRANT INSERT (status) ON incidents TO studio_gov_ro", "REVOKE INSERT (status) ON incidents FROM studio_gov_ro", WRITE),
+    "table-level DELETE": ("GRANT DELETE ON hospitals TO studio_gov_ro", "REVOKE DELETE ON hospitals FROM studio_gov_ro", WRITE),
     "sequence USAGE (nextval)": (
         "GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO studio_gov_ro",
         "REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM studio_gov_ro",
@@ -53,6 +40,11 @@ CASES = {
         "REVOKE CREATE ON SCHEMA public FROM studio_gov_ro",
         "test_no_server_side_egress_primitives_dblink_postgres_fdw",
     ),
+    "membership in a privileged role (what the Neon API adds)": (
+        "GRANT neon_superuser TO studio_gov_ro",
+        "REVOKE neon_superuser FROM studio_gov_ro",
+        "test_role_has_no_memberships",
+    ),
     "PUBLIC-executable SECURITY DEFINER function that writes": (
         "CREATE FUNCTION public.studio_probe_sd() RETURNS void LANGUAGE sql SECURITY DEFINER AS $$ UPDATE hospitals SET name = name $$",
         "DROP FUNCTION public.studio_probe_sd()",
@@ -61,22 +53,21 @@ CASES = {
 }
 
 
-def test_probe_catches_each_over_privilege_and_recovers(pg, evenelo, tmp_path):  # noqa: F811
-    _, owner_uri = evenelo
-    r, out_file, _ = run_wrapper(pg, owner_uri, tmp_path, "sens")
-    assert r.returncode == 0, r.stderr
-    url = out_file.read_text().strip()
-    rc, out = run_probe(url)
-    assert rc == 0 and "failed" not in out, out[-2000:]  # baseline
+def test_probe_catches_each_over_privilege_and_recovers(cluster, neon, keyfile, tmp_path):
+    s, r, _, out = full_flow(cluster, neon, tmp_path, keyfile)
+    assert s.returncode == 0 and r.returncode == 0
+    assert run_roles(cluster, tmp_path, "--login", tag="sens-login")[0].returncode == 0
+    url = out.read_text().strip()
+    rc, text = run_probe(url)
+    assert rc == 0 and "failed" not in text and "skipped" not in text, text[-2000:]  # baseline
 
-    with psycopg.connect(owner_uri, autocommit=True) as c:
-        for label, (grant, revoke, expected) in CASES.items():
-            c.execute(grant, prepare=False)
-            try:
-                rc, out = run_probe(url)
-                assert rc != 0, f"probe did NOT catch: {label}"
-                assert f"FAILED tests/test_lc1_live_probe.py::{expected}" in out, f"{label}: wrong test failed\n{out[-1500:]}"
-            finally:
-                c.execute(revoke, prepare=False)
-            rc, out = run_probe(url)
-            assert rc == 0, f"baseline did not recover after {label}\n{out[-1500:]}"
+    for label, (grant, revoke, expected) in CASES.items():
+        cluster.su_exec(grant, db="neondb")
+        try:
+            rc, text = run_probe(url)
+            assert rc != 0, f"probe did NOT catch: {label}"
+            assert f"FAILED tests/test_lc1_live_probe.py::{expected}" in text, f"{label}: wrong test failed\n{text[-1500:]}"
+        finally:
+            cluster.su_exec(revoke, db="neondb")
+        rc, text = run_probe(url)
+        assert rc == 0, f"baseline did not recover after {label}\n{text[-1500:]}"

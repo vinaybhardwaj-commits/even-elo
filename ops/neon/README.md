@@ -1,17 +1,38 @@
-# ops/neon: the read-only governance role (`studio_gov_ro`)
+# ops/neon: the Studio database roles (`studio_gov_ro`, `studio_app`)
 
-Run once per Neon database, as the database OWNER, over the DIRECT (non-pooled) URL. Never from CI or a build.
+Run as the database OWNER (never a superuser on Neon) over the DIRECT (non-pooled) URL. Never from CI or a build.
+**No password is ever handled by these scripts**: roles are created BY SQL with no password clause, and Neon itself issues the password through its API.
 
+## Runbook (O1 order)
 ```bash
 umask 077
-vercel env pull --environment=production "$XDG_RUNTIME_DIR/owner.env"        # or write the owner URL to any 0600 file
-# put just the owner DIRECT url in the file (one line), then:
-ops/neon/run-roles.sh --dry-run                                              # preview, connects to nothing
-ops/neon/run-roles.sh "$XDG_RUNTIME_DIR/owner-url" "$XDG_RUNTIME_DIR/gov-ro-url"
+# owner DIRECT url in a 0600 file (e.g. from `vercel env pull`), Neon API key in another 0600 file: both on tmpfs
+ops/neon/neon-role.sh discover "$XDG_RUNTIME_DIR/neon-api-key"                  # project ids, branch ids, role names ONLY
+P=proj-...; B=br-...
+
+# 1. create the role NOLOGIN by SQL + grants (one transaction; membership preflight + post-check inside it)
+ops/neon/run-roles.sh --dry-run                                                  # preview, connects to nothing
+ops/neon/run-roles.sh "$XDG_RUNTIME_DIR/owner-url"                               # studio_gov_ro on the governance DB
+#    (studio_app, on the STUDIO database: run-roles.sh --role studio_app STUDIO_OWNER_URL_FILE, then
+#     `uv run python apply_migration.py --dsn-env ... --app-role studio_app` for its table grants)
+
+# 2. Neon issues the password: curl -> jq -> a 0600 DSN file (never argv, env or stdout)
+ops/neon/neon-role.sh reset-password "$XDG_RUNTIME_DIR/neon-api-key" "$P" "$B" studio_gov_ro \
+    "$XDG_RUNTIME_DIR/gov-ro-url" --dsn-from "$XDG_RUNTIME_DIR/owner-url"
+#    exit 4 "role not visible to Neon API" = the API cannot see SQL-created roles: nothing was changed, stop (see below)
+
+# 3. enable LOGIN: memberships re-checked first (the API may add neon_superuser on reset), grants verified
+ops/neon/run-roles.sh --login "$XDG_RUNTIME_DIR/owner-url"
+
+# 4. probe once with the new DSN
 GOV_RO_DATABASE_URL="$(<"$XDG_RUNTIME_DIR/gov-ro-url")" uv run --directory studio/apps/agent pytest tests/test_lc1_live_probe.py -q
 ```
+Then move the DSN into the even-studio Vercel project and the Asus agent env (never even-elo), and destroy the files. Rotate later with step 2 + 3 (same file discipline).
 
-Then move the URL into the even-studio Vercel project and the Asus agent env (never even-elo), and destroy the files.
+## Why SQL creates the roles, and the API only issues passwords
+Roles created through the Neon API/Console are granted `neon_superuser`, which a non-superuser owner cannot revoke, and the owner is not ADMIN of them (refute R12: the role would be a `neon_superuser` member with no grants, LOGIN-able). Roles created by SQL get no such membership and the creator holds ADMIN (PG16+). A plaintext `ALTER ROLE ... PASSWORD` over SQL is not allowed (it would put the password in server logs), and Neon rejects SCRAM verifiers, hence the API for the password.
+- **Safety nets, all inside transactions:** setup creates the role `NOLOGIN` and aborts (rolls back) if the role is, before or after the changes, a member of ANY role; the login step aborts if the role is missing, lacks its grants, or is a member of any role (checked again after `ALTER ROLE ... LOGIN`). So the role is never LOGIN-able without grants and never with `neon_superuser`.
+- **Open live questions (UNVERIFIED, O1 answers them):** (a) does the Neon API list and reset SQL-created roles? If not, `reset-password` exits 4 and changes nothing; (b) does `reset_password` add `neon_superuser` membership? If it does, the login step refuses and the role stays NOLOGIN; the owner cannot revoke it, so drop the role and stop (do not enable LOGIN on a `neon_superuser` member).
 
 ## Before the first run: check the Postgres version
 ```bash
@@ -23,42 +44,20 @@ psql "service=owner" -Atc "SELECT version()"       # or any psql session as the 
 ## Owner role
 Neon owners are never superusers. The SQL works for a non-superuser CREATEROLE owner: NOSUPERUSER appears only in `CREATE ROLE`, and NOCREATEDB / NOREPLICATION / NOBYPASSRLS are re-asserted only if the owner itself holds that attribute (Postgres refuses to even mention one you lack); the probe asserts them false either way. It runs as ONE transaction (`psql --single-transaction`) and enables LOGIN as its last statement, so a failure leaves nothing half-configured. If `studio_gov_ro` was created earlier by a different role, the owner needs CREATEROLE with ADMIN OPTION on it (or drop/recreate it).
 
-## On Neon: create the role with the Neon API, then `--password-preset`
-Neon's control plane rejects SCRAM verifiers in `ALTER ROLE ... PASSWORD`, and a plaintext `ALTER ROLE ... PASSWORD` over SQL is **not allowed** (it would put the password into server logs / `STATEMENT:` lines). So on Neon the password is generated by Neon itself and never travels through SQL or argv:
-
-```bash
-umask 077
-# 0. Neon API key in a 0600 file (never pasted into chat or argv); owner DIRECT url in another 0600 file.
-ops/neon/neon-role.sh discover "$XDG_RUNTIME_DIR/neon-api-key"                 # project ids, branch ids, role names ONLY
-P=proj-...; B=br-...
-# 1. Create the role. Neon returns the password once; it goes curl -> jq -> a 0600 file (or a full DSN).
-ops/neon/neon-role.sh create "$XDG_RUNTIME_DIR/neon-api-key" "$P" "$B" studio_gov_ro \
-    "$XDG_RUNTIME_DIR/gov-ro-url" --dsn-from "$XDG_RUNTIME_DIR/owner-url"      # DSN = owner host/db/params + new role
-# 2. Grants, limits, timeouts, revokes; the password is not touched.
-ops/neon/run-roles.sh --password-preset "$XDG_RUNTIME_DIR/owner-url"
-# 3. Probe once with the new DSN (see above), move the DSN into the env stores, destroy the files.
-# Rotate later (same file discipline):
-ops/neon/neon-role.sh reset-password "$XDG_RUNTIME_DIR/neon-api-key" "$P" "$B" studio_gov_ro "$XDG_RUNTIME_DIR/gov-ro-url-new" --dsn-from "$XDG_RUNTIME_DIR/owner-url"
-```
-Details:
-- `neon-role.sh`: the API key reaches curl only as a `header =` line of a 0600 curl config on tmpfs (never argv); the response is piped `curl | jq` straight into the output file, which must not exist, is created 0600 and holds only the password (or the DSN); nothing is printed; a failed call removes the file. Needs `jq` and `curl`. `NEON_API_BASE` defaults to `https://console.neon.tech/api/v2` (http only for localhost, for tests).
-- `run-roles.sh --password-preset OWNER_URL_FILE` (no output file): the role must already exist (`studio_gov_ro does not exist: create it with neon-role.sh first` otherwise). It runs ONE transaction: `ALTER ROLE ... NOLOGIN` first (the API creates the role with LOGIN), limits/timeouts/revokes/grants, and `LOGIN` as the last statement. A failure rolls back to the API's original state: LOGIN-able but with **no grants at all** (nothing readable), so nothing is half-configured; re-run after fixing.
-- The same two steps apply to `studio_app` (state role) with its own grants (`migrations/0001_studio.sql`).
-- Do not use the default (non-preset) mode on Neon: its verifier step is rejected by the control plane.
-
 ## What it guarantees
-- The **plaintext password never reaches the server through SQL**: the script derives a SCRAM-SHA-256 verifier (RFC 5802/7677, 16-byte salt, 4096 iterations) and `0001_roles.sql` sets `PASSWORD :'verifier'`. Server logs (`log_statement=all`, `STATEMENT:` lines on errors) and `pg_stat_activity` only ever see the verifier. The plaintext exists only in the 0600 output file (inside the URL).
+- **No password handling in the scripts at all**: no password clause in any SQL file, nothing generated, nothing sent over SQL. The server log (`log_statement=all`) shows no `PASSWORD` statement from `run-roles.sh` (tests assert this); the only password is the one Neon issues, which goes through `neon-role.sh` into a 0600 file.
+- `neon-role.sh`: the API key reaches curl only as a `header =` line of a 0600 curl config on tmpfs (never argv); the response is piped `curl | jq` straight into the output file, which must not exist and is created 0600 (a failed call removes it); nothing is printed. `NEON_API_BASE` is parsed strictly: https with a plain host, or http only for exactly `127.0.0.1` / `localhost`, no userinfo (a prefix match would send the bearer key to `http://127.0.0.1.evil.test`).
 - No secret on any command line or in the environment: the owner URL is read from a file and handed to psql as a service file.
-- Re-running is a no-op except password rotation (new salt, new password). Rotate by running it again, then update both env stores.
+- Re-running setup is idempotent and does not change the LOGIN state of an existing role.
 
 ## Temp files and abnormal exit
-Secrets (`pw`, `verifier`, `svc` = the owner URL as a psql service file) live in a `studio-roles.*` directory under `$XDG_RUNTIME_DIR` or `/dev/shm` (tmpfs, RAM only). The script refuses a disk-backed temp dir unless `--allow-disk-tmp` is given.
+Secrets (`svc` = the owner URL as a psql service file; for `neon-role.sh` also the curl config holding the API key) live in a `studio-roles.*` / `neon-role.*` directory under `$XDG_RUNTIME_DIR` or `/dev/shm` (tmpfs, RAM only). The script refuses a disk-backed temp dir unless `--allow-disk-tmp` is given.
 - Normal exit, INT and TERM: a trap shreds and removes them.
 - **kill -9, OOM kill or power loss: the trap cannot run.** Clean up by hand:
-  `find "$XDG_RUNTIME_DIR" /dev/shm -maxdepth 2 -path '*studio-roles.*' -type f -exec shred -u {} +; rmdir "$XDG_RUNTIME_DIR"/studio-roles.* /dev/shm/studio-roles.* 2>/dev/null`
+  `find "$XDG_RUNTIME_DIR" /dev/shm -maxdepth 2 \( -path '*studio-roles.*' -o -path '*neon-role.*' \) -type f -exec shred -u {} +; rmdir "$XDG_RUNTIME_DIR"/studio-roles.* /dev/shm/studio-roles.* 2>/dev/null`
   (tmpfs is cleared on reboot anyway). With `--allow-disk-tmp` also check `${TMPDIR:-/tmp}/studio-roles.*`.
-- `shred` overwrites in place and is **not reliable on journaling or copy-on-write filesystems** (ext4 data=journal, btrfs, ZFS, APFS) or SSD wear-levelling: that is why the files belong on tmpfs. Treat anything that touched a disk as possibly recoverable and rotate the password.
-- The output URL file is the one deliberate secret on disk: 0600, refuses to overwrite. Move it to the secret stores and `shred -u` it.
+- `shred` overwrites in place and is **not reliable on journaling or copy-on-write filesystems** (ext4 data=journal, btrfs, ZFS, APFS) or SSD wear-levelling: that is why the files belong on tmpfs. Treat anything that touched a disk as possibly recoverable and rotate the password (step 2 again).
+- The DSN file written by `neon-role.sh reset-password` is the one deliberate secret on disk: 0600, refuses to overwrite. Move it to the secret stores and `shred -u` it.
 
 ## Probe
 `studio/apps/agent/tests/test_lc1_live_probe.py` (needs `GOV_RO_DATABASE_URL`) proves the role is read-only by grants, not just by settings; `tests/test_studio_roles.py` and `tests/test_studio_probe_sensitivity.py` run it against a scratch Postgres, including over-privileged roles it must catch.
