@@ -1,14 +1,18 @@
 import asyncio
 import importlib.util
+import os
+import re
 import json
 import socket
 import tempfile
 import threading
 
+from pathlib import Path
+
 import pytest
 from psycopg.conninfo import conninfo_to_dict
 
-from src import studio_audit, studio_db, studio_tools
+from src import studio_audit, studio_db, studio_pins, studio_tools
 from src.studio_pins import PinError, pinned_conninfo
 
 HOST = "ep-fake-1234.example-neon.invalid"  # never resolvable
@@ -18,9 +22,12 @@ HOST = "ep-fake-1234.example-neon.invalid"  # never resolvable
 def pins(tmp_path, monkeypatch):
     path = tmp_path / "neon-pins.json"
     monkeypatch.setenv("STUDIO_NEON_PINS", str(path))
+    # Production demands a root-owned file; in tests the file belongs to the current user.
+    monkeypatch.setattr(studio_pins, "TRUSTED_UID", os.getuid())
 
     def write(data):
         path.write_text(json.dumps(data))
+        path.chmod(0o640)
 
     return write
 
@@ -88,8 +95,12 @@ def test_require_pins_fails_closed_for_unpinned_hosts_and_missing_file(pins, tmp
 
 def test_sockets_ip_literals_and_explicit_hostaddr_need_no_pin(monkeypatch):
     monkeypatch.setenv("STUDIO_REQUIRE_PINS", "1")
-    for dsn in ("postgresql://u@/db?host=/var/run/postgresql", "postgresql://u@203.0.113.7/db", "postgresql://u@[2600::1]/db", f"host={HOST} hostaddr=203.0.113.1 dbname=db"):
+    monkeypatch.delenv("PGHOSTADDR", raising=False)
+    for dsn in ("postgresql://u@/db?host=/var/run/postgresql", f"host={HOST} hostaddr=203.0.113.1 dbname=db"):
         assert pinned_conninfo(dsn) == dsn
+    # IP literals get an explicit hostaddr (same address) so no environment value can redirect them.
+    for dsn, ip in (("postgresql://u@203.0.113.7/db", "203.0.113.7"), ("postgresql://u@[2600::1]/db", "2600::1")):
+        assert conninfo_to_dict(pinned_conninfo(dsn))["hostaddr"] == ip
 
 
 def test_default_pins_path_is_run_studio_agent(monkeypatch):
@@ -219,3 +230,114 @@ async def test_connects_through_the_pin_to_a_real_postgres_without_resolving_the
         srv.close()
     finally:
         server.cleanup()
+
+
+# ----- R8: strictness under STUDIO_REQUIRE_PINS=1 -----
+
+
+@pytest.fixture
+def required(monkeypatch, pins):
+    monkeypatch.setenv("STUDIO_REQUIRE_PINS", "1")
+    pins({HOST: ["203.0.113.7"]})
+
+
+@pytest.mark.parametrize(
+    "dsn",
+    [
+        f"postgresql://u:p@{HOST},other.example/db",  # multi-host url
+        f"host={HOST},other.example dbname=db",  # multi-host conninfo
+        f"host={HOST} hostaddr=203.0.113.1,203.0.113.2 dbname=db",  # multi hostaddr
+        "service=prod",  # service lookup
+        f"postgresql://u@{HOST}/db?service=prod",  # service on a url
+        "postgresql:///db",  # host-less (libpq would use PGHOST / default socket)
+        "dbname=db user=u",  # host-less conninfo
+    ],
+)
+def test_require_refuses_multi_host_service_and_hostless_dsns(required, dsn, no_dns):
+    with pytest.raises(PinError):
+        pinned_conninfo(dsn)
+    assert no_dns == []
+
+
+def test_those_dsn_forms_are_untouched_without_require(pins, monkeypatch):
+    monkeypatch.delenv("STUDIO_REQUIRE_PINS", raising=False)
+    for dsn in (f"host={HOST},other.example dbname=db", "service=prod", "dbname=db"):
+        assert pinned_conninfo(dsn) == dsn
+
+
+def test_unix_socket_paths_are_still_allowed_under_require(required):
+    dsn = "postgresql://u@/db?host=/var/run/postgresql"
+    assert pinned_conninfo(dsn) == dsn
+
+
+@pytest.mark.parametrize("name", ["PGHOST", "PGHOSTADDR", "PGSERVICE", "PGSERVICEFILE"])
+def test_require_ignores_libpq_environment_overrides(required, monkeypatch, name):
+    monkeypatch.setenv(name, "198.51.100.66" if "ADDR" in name or name == "PGHOST" else "/tmp/evil")
+    out = pinned_conninfo(URL)
+    assert name not in os.environ  # libpq can no longer see it
+    d = conninfo_to_dict(out)
+    assert d["hostaddr"] == "203.0.113.7" and d["host"] == HOST
+
+
+def test_env_overrides_are_left_alone_without_require(pins, monkeypatch):
+    monkeypatch.delenv("STUDIO_REQUIRE_PINS", raising=False)
+    monkeypatch.setenv("PGHOSTADDR", "198.51.100.66")
+    pinned_conninfo(URL)
+    assert os.environ["PGHOSTADDR"] == "198.51.100.66"
+
+
+def test_hostaddr_env_cannot_redirect_a_pinned_connection_in_practice(required, monkeypatch):
+    """After pinned_conninfo the effective hostaddr is the pin even if PGHOSTADDR was set."""
+    monkeypatch.setenv("PGHOSTADDR", "198.51.100.66")
+    d = conninfo_to_dict(pinned_conninfo(URL))
+    assert d["hostaddr"] == "203.0.113.7" and "PGHOSTADDR" not in os.environ
+
+
+def _pins_file(monkeypatch, tmp_path, data=None):
+    path = tmp_path / "p.json"
+    path.write_text(json.dumps(data or {HOST: ["203.0.113.7"]}))
+    path.chmod(0o644)
+    monkeypatch.setenv("STUDIO_NEON_PINS", str(path))
+    monkeypatch.setattr(studio_pins, "TRUSTED_UID", os.getuid())
+    return path
+
+
+def test_pins_file_must_not_be_a_symlink(tmp_path, monkeypatch):
+    real = _pins_file(monkeypatch, tmp_path)
+    link = tmp_path / "link.json"
+    link.symlink_to(real)
+    monkeypatch.setenv("STUDIO_NEON_PINS", str(link))
+    monkeypatch.setenv("STUDIO_REQUIRE_PINS", "1")
+    with pytest.raises(PinError, match="symlink"):
+        pinned_conninfo(URL)
+    monkeypatch.delenv("STUDIO_REQUIRE_PINS")
+    assert pinned_conninfo(URL) == URL  # outside REQUIRE an untrusted file is simply not used
+
+
+def test_pins_file_must_be_root_owned(tmp_path, monkeypatch):
+    _pins_file(monkeypatch, tmp_path)
+    monkeypatch.setattr(studio_pins, "TRUSTED_UID", os.getuid() + 1)  # the production check: uid 0 owns it
+    monkeypatch.setenv("STUDIO_REQUIRE_PINS", "1")
+    with pytest.raises(PinError, match="root-owned"):
+        pinned_conninfo(URL)
+    # The shipped default really is root (uid 0); tests override the constant per test.
+    assert re.search(r"^TRUSTED_UID = 0\b", Path(studio_pins.__file__).read_text(), re.M)
+
+
+@pytest.mark.parametrize("mode", [0o664, 0o666, 0o646, 0o620])
+def test_pins_file_must_not_be_group_or_world_writable(tmp_path, monkeypatch, mode):
+    path = _pins_file(monkeypatch, tmp_path)
+    path.chmod(mode)
+    monkeypatch.setenv("STUDIO_REQUIRE_PINS", "1")
+    with pytest.raises(PinError, match="writable"):
+        pinned_conninfo(URL)
+    path.chmod(0o640)
+    assert conninfo_to_dict(pinned_conninfo(URL))["hostaddr"] == "203.0.113.7"
+
+
+def test_pins_file_directory_is_not_a_regular_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("STUDIO_NEON_PINS", str(tmp_path))
+    monkeypatch.setattr(studio_pins, "TRUSTED_UID", os.getuid())
+    monkeypatch.setenv("STUDIO_REQUIRE_PINS", "1")
+    with pytest.raises(PinError):
+        pinned_conninfo(URL)
