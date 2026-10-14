@@ -221,3 +221,86 @@ def test_readme_rotation_section_and_recovery_text():
     low = rot.lower()
     assert "if the out file is empty" in low and "delete the empty out" in low and "reset again" in low
     assert "Rotate later with step 2 + 3" not in text
+
+
+# ----- R16: NOLOGIN only blocks NEW connections; live sessions must be ended too -----
+
+
+def open_session(out):
+    """A live session as the role, the way the app pool would hold one (DSN issued by the mock API)."""
+    conn = psycopg.connect(out.read_text().strip(), autocommit=True)
+    assert conn.execute("SELECT current_user").fetchone()[0] == "studio_gov_ro"
+    return conn
+
+
+def assert_session_dead(conn):
+    with pytest.raises(psycopg.OperationalError):
+        conn.execute("SELECT 1")
+    with pytest.raises(psycopg.OperationalError):
+        conn.execute("SET ROLE neon_superuser")  # cannot be used to escalate any more
+
+
+def test_nologin_terminates_live_sessions_and_reports_the_count(cluster, neon, keyfile, tmp_path):
+    cluster.allow_signal()
+    out = provision(cluster, neon, keyfile, tmp_path)
+    s1, s2 = open_session(out), open_session(out)
+    n, scratch = run_roles(cluster, tmp_path, "--nologin", tag="t1")
+    assert n.returncode == 0, n.stderr
+    assert "2 live session(s) terminated" in n.stdout and role_row(cluster, "studio_gov_ro")[0] is False
+    assert_session_dead(s1)
+    assert_session_dead(s2)
+    with pytest.raises(psycopg.OperationalError):
+        open_session(out)  # NOLOGIN: no new connection either
+    n2, _ = run_roles(cluster, tmp_path, "--nologin", tag="t2")
+    assert n2.returncode == 0 and "0 live session(s) terminated" in n2.stdout and not list(scratch.iterdir())
+    pw = neon.issued["studio_gov_ro"]
+    assert pw not in n.stdout + n.stderr + n2.stdout + n2.stderr
+
+
+def test_failed_login_containment_also_ends_sessions_even_after_the_api_added_a_membership(cluster, neon, keyfile, tmp_path):
+    cluster.allow_signal()
+    out = provision(cluster, neon, keyfile, tmp_path)
+    live = open_session(out)  # the app's pool, still on the old password
+    neon.add_superuser_on_reset = True
+    nr, out2, r = reset(cluster, neon, keyfile, tmp_path, "rot16")  # naive rotation: no step 0
+    assert r.returncode == 0
+    assert live.execute("SET ROLE neon_superuser") is not None  # the window the runbook's step 0 removes: this session could escalate
+    live.execute("RESET ROLE")
+    l, _ = run_roles(cluster, tmp_path, "--login", tag="rot16login")
+    assert l.returncode != 0 and "contained" in l.stderr and "live session(s) terminated" in l.stderr
+    assert role_row(cluster, "studio_gov_ro")[0] is False
+    assert_session_dead(live)
+
+
+def test_denied_termination_warns_loudly_with_a_distinct_exit_code(cluster, neon, keyfile, tmp_path):
+    out = provision(cluster, neon, keyfile, tmp_path)  # owner has NO pg_signal_backend here
+    live = open_session(out)
+    n, _ = run_roles(cluster, tmp_path, "--nologin", tag="d1")
+    assert n.returncode == 5
+    assert "WARNING: studio_gov_ro is NOLOGIN but 1 live session(s) could NOT be terminated" in n.stderr and "pg_signal_backend" in n.stderr
+    assert role_row(cluster, "studio_gov_ro")[0] is False  # the NOLOGIN itself is committed regardless
+    assert live.execute("SELECT 1").fetchone() == (1,)  # ...and the session is still alive: that is exactly what the warning is for
+    # failed --login containment path, same denial: exit 5 outranks the original failure code
+    cluster.owner_exec("ALTER ROLE studio_gov_ro LOGIN")
+    cluster.su_exec("GRANT pg_monitor TO studio_gov_ro")
+    l, _ = run_roles(cluster, tmp_path, "--login", tag="d2")
+    assert l.returncode == 5 and "contained" in l.stderr and "could NOT be terminated" in l.stderr
+    # once the owner may signal, the same command finishes the job
+    cluster.allow_signal()
+    n2, _ = run_roles(cluster, tmp_path, "--nologin", tag="d3")
+    assert n2.returncode == 0 and "1 live session(s) terminated" in n2.stdout
+    with pytest.raises(psycopg.OperationalError):
+        live.execute("SELECT 1")
+
+
+def test_studio_app_sessions_are_terminated_too_and_the_readme_says_so(cluster, tmp_path):
+    cluster.allow_signal()
+    assert run_roles(cluster, tmp_path, "--role", "studio_app", url=cluster.studio_owner_url, tag="app")[0].returncode == 0
+    cluster.su_exec("ALTER ROLE studio_app LOGIN PASSWORD 'harness-only-pw'")
+    conn = psycopg.connect(f"postgresql://studio_app:harness-only-pw@/studiodb?host={cluster.sock}", autocommit=True)
+    n, _ = run_roles(cluster, tmp_path, "--nologin", "--role", "studio_app", url=cluster.studio_owner_url, tag="app2")
+    assert n.returncode == 0 and "1 live session(s) terminated" in n.stdout
+    with pytest.raises(psycopg.OperationalError):
+        conn.execute("SELECT 1")
+    rot = (OPS / "README.md").read_text().split("## Rotation", 1)[1].split("\n## ", 1)[0].lower()
+    assert "live sessions" in rot and "terminated" in rot and "pool" in rot and "new dsn" in rot and "exit 5" in rot

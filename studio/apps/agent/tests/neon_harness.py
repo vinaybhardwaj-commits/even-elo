@@ -77,6 +77,10 @@ class Cluster:
         with psycopg.connect(uri, autocommit=True) as c:
             return c.execute(sql).fetchall() if sql.lstrip().upper().startswith("SELECT") else c.execute(sql)
 
+    def allow_signal(self):
+        """Let the emulated owner end the roles' sessions (what Neon's owner may or may not have: UNVERIFIED)."""
+        self.su_exec("GRANT pg_signal_backend TO neondb_owner")
+
     def owner_exec(self, sql, db="neondb"):
         with psycopg.connect(self.url("neondb_owner", db), autocommit=True) as c:
             return c.execute(sql)
