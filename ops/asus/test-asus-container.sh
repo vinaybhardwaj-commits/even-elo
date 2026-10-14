@@ -15,13 +15,16 @@ REPO=$(git -C "$HERE" rev-parse --show-toplevel)
 C=studio-ops-test
 STUB=studio-ops-neonstub
 STUB2=studio-ops-neonstub2
+STUB3=studio-ops-broker
+BROKER_TOKEN=$(openssl rand -hex 32)
+BPORT=8765
 IMG=studio-ops-test-img
 NEON=neonstub.test
 WORK=$(mktemp -d)
 fail=0
 ok() { printf 'ok   %s\n' "$1"; }
 bad() { printf 'FAIL %s\n' "$1"; fail=1; }
-cleanup() { docker rm -f "$C" "$STUB" "$STUB2" >/dev/null 2>&1; rm -rf "$WORK"; }
+cleanup() { docker rm -f "$C" "$STUB" "$STUB2" "$STUB3" >/dev/null 2>&1; rm -rf "$WORK"; }
 trap cleanup EXIT
 x() { docker exec -i "$C" bash -c "$1" </dev/null; }
 xi() { docker exec -i "$C" bash -c "$1"; }
@@ -40,16 +43,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends systemd systemd
 STOPSIGNAL SIGRTMIN+3
 DOCKERFILE
 
-docker rm -f "$C" "$STUB" "$STUB2" >/dev/null 2>&1
+docker rm -f "$C" "$STUB" "$STUB2" "$STUB3" >/dev/null 2>&1
 PKI=$WORK/pki; mkdir -p "$PKI"
 openssl req -x509 -newkey rsa:2048 -nodes -keyout "$PKI/ca.key" -out "$PKI/ca.crt" -days 3 -subj /CN=studio-ops-test-ca 2>/dev/null
-for n in neonstub.test neonstub2.test; do
+for n in neonstub.test neonstub2.test neonstub6.test; do
   openssl req -newkey rsa:2048 -nodes -keyout "$PKI/$n.key" -out "$PKI/$n.csr" -subj "/CN=$n" 2>/dev/null
   printf 'subjectAltName=DNS:%s' "$n" >"$PKI/$n.ext"
   openssl x509 -req -in "$PKI/$n.csr" -CA "$PKI/ca.crt" -CAkey "$PKI/ca.key" -CAcreateserial -out "$PKI/$n.crt" -days 3 -extfile "$PKI/$n.ext" 2>/dev/null
 done
 mkstub() { # mkstub CONTAINER CERTNAME ENDPOINT_ID  -> a PostgreSQL 16 with TLS; roles take the Neon "endpoint=<id>$password" form
-  docker run -d --name "$1" "$IMG" sleep infinity >/dev/null || return 1
+  docker run -d --name "$1" --cap-add NET_ADMIN "$IMG" sleep infinity >/dev/null || return 1
   docker exec "$1" mkdir -p /etc/ssl/pg
   docker cp "$PKI/$2.crt" "$1:/etc/ssl/pg/server.crt"; docker cp "$PKI/$2.key" "$1:/etc/ssl/pg/server.key"
   docker exec "$1" bash -c 'chown postgres:postgres /etc/ssl/pg/server.*; chmod 600 /etc/ssl/pg/server.key
@@ -57,20 +60,48 @@ mkstub() { # mkstub CONTAINER CERTNAME ENDPOINT_ID  -> a PostgreSQL 16 with TLS;
     printf "ssl = on\nssl_cert_file = '"'"'/etc/ssl/pg/server.crt'"'"'\nssl_key_file = '"'"'/etc/ssl/pg/server.key'"'"'\nlisten_addresses = '"'"'*'"'"'\n" >>$c/postgresql.conf
     echo "hostssl all all 0.0.0.0/0 scram-sha-256" >>$c/pg_hba.conf
     pg_ctlcluster 16 main start && sleep 2'
-  docker exec "$1" sudo -u postgres psql -qc "create role neon_gov login password 'endpoint=$3\$govpw'" \
-    -c "create role neon_studio login password 'endpoint=$3\$studiopw'" -c "create database govdb owner neon_gov" -c "create database studiodb owner neon_studio"
+  # SQL on stdin: a password in argv would end up in the journal as the _CMDLINE of runuser's PAM session message
+  docker exec -i "$1" runuser -u postgres -- psql -q <<SQL
+create role neon_gov login password 'endpoint=$3\$govpw';
+create role neon_studio login password 'endpoint=$3\$studiopw';
+create database govdb owner neon_gov;
+create database studiodb owner neon_studio;
+SQL
 }
 mkstub "$STUB" neonstub.test neonstub >/dev/null || { echo "stub 1 failed"; exit 2; }
 mkstub "$STUB2" neonstub2.test neonstub2 >/dev/null || { echo "stub 2 failed"; exit 2; }
 STUBIP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$STUB")
 STUB2IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$STUB2")
 # the first stub is also the container's DNS server: answers both fake Neon names, forwards everything else to the host's resolver
-start_dns() { docker exec -d "$STUB" dnsmasq -k --address=/$NEON/"$STUBIP" --address=/neonstub2.test/"$STUB2IP" --user=root --listen-address="$STUBIP" --bind-interfaces; }
+# 1.1.1.1 gets a spoofed PTR naming an allowlisted host (the Squid reverse-DNS bypass); neonstub6.test is IPv6-only (fd00:6::1, a ULA on the main container's lo)
+start_dns() { docker exec -d "$STUB" dnsmasq -k --address=/$NEON/"$STUBIP" --address=/neonstub2.test/"$STUB2IP" --address=/neonstub6.test/fd00:6::1 --ptr-record=1.1.1.1.in-addr.arpa,api.typesafe.ai --user=root --listen-address="$STUBIP" --bind-interfaces; }
 start_dns
 docker run -d --name "$C" --dns "$STUBIP" --privileged --cgroupns=host -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
   --tmpfs /run --tmpfs /run/lock "$IMG" /lib/systemd/systemd >/dev/null || { echo "container start failed"; exit 2; }
 for _ in $(seq 30); do x 'systemctl is-system-running --wait 2>/dev/null | grep -Eq "running|degraded"' && break; sleep 1; done
 x 'systemctl start systemd-resolved dbus' || true
+CIP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$C")
+docker run -d --name "$STUB3" --cap-add NET_ADMIN "$IMG" sleep infinity >/dev/null || { echo "broker stub failed"; exit 2; }
+# the broker sits on a tailnet-range address (100.64.0.0/10), a secondary address on the stub's eth0 that the other containers reach on-link
+BROKERIP=100.100.0.5
+docker exec "$STUB3" ip addr add $BROKERIP/32 dev eth0
+x "ip route add $BROKERIP/32 dev eth0"
+docker exec "$STUB2" ip route add $BROKERIP/32 dev eth0
+docker exec "$STUB3" mkdir -p /opt/broker-test
+docker cp "$HERE/../t4-broker/broker.py" "$STUB3:/opt/broker-test/broker.py"; docker cp "$HERE/broker_stub_runner.py" "$STUB3:/opt/broker-test/run.py"
+docker exec -d "$STUB3" python3 /opt/broker-test/run.py "$BROKERIP" "$BPORT" "$CIP" "$BROKER_TOKEN"
+# an IPv6-only fake Neon inside the main container (fd00:6::1 on lo), for the end-to-end v6 case
+docker exec "$C" mkdir -p /etc/ssl/pg
+docker cp "$PKI/neonstub6.test.crt" "$C:/etc/ssl/pg/server.crt"; docker cp "$PKI/neonstub6.test.key" "$C:/etc/ssl/pg/server.key"
+x 'chown postgres:postgres /etc/ssl/pg/server.*; chmod 600 /etc/ssl/pg/server.key; c=/etc/postgresql/16/main
+   printf "ssl = on\nssl_cert_file = '"'"'/etc/ssl/pg/server.crt'"'"'\nssl_key_file = '"'"'/etc/ssl/pg/server.key'"'"'\nlisten_addresses = '"'"'fd00:6::1'"'"'\n" >>$c/postgresql.conf
+   echo "hostssl all all fd00:6::1/128 scram-sha-256" >>$c/pg_hba.conf
+   ip -6 addr add fd00:6::1/128 dev lo
+   pg_ctlcluster 16 main restart && sleep 3' || echo "v6 stub start failed"
+xi 'runuser -u postgres -- psql -q' <<'SQL' || echo "v6 stub setup failed"
+create role neon_gov6 login password 'endpoint=neonstub6$govpw';
+create database govdb6 owner neon_gov6;
+SQL
 docker cp "$PKI/ca.crt" "$C:/usr/local/share/ca-certificates/studio-ops-test-ca.crt"
 x 'update-ca-certificates >/dev/null 2>&1; true'
 
@@ -88,9 +119,7 @@ for n in rel1 rel2 relbad relslow; do
   docker cp "$WORK/$n.tar" "$C:/root/$n.tar"
 done
 docker cp "$HERE" "$C:/root/asus"
-printf '%s' '{"type":"service_account","client_email":"t@t.iam"}' >"$WORK/key.json"
-docker cp "$WORK/key.json" "$C:/root/key.json"
-inst() { echo "/root/asus/install-studio-agent.sh --neon-host $NEON --tarball /root/$1.tar --sha256 $(eval echo "\$SHA_$1")"; }
+inst() { echo "/root/asus/install-studio-agent.sh --neon-host $NEON --neon-host neonstub6.test --broker $BROKERIP:$BPORT --tarball /root/$1.tar --sha256 $(eval echo "\$SHA_$1")"; }
 
 xi 'cat >/usr/local/bin/tailscale' <<'STUB'
 #!/usr/bin/env python3
@@ -113,7 +142,7 @@ x 'chmod +x /usr/local/bin/tailscale; echo "{}" >/var/lib/ts-stub.json'
 NEONIP=$(x "dig +short $NEON | head -1")
 [ -n "$NEONIP" ] && ok "neon stub resolves to $NEONIP" || { bad "neon stub does not resolve"; exit 1; }
 
-x "cd /root/asus && ./install-studio-agent.sh --dry-run --tarball /root/rel1.tar --sha256 $SHA_rel1 --neon-host $NEON" >"$WORK/dry.out" 2>&1 \
+x "cd /root/asus && ./install-studio-agent.sh --dry-run --tarball /root/rel1.tar --sha256 $SHA_rel1 --neon-host $NEON --neon-host neonstub6.test --broker $BROKERIP:$BPORT" >"$WORK/dry.out" 2>&1 \
   && ok "dry-run in container (incl. nft -c, squid -k parse)" || { bad "dry-run in container"; tail -5 "$WORK/dry.out"; }
 
 echo "--- install 1 (env incomplete: must not activate)"
@@ -124,30 +153,37 @@ checkno "agent not enabled/active with empty env" 'systemctl is-active --quiet s
 check "stock squid and pgbouncer units masked" 'systemctl is-enabled squid 2>&1 | grep -q masked && systemctl is-enabled pgbouncer 2>&1 | grep -q masked'
 check "studio-proxy runs squid -N with the studio config, as user proxy" '[ "$(ps -o user= -C squid | head -1 | tr -d " ")" = proxy ] && pgrep -af "squid -N -s -f /etc/studio-proxy/squid.conf"'
 check "squid config dir readable by group proxy only; splice-only cert 0640 root:proxy" '[ "$(stat -c "%a %U:%G" /etc/studio-proxy)" = "750 root:proxy" ] && [ "$(stat -c "%a %U:%G" /etc/studio-proxy/splice-only.pem)" = "640 root:proxy" ]'
-check "no decryption configured (no bump action)" '! grep -Eq "^ssl_bump +(bump|stare|client-first|server-first)" /etc/studio-proxy/squid.conf && grep -q "^ssl_bump terminate all" /etc/studio-proxy/squid.conf'
+check "no decryption configured (no bump action); exact names only, no regex, no googleapis" '! grep -Eq "^ssl_bump +(bump|stare|client-first|server-first)" /etc/studio-proxy/squid.conf && grep -q "^ssl_bump terminate all" /etc/studio-proxy/squid.conf && grep -q "dstdomain -n" /etc/studio-proxy/squid.conf && ! grep -q "dstdom_regex\|server_name_regex" /etc/studio-proxy/squid.conf && ! grep -qi googleapis /etc/studio-proxy/hosts.txt && [ "$(cat /etc/studio-proxy/hosts.txt)" = "bedrock-runtime.ap-south-1.amazonaws.com
+api.typesafe.ai" ]'
 check "squid cannot read the agent tree" '! runuser -u proxy -- ls /opt/studio-agent >/dev/null 2>&1 && ! runuser -u proxy -- cat /etc/studio-agent/env >/dev/null 2>&1'
 check "proxy listens on 127.0.0.1:8888 only" '[ "$(ss -ltn | grep -c ":8888 ")" = 1 ] && ss -ltn | grep -q "127.0.0.1:8888 "'
 check "nft table present" 'nft list table inet studio_agent'
-check "pins file {host:[ips]} 0640 root:studio-agent" "[ \"\$(stat -c '%a %U:%G' /run/studio-agent/neon-pins.json)\" = '640 root:studio-agent' ] && python3 -c 'import json,sys; d=json.load(open(\"/run/studio-agent/neon-pins.json\")); sys.exit(0 if d[\"$NEON\"]==[\"$NEONIP\"] else 1)'"
+check "pins file {host:[ips]} 0640 root:studio-agent" "[ \"\$(stat -c '%a %U:%G' /run/studio-agent/neon-pins.json)\" = '640 root:studio-agent' ] && python3 -c 'import json,sys; d=json.load(open(\"/run/studio-agent/neon-pins.json\")); sys.exit(0 if d[\"$NEON\"]==[\"$NEONIP\"] and d[\"neonstub6.test\"]==[\"fd00:6::1\"] else 1)'"
 check "/etc/hosts has no studio block" '! grep -q studio-agent-neon /etc/hosts'
 check "relay dir 0700 root, neon.env 0600, local.env 0600" '[ "$(stat -c %a /etc/studio-pgrelay)" = 700 ] && [ "$(stat -c %a /etc/studio-pgrelay/neon.env)" = 600 ] && [ "$(stat -c %a /etc/studio-pgrelay/local.env)" = 600 ]'
 check "env 0600 root:studio-agent, dir 0750" '[ "$(stat -c "%a %U:%G" /etc/studio-agent/env)" = "600 root:studio-agent" ] && [ "$(stat -c %a /etc/studio-agent)" = 750 ]'
 check "kill switch default 0" 'grep -q "^STUDIO_LIVE_READS=0$" /etc/studio-agent/env'
-check "env has TYPESAFE_API_KEY, VERTEX_MODEL, JEV_MODEL, AWS_STS_REGIONAL_ENDPOINTS=regional" 'grep -q "^TYPESAFE_API_KEY=" /etc/studio-agent/env && grep -q "^VERTEX_MODEL=" /etc/studio-agent/env && grep -q "^JEV_MODEL=" /etc/studio-agent/env && grep -q "^AWS_STS_REGIONAL_ENDPOINTS=regional$" /etc/studio-agent/env'
+check "env: broker auth names present, BEDROCK_AUTH=default-chain, no GCP / AWS-role / Vertex variable" 'grep -q "^TYPESAFE_API_KEY=" /etc/studio-agent/env && grep -q "^STUDIO_BROKER_TOKEN=" /etc/studio-agent/env && grep -q "^BEDROCK_AUTH=default-chain$" /etc/studio-agent/env && grep -q "^AWS_STS_REGIONAL_ENDPOINTS=regional$" /etc/studio-agent/env && grep -q "^AWS_CONFIG_FILE=/etc/studio-agent/aws-config$" /etc/studio-agent/env && ! grep -Eq "GCP_|AWS_ROLE_ARN|VERTEX|GOOGLE" /etc/studio-agent/env'
+check "AWS config points credential_process at the helper; helper installed 0755" '[ "$(stat -c %a /usr/local/bin/studio-aws-creds)" = 755 ] && grep -q "credential_process = /usr/local/bin/studio-aws-creds" /etc/studio-agent/aws-config && [ "$(stat -c "%a %U:%G" /etc/studio-agent/aws-config)" = "640 root:studio-agent" ]'
 
-echo "--- key + env + neon.env fill (VERTEX_MODEL left empty: optional)"
-check "receive key via stdin" 'cat /root/key.json | /root/asus/install-studio-agent.sh --receive-gcp-key'
-check "key 0600 studio-agent" '[ "$(stat -c "%a %U" /etc/studio-agent/gcp-sa.json)" = "600 studio-agent" ]'
+echo "--- migration from an R5 host: old GCP key and GCP/AWS-role/Vertex variables are removed, nothing remains"
+x 'printf "{\"type\":\"service_account\"}" >/etc/studio-agent/gcp-sa.json; chmod 600 /etc/studio-agent/gcp-sa.json
+   printf "GCP_SA_KEY_FILE=/etc/studio-agent/gcp-sa.json\nGCP_AUDIENCE=x\nAWS_ROLE_ARN=arn:aws:iam::1:role/x\nVERTEX_MODEL=gemini\nVERTEX_LOCATION=asia-northeast1\n" >>/etc/studio-agent/env; sed -i "s#^BEDROCK_AUTH=.*#BEDROCK_AUTH=gcp-federation#" /etc/studio-agent/env'
+
+echo "--- env + neon.env fill (the broker token is the only AWS-side secret on this host)"
 x 'printf "GOV_NEON_URL=postgres://neon_gov:govpw@neonstub.test/govdb?sslmode=require\nSTUDIO_NEON_URL=postgres://neon_studio:studiopw@neonstub.test/studiodb?sslmode=require\n" >/etc/studio-pgrelay/neon.env; chmod 600 /etc/studio-pgrelay/neon.env'
-x 'for v in STUDIO_SERVICE_TOKEN STUDIO_ACTOR_SECRET AWS_ROLE_ARN GCP_AUDIENCE TYPESAFE_API_KEY; do sed -i "s#^$v=.*#$v=dummy-$v#" /etc/studio-agent/env; done'
+x "for v in STUDIO_SERVICE_TOKEN STUDIO_ACTOR_SECRET TYPESAFE_API_KEY; do sed -i \"s#^\$v=.*#\$v=dummy-\$v#\" /etc/studio-agent/env; done; true"
+check "broker token received on stdin lands in the env file (0600), not in argv" "printf %s $BROKER_TOKEN | /root/asus/install-studio-agent.sh --receive-broker-token && grep -q '^STUDIO_BROKER_TOKEN=$BROKER_TOKEN\$' /etc/studio-agent/env && [ \"\$(stat -c '%a %U:%G' /etc/studio-agent/env)\" = '600 root:studio-agent' ]"
+checkno "a malformed token is refused" "printf 'short' | /root/asus/install-studio-agent.sh --receive-broker-token"
 
 echo "--- install 2 (activate; waits for the 30 s health window)"
-check "install 2 exits 0 (VERTEX_MODEL unset only warns)" "$(inst rel1) | tee /root/i2.out | tail -3; grep -q 'WARNING: VERTEX_MODEL' /root/i2.out; exit \${PIPESTATUS[0]}"
+check "install 2 exits 0 (migrates, activates)" "$(inst rel1) | tee /root/i2.out | tail -3; exit \${PIPESTATUS[0]}"
+check "migration: old key shredded, GCP/AWS-role/Vertex variables gone, BEDROCK_AUTH=default-chain, broker URL set" '[ ! -e /etc/studio-agent/gcp-sa.json ] && ! grep -Eq "GCP_|AWS_ROLE_ARN|VERTEX|GOOGLE" /etc/studio-agent/env && grep -q "^BEDROCK_AUTH=default-chain$" /etc/studio-agent/env && grep -q "^STUDIO_BROKER_URL=http://'"$BROKERIP"':'"$BPORT"'/creds$" /etc/studio-agent/env'
 check "agent active, /agent/health = 401 bad_service_token" "systemctl is-active --quiet studio-agent && $HEALTH"
 check "agent listens on 127.0.0.1:8123 only" '[ "$(ss -ltn | grep -c ":8123 ")" = 1 ] && ss -ltn | grep -q "127.0.0.1:8123 "'
 check "agent runs as studio-agent" '[ "$(ps -o user= -C uvicorn | head -1 | tr -d " ")" = studio-agent ]'
 check "funnel opened on /agent only (stub)" 'tailscale serve status --json | grep -q "\"/agent\"" && [ "$(tailscale serve status --json | grep -o "\"/[a-z]*\"" | sort -u | wc -l)" = 1 ]'
-check "agent IPAddressAllow = 127.0.0.1/32 only (no Neon address, not 127.0.0.0/8)" "a=\$(systemctl show studio-agent -p IPAddressAllow --value); grep -q '127.0.0.1' <<<\"\$a\" && ! grep -q '$NEONIP' <<<\"\$a\" && ! grep -q '127.0.0.0/8' <<<\"\$a\""
+check "agent IPAddressAllow = 127.0.0.1/32 + the broker (no Neon address, not 127.0.0.0/8)" "a=\$(systemctl show studio-agent -p IPAddressAllow --value); grep -q '127.0.0.1' <<<\"\$a\" && grep -q '$BROKERIP' <<<\"\$a\" && ! grep -q '$NEONIP' <<<\"\$a\" && ! grep -q '127.0.0.0/8' <<<\"\$a\""
 check "relay IPAddressAllow = 127.0.0.1/32 + neon pin" "a=\$(systemctl show studio-pgrelay -p IPAddressAllow --value); grep -q '127.0.0.1' <<<\"\$a\" && grep -q '$NEONIP' <<<\"\$a\""
 check "relay active as studio-pgrelay on 127.0.0.1:6432 only" '[ "$(ps -o user= -C pgbouncer | head -1 | tr -d " ")" = studio-pgrelay ] && [ "$(ss -ltn | grep -c ":6432 ")" = 1 ] && ss -ltn | grep -q "127.0.0.1:6432 "'
 check "agent env points at the relay, holds no Neon host or credential" 'grep -q "^GOV_RO_DATABASE_URL=postgresql://agent_gov:.*@127.0.0.1:6432/gov" /etc/studio-agent/env && grep -q "^STUDIO_DATABASE_URL=postgresql://agent_studio:.*@127.0.0.1:6432/studio" /etc/studio-agent/env && ! grep -Eq "neonstub|govpw|studiopw|endpoint=" /etc/studio-agent/env && ! tr "\0" "\n" </proc/$(systemctl show studio-agent -p MainPID --value)/environ | grep -Eq "neonstub|govpw|studiopw|endpoint="'
@@ -155,6 +191,10 @@ for u in studio-agent studio-proxy studio-pgrelay; do
   x "systemd-analyze security $u --no-pager | tail -1" | sed "s/^/     security: /"
   check "security score $u <= 3.0" "awk -v s=\"\$(systemd-analyze security $u --no-pager | tail -1 | grep -o '[0-9.]*' | head -1)\" 'BEGIN{exit !(s<=3.0)}'"
 done
+docker cp "$HERE/../t4-broker" "$C:/root/t4-broker"
+x "/root/t4-broker/install-studio-broker.sh --dry-run --render-dir /root/br --listen 100.101.102.103:8765 --allowed-source 100.101.102.104 --gcp-key-file /tmp/none >/dev/null 2>&1; true"
+x "systemd-analyze security --offline=true /root/br/studio-broker.service --no-pager | tail -1" | sed "s/^/     security: broker unit (offline): /"
+check "security score studio-broker (t4 unit, offline) <= 3.0" "awk -v s=\"\$(systemd-analyze security --offline=true /root/br/studio-broker.service --no-pager | tail -1 | grep -o '[0-9.]*' | head -1)\" 'BEGIN{exit !(s<=3.0)}'"
 check "MemorySwapMax=0 LimitCORE=0" 'systemctl show studio-agent -p MemorySwapMax -p LimitCORE | tr "\n" " " | grep -q "MemorySwapMax=0 LimitCORE=0"'
 
 echo "--- install 3 (idempotent: nothing restarts)"
@@ -162,15 +202,16 @@ x 'systemctl show studio-agent -p MainPID --value >/root/pid.before; systemctl s
 check "install 3 exits 0" "$(inst rel1)"
 check "agent, proxy and relay not restarted by an unchanged install" '[ "$(systemctl show studio-agent -p MainPID --value)" = "$(cat /root/pid.before)" ] && [ "$(systemctl show studio-proxy -p MainPID --value)" = "$(cat /root/ppid.before)" ] && [ "$(systemctl show studio-pgrelay -p MainPID --value)" = "$(cat /root/rpid.before)" ]'
 
-echo "--- pins: stale IP never survives; parallel refresh keeps /etc/hosts byte-identical; pin change reloads the relay, not the agent"
+echo "--- pins: stale IP never survives; hosts file replaced atomically; pin change restarts the relay, not the agent; parallel refresh leaves /etc/hosts alone"
 x 'echo "192.0.2.99 neonstub.test" >>/etc/hosts; cp /etc/hosts /root/hosts.planted
    printf "{\"neonstub.test\": [\"192.0.2.99\"]}" >/run/studio-agent/neon-pins.json
    printf "127.0.0.1 localhost\n192.0.2.99 neonstub.test\n" >/run/studio-agent/relay-hosts
    nft add rule inet studio_agent out meta skuid studio-pgrelay ip daddr 192.0.2.99 tcp dport 5432 accept
-   systemctl show studio-agent -p MainPID --value >/root/pid.before'
+   systemctl show studio-agent -p MainPID --value >/root/pid.before; systemctl show studio-pgrelay -p MainPID --value >/root/rpid.before; stat -c %i /run/studio-agent/relay-hosts >/root/hosts.inode.before'
 check "refresh replaces planted stale pin/nft rule/relay hosts line with the live upstream answer" "/usr/local/sbin/studio-agent-egress-refresh && ! grep -q 192.0.2.99 /run/studio-agent/neon-pins.json && ! nft list table inet studio_agent | grep -q 192.0.2.99 && grep -q $NEONIP /run/studio-agent/neon-pins.json && ! grep -q 192.0.2.99 /run/studio-agent/relay-hosts && grep -q '$NEONIP neonstub.test' /run/studio-agent/relay-hosts"
 check "refresh did not touch /etc/hosts" 'cmp /etc/hosts /root/hosts.planted'
 check "pin change did not restart the agent" '[ "$(systemctl show studio-agent -p MainPID --value)" = "$(cat /root/pid.before)" ]'
+check "pin change restarted the relay (it re-binds the replaced hosts inode), which resolves the live address again" 'sleep 3; [ "$(systemctl show studio-pgrelay -p MainPID --value)" != "$(cat /root/rpid.before)" ] && [ "$(stat -c %i /run/studio-agent/relay-hosts)" != "$(cat /root/hosts.inode.before)" ] && [ -z "$(ls /run/studio-agent | grep -E "\.new$")" ]'
 check "agent healthy" "$HEALTH"
 x 'sha256sum /etc/hosts >/root/hosts.sum'
 check "15 rounds x 3 parallel refreshes: /etc/hosts byte-identical, pins valid, table present" 'for r in $(seq 15); do for k in 1 2 3; do /usr/local/sbin/studio-agent-egress-refresh >/dev/null 2>&1 & done; wait; done; sha256sum -c --quiet /root/hosts.sum && python3 -c "import json;d=json.load(open(\"/run/studio-agent/neon-pins.json\"));assert d[\"neonstub.test\"]" && nft list table inet studio_agent >/dev/null && getent hosts localhost >/dev/null'
@@ -190,14 +231,20 @@ INTERNET=0; x 'curl -s -m 8 -o /dev/null https://api.typesafe.ai/' && INTERNET=1
 SCL="$AS openssl s_client -proxy 127.0.0.1:8888"
 echo "--- A: squid SNI allowlist (no decryption)"
 check "CONNECT to a non-allowlisted host is refused" "! $AS curl -s -m 10 -o /dev/null -x http://127.0.0.1:8888 https://example.org/"
-check "plain HTTP is refused (403), even to an allowlisted host" "c=\$($AS curl -s -m 10 -o /dev/null -w '%{http_code}' -x http://127.0.0.1:8888 http://api.typesafe.ai/ 2>/dev/null); [ \"\$c\" = 403 ]"
+check "plain HTTP is refused, even to an allowlisted host" "c=\$($AS curl -s -m 10 -o /dev/null -w '%{http_code}' -x http://127.0.0.1:8888 http://api.typesafe.ai/ 2>/dev/null); [ \"\$c\" = 000 ] || [ \"\$c\" = 403 ]"
 check ":8443 CONNECT is refused" "! $AS curl -s -m 8 -x http://127.0.0.1:8888 https://api.typesafe.ai:8443/ -o /dev/null"
-check "IP-literal CONNECT is refused" "! $AS curl -s -m 8 -x http://127.0.0.1:8888 https://1.1.1.1/ -o /dev/null"
+check "IP-literal CONNECT is refused (v4)" "! $AS curl -s -m 8 -x http://127.0.0.1:8888 https://1.1.1.1/ -o /dev/null"
+check "IP-literal CONNECT is refused (v6)" "! $AS curl -s -m 8 -x http://127.0.0.1:8888 'https://[2606:4700:4700::1111]/' -o /dev/null"
+check "no Google host is allowlisted (Host fronting): oauth2/iamcredentials/sts/storage.googleapis.com refused" "for h in oauth2 iamcredentials sts storage us-central1-aiplatform; do ! $AS curl -s -m 8 -x http://127.0.0.1:8888 https://\$h.googleapis.com/ -o /dev/null || exit 1; done"
+check "B1: spoofed PTR (1.1.1.1 -> api.typesafe.ai) does not turn an IP literal into an allowlisted name: TCP_DENIED, no handshake" "x=\$(timeout 15 $SCL -connect 1.1.1.1:443 -servername api.typesafe.ai </dev/null 2>&1); ! grep -q 'subject=' <<<\"\$x\" && ! grep -q 'studio-proxy-splice-only' <<<\"\$x\" && sleep 1 && journalctl -t squid --no-pager -o cat | grep -q 'TCP_DENIED.*CONNECT 1.1.1.1:443'"
+check "m3/m4: a denied CONNECT gets a plain reset: no '200 Connection established', no TLS with splice-only.pem" "o=\$($AS curl -s -m 8 -x http://127.0.0.1:8888 -v https://example.org/ -o /dev/null 2>&1); ! grep -q '< HTTP/1.1 200' <<<\"\$o\" && grep -qi 'reset\\|Recv failure\\|Empty reply' <<<\"\$o\""
+check "control: the PTR really is spoofed for the proxy host" "dig +short -x 1.1.1.1 | grep -q 'api.typesafe.ai'"
 if [ "$INTERNET" = 1 ]; then
   APIIP=$(x "dig +short api.typesafe.ai | head -1")
   check "IP-literal CONNECT to the allowlisted host's own address is refused" "! $AS curl -s -m 8 -x http://127.0.0.1:8888 --resolve api.typesafe.ai:443:$APIIP https://$APIIP/ -o /dev/null"
   check "CONNECT api.typesafe.ai with SNI api.typesafe.ai -> spliced (real handshake)" "timeout 20 $SCL -connect api.typesafe.ai:443 -servername api.typesafe.ai </dev/null 2>&1 | grep -q 'subject='"
   check "CONNECT api.typesafe.ai with SNI example.com -> refused (terminated)" "! timeout 20 $SCL -connect api.typesafe.ai:443 -servername example.com </dev/null 2>&1 | grep -q 'subject='"
+  check "CONNECT bedrock-runtime.ap-south-1 with its own SNI -> spliced (a named destination)" "timeout 20 $SCL -connect bedrock-runtime.ap-south-1.amazonaws.com:443 -servername bedrock-runtime.ap-south-1.amazonaws.com </dev/null 2>&1 | grep -q 'subject='"
   check "allowlisted host via curl" "$AS curl -s -m 15 -o /dev/null -w '%{http_code}' -x http://127.0.0.1:8888 https://api.typesafe.ai/ | grep -qv 000"
 else echo "skip: allowlisted-host and SNI-mismatch checks need internet from the container"; fi
 check "proxy access log (journal) carries host:port and SNI only, no URL paths" "journalctl -t squid --no-pager -o cat | grep -q 'sni=' && ! journalctl -t squid --no-pager -o cat | grep -q 'api.typesafe.ai/'"
@@ -228,10 +275,28 @@ docker exec "$STUB" bash -c 'chown postgres:postgres /etc/ssl/pg/server.*; chmod
 x 'systemctl restart studio-pgrelay'; sleep 8
 check "correct certificate restored: relay works again" "[ \"\$($AS env PGPASSWORD=$GPW $PQ 'host=127.0.0.1 port=6432 user=agent_gov dbname=gov sslmode=disable' -c 'select current_user')\" = neon_gov ]"
 
+echo "--- B2 (m8): IPv6 end to end - the relay reaches an IPv6-only fake Neon (fd00:6::1) through its AAAA pin"
+x "sed -i 's#^GOV_NEON_URL=.*#GOV_NEON_URL=postgres://neon_gov6:govpw@neonstub6.test/govdb6?sslmode=require#' /etc/studio-pgrelay/neon.env; systemctl restart studio-pgrelay"; sleep 6
+check "relay -> fd00:6::1 over TLS verify-full (server address is the v6 stub)" "[ \"\$($AS env PGPASSWORD=$GPW $PQ 'host=127.0.0.1 port=6432 user=agent_gov dbname=gov sslmode=disable' -c 'select current_user || chr(32) || inet_server_addr()')\" = 'neon_gov6 fd00:6::1/128' ]"
+check "nft has the v6 rule for the relay uid only; agent uid cannot reach the v6 stub" "ur=\$(id -u studio-pgrelay); nft list table inet studio_agent | grep \"skuid \$ur ip6 daddr\" | grep -q 'fd00:6::1' && ! $AS timeout 6 bash -c '</dev/tcp/fd00:6::1/5432'"
+x "sed -i 's#^GOV_NEON_URL=.*#GOV_NEON_URL=postgres://neon_gov:govpw@neonstub.test/govdb?sslmode=require#' /etc/studio-pgrelay/neon.env; systemctl restart studio-pgrelay"; sleep 6
+check "back on the first endpoint" "[ \"\$($AS env PGPASSWORD=$GPW $PQ 'host=127.0.0.1 port=6432 user=agent_gov dbname=gov sslmode=disable' -c 'select current_user')\" = neon_gov ]"
+
+echo "--- C: t4 credential broker (stub federation, real broker code), helper, no GCP on the host"
+BURL="http://$BROKERIP:$BPORT/creds"
+check "helper (as the agent uid) returns credential_process JSON from the broker" "$AS env STUDIO_BROKER_URL=$BURL STUDIO_BROKER_TOKEN=$BROKER_TOKEN /usr/local/bin/studio-aws-creds | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d[\"Version\"]==1 and d[\"AccessKeyId\"]==\"ASIASTUBKEY\" and d[\"SessionToken\"]'"
+checkno "helper with a wrong token fails and prints nothing usable" "o=\$($AS env STUDIO_BROKER_URL=$BURL STUDIO_BROKER_TOKEN=wrong /usr/local/bin/studio-aws-creds 2>/dev/null); [ -n \"\$o\" ]"
+check "broker: no token -> 401, bad token -> 401" "[ \"\$($AS curl -s --noproxy '*' -o /dev/null -w '%{http_code}' $BURL)\" = 401 ] && [ \"\$($AS curl -s --noproxy '*' -o /dev/null -w '%{http_code}' -H 'Authorization: Bearer nope' $BURL)\" = 401 ]"
+c403=$(docker exec "$STUB2" curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $BROKER_TOKEN" "$BURL")
+[ "$c403" = 403 ] && ok "broker: a caller outside BROKER_ALLOWED_SOURCES is refused (403) even with the right token" || bad "broker source check (got $c403)"
+check "agent uid reaches the broker address and port only" "! $AS timeout 6 bash -c '</dev/tcp/$BROKERIP/22' && ! $AS timeout 6 bash -c '</dev/tcp/$STUB2IP/$BPORT'"
+check "boto3 default chain in the agent's venv resolves credentials through credential_process (as the agent uid)" "$AS env AWS_CONFIG_FILE=/etc/studio-agent/aws-config AWS_EC2_METADATA_DISABLED=true STUDIO_BROKER_URL=$BURL STUDIO_BROKER_TOKEN=$BROKER_TOKEN /opt/studio-agent/current/venv/bin/python -c 'import boto3; c=boto3.Session().get_credentials().get_frozen_credentials(); assert c.access_key==\"ASIASTUBKEY\" and c.token==\"stub-session-token\"'"
+check "the host has no GCP key, no GCP variable, no googleapis allowlist entry, no Vertex setting" '! find /etc /opt -name "gcp-sa.json" 2>/dev/null | grep -q . && ! grep -rIl "googleapis" /etc/studio-proxy /etc/studio-agent /etc/systemd/system 2>/dev/null | grep -q . && ! grep -Eq "GCP_|VERTEX|GOOGLE|AWS_ROLE_ARN" /etc/studio-agent/env'
+
 echo "--- sandbox probes: probe unit = copy of the live unit, ExecStart swapped (N1 + relay/proxy reach + M4)"
 xi 'cat >/usr/local/share/probe.py' <<'PROBE'
 import os, socket, subprocess, sys, urllib.request, urllib.error
-ip = sys.argv[1]
+ip, bip, bport = sys.argv[1], sys.argv[2], int(sys.argv[3])
 def t(name, fn):
     try:
         fn(); print(name, "ok", flush=True)
@@ -258,8 +323,18 @@ t("relay_6432", lambda: loop(6432))
 t("proxy_8888", lambda: loop(8888))
 t("loopback_other", lambda: loop(7777))
 t("bedrock_via_proxy", bedrock)
+t("broker_tcp", lambda: socket.create_connection((bip, bport), 5).close())
+t("broker_other_port", lambda: socket.create_connection((bip, 22), 5).close())
+def helper():
+    r = subprocess.run(["/usr/local/bin/studio-aws-creds"], capture_output=True, text=True, timeout=20)
+    assert "ASIASTUBKEY" in r.stdout
+t("helper", helper)
+def boto():
+    import boto3
+    assert boto3.Session().get_credentials().get_frozen_credentials().access_key == "ASIASTUBKEY"
+t("boto3_credential_process", boto)
 PROBE
-x "cd /etc/systemd/system && sed -e 's#^ExecStart=.*#ExecStart=/usr/bin/python3 /usr/local/share/probe.py $NEONIP#' -e 's#^Restart=.*#Restart=no#' -e '/^Type=/d' -e '/^BindsTo=/d' -e '/^PartOf=/d' -e '/^\[Install\]/,\$d' studio-agent.service >studio-probe.service
+x "cd /etc/systemd/system && sed -e 's#^ExecStart=.*#ExecStart=/opt/studio-agent/current/venv/bin/python /usr/local/share/probe.py $NEONIP $BROKERIP $BPORT#' -e 's#^Restart=.*#Restart=no#' -e '/^Type=/d' -e '/^BindsTo=/d' -e '/^PartOf=/d' -e '/^\[Install\]/,\$d' studio-agent.service >studio-probe.service
   sed -i 's#^\[Service\]#[Service]\nType=oneshot#' studio-probe.service; mkdir -p studio-probe.service.d; cp /etc/systemd/system.control/studio-agent.service.d/*.conf studio-probe.service.d/ 2>/dev/null
   sed -e 's#^RestrictAddressFamilies=.*#RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX#' -e '/^InaccessiblePaths=/d' studio-probe.service >studio-probectl.service; mkdir -p studio-probectl.service.d; cp studio-probe.service.d/* studio-probectl.service.d/ 2>/dev/null
   systemctl daemon-reload; systemctl start studio-probe.service; systemctl start studio-probectl.service; true"
@@ -271,6 +346,10 @@ for k in getaddrinfo af_unix_socket varlink_connect dbus_stat resolved_dir_stat 
 done
 pv setaffinity | grep -q 'blocked:PermissionError' && ok "M4: filtered syscall returns EPERM (no SIGSYS kill)" || { bad "M4 EPERM"; pv setaffinity; }
 pv neon_5432 | grep -q 'blocked' && ok "sandbox: the agent cannot reach the Neon address at all" || { bad "neon :5432 blocked for the agent"; pv neon_5432; }
+pv broker_tcp | grep -q ' ok' && ok "sandbox: the broker address:port is reachable" || { bad "broker reachable"; pv broker_tcp; }
+pv broker_other_port | grep -q 'blocked' && ok "sandbox: other ports on the broker host are not" || { bad "broker other port blocked"; pv broker_other_port; }
+pv helper | grep -q ' ok' && ok "sandbox: credential helper works under the unit's hardening (proxy env set, helper bypasses it)" || { bad "helper in sandbox"; pv helper; }
+pv boto3_credential_process | grep -q ' ok' && ok "sandbox: boto3 default chain resolves broker credentials" || { bad "boto3 in sandbox"; pv boto3_credential_process; }
 pv relay_6432 | grep -q ' ok' && ok "sandbox: relay 127.0.0.1:6432 reachable" || { bad "relay reachable"; pv relay_6432; }
 pv proxy_8888 | grep -q ' ok' && ok "sandbox: proxy 127.0.0.1:8888 reachable" || { bad "proxy reachable"; pv proxy_8888; }
 pv loopback_other | grep -q 'blocked' && ok "sandbox: other loopback ports blocked" || { bad "other loopback blocked"; pv loopback_other; }
@@ -298,6 +377,11 @@ start_dns
 check "once Neon resolves (retry loop) the relay and the agent come up on their own" "for i in \$(seq 60); do systemctl is-active --quiet studio-pgrelay && systemctl is-active --quiet studio-agent && exit 0; sleep 2; done; exit 1"
 check "agent healthy after the boot-time retry" "$HEALTH"
 
+echo "--- m1: --stop is an operator stop the refresh respects"
+check "--stop stops the agent and the relay and sets the flag" '/root/asus/install-studio-agent.sh --stop && ! systemctl is-active --quiet studio-agent && ! systemctl is-active --quiet studio-pgrelay && [ -e /run/studio-agent/operator-stop ]'
+check "a refresh (script and timer service) does not bring them back" '/usr/local/sbin/studio-agent-egress-refresh >/dev/null; systemctl start studio-agent-egress-refresh.service; sleep 5; ! systemctl is-active --quiet studio-agent && ! systemctl is-active --quiet studio-pgrelay'
+check "an install clears the flag and brings relay and agent back" "$(inst rel1) && [ ! -e /run/studio-agent/operator-stop ] && systemctl is-active --quiet studio-agent && systemctl is-active --quiet studio-pgrelay && $HEALTH"
+
 echo "--- upgrade, bad/slow release revert"
 check "upgrade installs release 2" "$(inst rel2) && [ \"\$(readlink /opt/studio-agent/current)\" = /opt/studio-agent/releases/${SHA_rel2:0:12} ] && [ \"\$(readlink /opt/studio-agent/previous)\" = /opt/studio-agent/releases/${SHA_rel1:0:12} ] && systemctl is-active --quiet studio-agent"
 check "agent runs from release 2" "pgrep -af uvicorn | grep -q '/opt/studio-agent/current/venv' && test -f /opt/studio-agent/current/app/studio/apps/agent/RELEASE"
@@ -322,6 +406,7 @@ x "printf %s $CAN | $PSC" >"$WORK/psc.out" 2>&1; rc=$?
 grep -q 'rotated.log.2.gz' "$WORK/psc.out" && ok "finds canary in .gz" || bad "finds canary in .gz"
 grep -q 'rotated.log.3.xz' "$WORK/psc.out" && ok "finds canary in .xz" || bad "finds canary in .xz"
 grep -q 'rotated.log.4.zst' "$WORK/psc.out" && ok "finds canary in .zst" || bad "finds canary in .zst"
+[ "$(grep -c 'rotated.log.3.xz' "$WORK/psc.out")" = 1 ] && [ "$(grep -c 'rotated.log.4.zst' "$WORK/psc.out")" = 1 ] && ok "m5: .xz/.zst hits reported once per path" || bad "m5 duplicate hits"
 grep -q 'plain.txt' "$WORK/psc.out" && ok "finds canary in plain file" || bad "finds canary in plain file"
 grep -q 'journal hits: [1-9]' "$WORK/psc.out" && ok "finds canary in journal" || bad "finds canary in journal"
 grep -q "$CAN" "$WORK/psc.out" && bad "canary printed in output" || ok "canary never printed (hashed path)"
@@ -351,10 +436,15 @@ check "refresh service rewrites the success stamp; check clean again" "printf %s
 
 echo "--- rollback twice, purge"
 check "rollback 1" '/root/asus/install-studio-agent.sh --rollback && ! systemctl is-active --quiet studio-agent && ! systemctl is-enabled --quiet studio-agent'
+check "m2: rollback also stopped and disabled the relay (pool dropped)" '! systemctl is-active --quiet studio-pgrelay && ! systemctl is-enabled --quiet studio-pgrelay && ! ss -tn | grep -q ":6432 "'
+check "m2: a refresh does not restart agent or relay after rollback" 'systemctl start studio-agent-egress-refresh.service; sleep 4; ! systemctl is-active --quiet studio-pgrelay && ! systemctl is-active --quiet studio-agent'
 check "rollback 2 (idempotent)" '/root/asus/install-studio-agent.sh --rollback'
 check "funnel off after rollback (stub)" '! tailscale serve status --json | grep -q "/agent"'
 x 'tailscale funnel --bg --set-path /agent http://127.0.0.1:8123/agent'
-check "purge-secrets removes env, key and Neon credentials, and turns Funnel off" '/root/asus/install-studio-agent.sh --purge-secrets; [ ! -e /etc/studio-agent/env ] && [ ! -e /etc/studio-agent/gcp-sa.json ] && [ ! -e /etc/studio-pgrelay/neon.env ] && [ ! -e /etc/studio-pgrelay/local.env ] && ! tailscale serve status --json | grep -q "/agent"'
+check "purge-secrets removes env, Neon credentials and aws-config, and turns Funnel off" '/root/asus/install-studio-agent.sh --purge-secrets; [ ! -e /etc/studio-agent/env ] && [ ! -e /etc/studio-agent/aws-config ] && [ ! -e /etc/studio-pgrelay/neon.env ] && [ ! -e /etc/studio-pgrelay/local.env ] && ! tailscale serve status --json | grep -q "/agent"'
+check "m2: after purge the relay stays disabled and the refresh does not retry it" 'systemctl start studio-agent-egress-refresh.service; sleep 4; ! systemctl is-active --quiet studio-pgrelay && ! systemctl is-enabled --quiet studio-pgrelay && ! systemctl is-active --quiet studio-agent'
+x "printf %s NOHITCANARY-1234567 | $PSC" >"$WORK/psc.out" 2>&1; rc=$?
+[ "$rc" = 0 ] && grep -q 'PURGED' "$WORK/psc.out" && ok "m5: post-session-check after purge reports PURGED (exit 0)" || { bad "post-session after purge (rc=$rc)"; tail -5 "$WORK/psc.out"; }
 
 echo; [ "$fail" = 0 ] && echo "ALL CONTAINER CHECKS PASSED" || echo "SOME CONTAINER CHECKS FAILED"
 exit $fail

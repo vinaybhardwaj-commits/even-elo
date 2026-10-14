@@ -1,55 +1,71 @@
-# ops/asus: Studio agent on the Asus (OPS-PLAN-M0S2.md O2, R2-R5 rulings)
+# ops/asus: Studio agent on the Asus (OPS-PLAN-M0S2.md O2, R2-R6 rulings)
 
-Needs **NOPASSWD sudo** on the Asus (the key is piped over ssh stdin, so there is no tty for a password).
+Needs **NOPASSWD sudo** on the Asus (secrets are piped over ssh stdin, so there is no tty for a password).
 Prereqs: `apt install squid-openssl pgbouncer nftables python3 curl openssl bind9-dnsutils`, `uv`, Tailscale with Funnel enabled for the node (the installer preflights this).
 The stock `squid` and `pgbouncer` units are disabled and masked by the installer; the studio units use their own configs.
 
 ## Design (every connection the agent can make goes to a destination we name)
 ```
-studio-agent (uid studio-agent) --127.0.0.1:8888--> studio-proxy (squid, uid proxy)  --TLS tunnel--> allowlisted hosts only
+studio-agent (uid studio-agent) --127.0.0.1:8888--> studio-proxy (squid, uid proxy)  --blind TLS tunnel--> bedrock-runtime.ap-south-1, api.typesafe.ai
                                 --127.0.0.1:6432--> studio-pgrelay (pgbouncer, uid studio-pgrelay) --TLS verify-full--> the pinned Neon endpoint
+                                --tailnet IP:port--> credential broker on t4 (ops/t4-broker) --> short-lived, Bedrock-only AWS credentials
 ```
-- **Web egress (squid).** `CONNECT` to `:443` only; everything else (plain HTTP, other ports, IP literals) is denied. `ssl_bump peek` reads the TLS ClientHello and
-  `splice`s (blind tunnel) only when the **server name (SNI)** matches the exact-host allowlist (`/etc/studio-proxy/hosts.regex`); otherwise the connection is terminated.
-  There is no bump action: nothing is decrypted and no CA is trusted anywhere. Squid insists on a certificate when `ssl-bump` is on, so the installer generates a throwaway
-  `splice-only.pem` (0640 root:proxy) that signs nothing. No disk cache; the access log (journal, tag `squid`) carries only status, method, host:port and SNI.
+- **Web egress (squid).** Exactly two names: `bedrock-runtime.ap-south-1.amazonaws.com` and `api.typesafe.ai` (`/etc/studio-proxy/hosts.txt`, one exact name per line).
+  `CONNECT` to `:443` only; plain HTTP, other ports and **IP-literal targets (v4 and v6) are denied first** and with a plain TCP reset (no `200`, no handshake with the proxy's
+  throwaway certificate). Matching never uses reverse DNS (`dstdomain -n`): a spoofed PTR cannot turn an IP into an allowlisted name. `ssl_bump peek` reads the TLS ClientHello and
+  `splice`s (blind tunnel) only when the **server name (SNI)** is in the same list; otherwise the connection is terminated. There is no bump action: nothing is decrypted and no
+  CA is trusted anywhere. Squid insists on a certificate when `ssl-bump` is on, so the installer generates a throwaway `splice-only.pem` (0640 root:proxy) that signs nothing.
+  No disk cache; the access log (journal, tag `squid`) carries only status, method, host:port and SNI.
+- **No Google on this host.** There is no `*.googleapis.com` (or STS) name on the allowlist: Google front ends route on the HTTP `Host` header whatever the SNI says, so an
+  SNI allowlist cannot contain them. The GCP key and the GCP -> AWS federation live on t4 (`ops/t4-broker/README.md`). The agent gets AWS credentials through botocore's
+  `credential_process` (`/usr/local/bin/studio-aws-creds`, configured in `/etc/studio-agent/aws-config`) from the broker over the tailnet: credentials with a session policy that
+  allows `bedrock:InvokeModel*` on the two pinned model ids only. `BEDROCK_AUTH=default-chain`. **Vertex is off on this host** (`VERTEX_*` is not set; the fallback is disabled).
 - **Neon relay (pgbouncer).** The agent's database URLs point at `127.0.0.1:6432` with local passwords (`/etc/studio-pgrelay/local.env`); the agent holds no Neon host, address
   or credential. The relay connects to Neon with `server_tls_sslmode = verify-full` against the system CA; pgbouncer sends the Neon hostname as SNI and the password is sent in
   the Neon `endpoint=<endpoint-id>$<password>` form, so the endpoint is pinned both ways. The real Neon URLs live only in `/etc/studio-pgrelay/neon.env` (0600 root);
   the relay's config is rendered from it into `/run/studio-pgrelay` (tmpfs, 0600) at start/reload. The relay has no DNS: its unit bind-mounts a private hosts file with the pinned
-  addresses over `/etc/hosts`. Pool mode is `session`; the admin console is closed.
-- **nftables.** uid `studio-agent` may reach only `127.0.0.1:8888` and `127.0.0.1:6432`; only uid `studio-pgrelay` may reach the pinned Neon IPs, on `:5432`. Everything else from
-  those two uids is logged and dropped. `IPAddressDeny=any` on both units is an independent second layer (agent: `127.0.0.1/32`; relay: `127.0.0.1/32` + the pins).
+  IPv4/IPv6 addresses over `/etc/hosts`. Pool mode is `session`; the admin console is closed.
+- **nftables.** uid `studio-agent` may reach only `127.0.0.1:8888`, `127.0.0.1:6432` and the broker's `IP:port`; only uid `studio-pgrelay` may reach the pinned Neon IPs, on `:5432`.
+  Everything else from those two uids is logged and dropped. `IPAddressDeny=any` on both units is an independent second layer (agent: `127.0.0.1/32` + the broker; relay: `127.0.0.1/32` + the pins).
 - **Pins.** `studio-agent-egress-refresh.sh` (run by `studio-agent-nft.service` and a 5-minute timer, serialised with flock) resolves the `--neon-host` names at the upstream
-  resolver (`resolvectl query --cache=no --synthesize=no`, else `dig @upstream`), rewrites the nft table, the relay's `IPAddressAllow=` and hosts file, and writes
-  `/run/studio-agent/neon-pins.json`; the relay is reloaded only when the pins changed. At boot it retries every 15 s until Neon resolves, then starts the relay and the agent.
-  `/etc/hosts` is never edited.
-- **Guard.** `studio-agent-egress-guard.timer` (15 s) stops the agent if the nft table or the proxy is gone; the agent unit Requires the nft unit and the relay, BindsTo the proxy,
+  resolver (`resolvectl query --cache=no --synthesize=no`, else `dig @upstream`), rewrites the nft table and the relay's `IPAddressAllow=`, replaces the relay's hosts file
+  (temp file + rename) and writes `/run/studio-agent/neon-pins.json`. A bind mount follows the inode, so when the pins changed the **relay is restarted** to pick the new
+  file up (the agent only `Wants` the relay and is not restarted). `/etc/hosts` is never edited. At boot it retries every 15 s until Neon resolves, then starts the relay and the agent.
+- **Guard.** `studio-agent-egress-guard.timer` (15 s) stops the agent if the nft table or the proxy is gone; the agent unit Requires the nft unit, BindsTo the proxy,
   and refuses to start without the nft table.
 
+## Incident stop
+- `--stop`: stops the agent and the relay and drops `/run/studio-agent/operator-stop`; the egress refresh will **not** bring them back while that flag exists. An install clears it
+  (and so does a reboot, which also restarts enabled units).
+- `--rollback`: stops **and disables** the agent and the relay (pool dropped), funnel off. Safe to repeat. A plain `systemctl stop` is *not* an incident stop: the next refresh
+  tick restarts an enabled unit.
+- `--purge-secrets`: as `--rollback`, then shreds env, `aws-config`, `neon.env`, `local.env`. The relay stays disabled and is not retried.
+
 ## Files and commands
-- `install-studio-agent.sh`: idempotent install/upgrade. `--tarball PATH --sha256 HEX --neon-host H` (repeat `--neon-host` for every Neon host in the two URLs).
+- `install-studio-agent.sh`: idempotent install/upgrade. `--tarball PATH --sha256 HEX --neon-host H [--neon-host H2 ...] --broker TAILNET_IP:PORT`.
   Tarball = `git archive <commit> studio/apps/agent` made by gov-orch, copied over ssh. No git credentials on the Asus.
-  - Fill `/etc/studio-pgrelay/neon.env` (`GOV_NEON_URL`, `STUDIO_NEON_URL`: `postgres://user:password@host/db?sslmode=require`) and `/etc/studio-agent/env` by hand, file-to-file.
-    The installer writes the agent's two database URLs itself.
+  - Fill `/etc/studio-pgrelay/neon.env` (`GOV_NEON_URL`, `STUDIO_NEON_URL`: `postgres://user:password@host/db?sslmode=require`) and the other empty values in
+    `/etc/studio-agent/env` by hand, file-to-file. The installer writes the agent's two database URLs and `STUDIO_BROKER_URL` itself.
+  - `--receive-broker-token`: `ssh t4 'sudo sed -n s/^BROKER_TOKEN=//p /etc/studio-broker/env' | ssh asus 'sudo ./install-studio-agent.sh --receive-broker-token'`
+    (stdin only; never in argv).
+  - **Migration from R5**: the installer shreds `/etc/studio-agent/gcp-sa.json` and removes `GCP_*`, `GOOGLE_*`, `AWS_ROLE_ARN`, `VERTEX_*` from the env file.
   - Each release is built as root (`uv sync --frozen`) in `/opt/studio-agent/releases/<sha12>`; `current` is swapped atomically only after the build succeeds.
   - Health = `GET 127.0.0.1:8123/agent/health` answering `401 bad_service_token` for 30 s with the unit's restart counter unchanged. On failure `current` goes back to the old
     release, the failed release is deleted and `previous` still points at the release before it.
   - Units restart only when their rendered config changed; an unchanged install restarts nothing. `reset-failed` runs before restarts.
-  - The agent and relay are enabled and started only when the env, the key and `neon.env` are complete. `VERTEX_MODEL` is optional (warning if unset).
+  - The agent and relay are enabled and started only when the env, `neon.env` and the broker token are complete.
   - `--dry-run [--render-dir DIR]` makes the same decisions, prints actions, and runs `nft -c` and `squid -k parse`.
-- `--receive-gcp-key`: `ssh t4 'cat KEY.json' | ssh asus 'sudo ./install-studio-agent.sh --receive-gcp-key'`.
-- `--rollback`: disable and stop the agent first, then funnel off (each step tolerant, safe to repeat). Env, key, relay and egress rules stay.
-- `--purge-secrets`: stop the agent and the relay, funnel off, shred env, key, `neon.env` and `local.env`.
-- `post-session-check.sh`: canary grep over /var, /tmp, /run and /opt/studio-agent (plain, .gz, .xz, .zst, file names) and the journal, plus egress-refresh age and log level.
-  Exit 0 clean, 1 hit/violation, 3 inconclusive. Prints hashed paths only.
-- Tests: `test-asus-ops.sh` (offline, no root) and `test-asus-container.sh` (docker; privileged ubuntu:24.04 systemd container, two fake Neon endpoints (PostgreSQL + TLS), `tailscale` stub).
+- `post-session-check.sh`: canary grep over /var, /tmp, /run and /opt/studio-agent (plain, .gz, .xz, .zst, file names; each path once) and the journal, plus egress-refresh age and
+  log level. Exit 0 clean (`PURGED` label after `--purge-secrets`), 1 hit/violation, 3 inconclusive. Prints hashed paths only.
+- Tests: `test-asus-ops.sh` (offline, no root; also runs the t4 broker's unit tests) and `test-asus-container.sh` (docker; privileged ubuntu:24.04 systemd container, two fake Neon
+  endpoints (PostgreSQL + TLS), an IPv6-only one, a broker stub running the real broker code, `tailscale` stub).
 
-## Limits worth knowing
-- Destination names are enforced at the TLS server-name level (SNI). A client that sends an allowed SNI to an allowed address reaches that provider; domain fronting
-  *within* an allowed provider depends on that provider's own blocking. The earlier residual risk (a tunnel to an allowed name carrying a different SNI, and the Neon IP
-  carve-out admitting any tenant) is closed by design: a wrong SNI is terminated, and only the relay, which cannot be redirected, talks to Neon.
-- Neon's acceptance of the `endpoint=<id>$<password>` password form (and of the pooled `-pooler` host with it) is not testable offline; the container uses PostgreSQL stubs that
-  take the same form. Verify once on the O1 run.
-- Local relay passwords are per database (`agent_gov`, `agent_studio`) but pgbouncer does not bind a user to a database, so the agent could use either to open either database by
-  design (it holds both).
+## Limits worth knowing (residual risk, for fable)
+- **ECH.** Squid sees only the outer SNI. A client that puts an allowed name as outer SNI and a different *inner* name in an Encrypted ClientHello would be spliced, and a CDN that
+  supports ECH (Cloudflare fronts `api.typesafe.ai`) would route on the inner name. It needs code execution in the agent plus a hand-built ECH ClientHello; the agent has no DNS,
+  so it cannot fetch ECH configs from the HTTPS record, and the allowlisted names are not under our control either way. Not closed by this design.
+- **Domain fronting inside an allowed provider** depends on that provider's own blocking (Cloudflare refuses the Host/SNI mismatch for `api.typesafe.ai`; to be re-tested on
+  `bedrock-runtime.ap-south-1` by the refuter). That is why no Google name is allowed.
+- Neon's acceptance of the `endpoint=<id>$<password>` password form (also on `-pooler` hosts) and Bedrock's acceptance of the broker's session-policy ARNs are not testable offline;
+  the container uses PostgreSQL stubs and a policy evaluator. Verify once on the O1 run / the live check.
+- pgbouncer cannot bind a local user to one database, so the agent can open either database with either local password, by design (it holds both).

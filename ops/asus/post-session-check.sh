@@ -7,7 +7,7 @@
 #
 #   printf '%s' "$CANARY" | sudo ./post-session-check.sh [--dry-run]
 # Also checks: egress-refresh last success <= 15 min old, and STUDIO_LOG_LEVEL is INFO or higher (env file and running process).
-# Exit: 0 clean, 1 hit(s) or log-level violation, 2 usage, 3 INCONCLUSIVE (unreadable path, journalctl failure,
+# Exit: 0 clean (or PURGED: secrets were purged, nothing found), 1 hit(s) or log-level violation, 2 usage, 3 INCONCLUSIVE (unreadable path, journalctl failure,
 # missing/stale egress-refresh stamp, unreadable env; nothing worse seen).
 set -uo pipefail
 
@@ -39,17 +39,23 @@ if [ -z "$canary" ] && [ ! -t 0 ]; then IFS= read -r canary || true; fi
 hits=0
 inconclusive=0
 violations=0
+purged=0
+declare -A seen   # a path is reported once, however many scanners find it
 errfile=$(mktemp)
 finderr=$(mktemp)
 trap 'rm -f "$errfile" "$finderr"' EXIT
 
 report_hit() { # $1 = path
+  [ -z "${seen[$1]:-}" ] || return 0
+  seen[$1]=1
   local h
   h=$(printf '%s' "$1" | sha256sum | cut -c1-16)
   if [[ $1 == *"$canary"* ]]; then echo "HIT path-sha256:$h"; else echo "HIT path-sha256:$h  $1"; fi
   hits=$((hits + 1))
 }
 report_name_hit() { # $1 = path whose NAME contains the canary (content may be clean)
+  [ -z "${seen[name:$1]:-}" ] || return 0
+  seen[name:$1]=1
   echo "HIT (file name contains the canary) path-sha256:$(printf '%s' "$1" | sha256sum | cut -c1-16)"
   hits=$((hits + 1))
 }
@@ -110,6 +116,8 @@ if [ -r /etc/studio-agent/env ]; then
   lvl=$(grep -E '^STUDIO_LOG_LEVEL=' /etc/studio-agent/env | tail -1 | cut -d= -f2-)
   lvl=${lvl:-INFO}  # the app defaults to INFO
   if level_ok "$lvl"; then echo "STUDIO_LOG_LEVEL (env file): ${lvl^^}"; else echo "VIOLATION: STUDIO_LOG_LEVEL in env file is below INFO"; violations=$((violations + 1)); fi
+elif [ ! -e /etc/studio-agent/env ] && [ ! -e /etc/studio-pgrelay/neon.env ]; then
+  echo "PURGED: no agent env and no Neon credentials on this host (--purge-secrets ran); log-level check skipped"; purged=1
 else
   echo "INCONCLUSIVE: /etc/studio-agent/env unreadable"; inconclusive=1
 fi
@@ -128,4 +136,5 @@ fi
 echo "total hits: $hits, violations: $violations"
 [ "$hits" -eq 0 ] && [ "$violations" -eq 0 ] || exit 1
 [ "$inconclusive" -eq 0 ] || { echo "result: INCONCLUSIVE"; exit 3; }
+[ "$purged" -eq 0 ] || { echo "result: PURGED (clean)"; exit 0; }
 exit 0

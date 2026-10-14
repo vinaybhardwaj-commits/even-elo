@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# Install / upgrade the Studio agent on the Asus (Ubuntu, tailnet). Spec: OPS-PLAN-M0S2.md O2 (+R2..R5 rulings).
+# Install / upgrade the Studio agent on the Asus (Ubuntu, tailnet). Spec: OPS-PLAN-M0S2.md O2 (+R2..R6 rulings).
 # Idempotent. Prints no secret; secrets move file-to-file or via stdin only. Needs root (NOPASSWD sudo).
 #
-#   sudo ./install-studio-agent.sh --tarball PATH --sha256 HEX --neon-host H [--neon-host H2 ...] [--dry-run [--render-dir DIR]]
+#   sudo ./install-studio-agent.sh --tarball PATH --sha256 HEX --neon-host H [--neon-host H2 ...] --broker TAILNET_IP:PORT [--dry-run [--render-dir DIR]]
 #     tarball = `git archive <commit> studio/apps/agent`, made by gov-orch and copied over ssh (no git credentials here)
-#   ssh t4 'cat KEY.json' | ssh asus 'sudo ./install-studio-agent.sh --receive-gcp-key'   (needs NOPASSWD sudo: no tty)
-#   sudo ./install-studio-agent.sh --rollback        stop the agent, funnel off (keeps env, key, egress rules)
-#   sudo ./install-studio-agent.sh --purge-secrets   stop the agent, funnel off, shred env, key and Neon credentials
+#   (no GCP key lives here any more: AWS credentials come from the t4 credential broker, see ops/t4-broker)
+#   ssh t4 'sudo sed -n s/^BROKER_TOKEN=//p /etc/studio-broker/env' | ssh asus 'sudo ./install-studio-agent.sh --receive-broker-token'   (NOPASSWD sudo: no tty)
+#   sudo ./install-studio-agent.sh --stop            incident stop: stop agent and relay, hold them down until the next install (see README)
+#   sudo ./install-studio-agent.sh --rollback        stop+disable agent and relay, funnel off (keeps env and egress rules)
+#   sudo ./install-studio-agent.sh --purge-secrets   stop+disable agent and relay, funnel off, shred env and Neon credentials
 set -euo pipefail
 
 SVC=studio-agent
@@ -17,10 +19,13 @@ CURRENT=$APP_DIR/current
 AGENT_REL=studio/apps/agent
 ETC_DIR=/etc/studio-agent
 ENV_FILE=$ETC_DIR/env
-KEY_FILE=$ETC_DIR/gcp-sa.json
+OLD_KEY_FILE=$ETC_DIR/gcp-sa.json   # earlier releases kept the GCP key here; the installer shreds it
+AWS_CONFIG=$ETC_DIR/aws-config
+AWS_HELPER=/usr/local/bin/studio-aws-creds
+STOP_FLAG=/run/studio-agent/operator-stop
 PROXY_DIR=/etc/studio-proxy
 PROXY_CONF=$PROXY_DIR/squid.conf
-PROXY_HOSTS=$PROXY_DIR/hosts.regex
+PROXY_HOSTS=$PROXY_DIR/hosts.txt
 PROXY_CERT=$PROXY_DIR/splice-only.pem
 RELAY=studio-pgrelay
 RELAY_DIR=/etc/studio-pgrelay
@@ -36,21 +41,26 @@ PROXY_PORT=8888
 PORT=8123
 
 # name=default; required ones (non-empty before the service may start) are listed separately.
+# AWS credentials come from the t4 broker through credential_process (BEDROCK_AUTH=default-chain): no GCP variable, no AWS role,
+# no key file on this host. Vertex is OFF here (VERTEX_* unset).
 ENV_DEFAULTS=(
   GOV_RO_DATABASE_URL= STUDIO_DATABASE_URL= STUDIO_SERVICE_TOKEN= STUDIO_ACTOR_SECRET=
   STUDIO_LIVE_READS=0 STUDIO_RATE_PER_MIN=30 STUDIO_LOG_LEVEL=INFO
-  BEDROCK_AUTH=gcp-federation BEDROCK_REGION=ap-south-1 AWS_STS_REGIONAL_ENDPOINTS=regional AWS_ROLE_ARN= GCP_AUDIENCE=
-  "GCP_SA_KEY_FILE=$KEY_FILE"
+  BEDROCK_AUTH=default-chain BEDROCK_REGION=ap-south-1 AWS_REGION=ap-south-1 AWS_STS_REGIONAL_ENDPOINTS=regional
+  "AWS_CONFIG_FILE=$AWS_CONFIG" AWS_EC2_METADATA_DISABLED=true STUDIO_BROKER_URL= STUDIO_BROKER_TOKEN=
   BEDROCK_MODEL_SONNET=global.anthropic.claude-sonnet-5-5 BEDROCK_MODEL_HAIKU=global.anthropic.claude-haiku-5-5
-  VERTEX_LOCATION=asia-northeast1 VERTEX_MODEL= TYPESAFE_API_KEY= JEV_MODEL=jev-latest
+  TYPESAFE_API_KEY= JEV_MODEL=jev-latest
 )
-# GOV_RO_DATABASE_URL / STUDIO_DATABASE_URL are NOT operator-filled: the installer points them at the relay (127.0.0.1:6432).
+# Names an earlier release put in the env file that must not exist on this host any more (migration removes them).
+RETIRED_VARS=(GCP_SA_KEY_FILE GCP_SA_KEY_JSON GCP_AUDIENCE GOOGLE_APPLICATION_CREDENTIALS AWS_ROLE_ARN VERTEX_MODEL VERTEX_LOCATION)
+# GOV_RO_DATABASE_URL / STUDIO_DATABASE_URL are NOT operator-filled: the installer points them at the relay (127.0.0.1:6432);
+# STUDIO_BROKER_URL is derived from --broker. STUDIO_BROKER_TOKEN is the one secret copied from t4 by hand.
 REQUIRED_VARS=(
-  STUDIO_SERVICE_TOKEN STUDIO_ACTOR_SECRET
-  AWS_STS_REGIONAL_ENDPOINTS AWS_ROLE_ARN GCP_AUDIENCE BEDROCK_MODEL_SONNET BEDROCK_MODEL_HAIKU TYPESAFE_API_KEY JEV_MODEL
+  STUDIO_SERVICE_TOKEN STUDIO_ACTOR_SECRET STUDIO_BROKER_TOKEN
+  AWS_STS_REGIONAL_ENDPOINTS BEDROCK_MODEL_SONNET BEDROCK_MODEL_HAIKU TYPESAFE_API_KEY JEV_MODEL
 )
 
-DRY=0 MODE=install TARBALL="" SHA256="" NEON_HOSTS=() RENDER_DIR=""
+DRY=0 MODE=install TARBALL="" SHA256="" NEON_HOSTS=() RENDER_DIR="" BROKER=""
 
 die() { printf 'error: %s\n' "$*" >&2; exit 2; }
 say() { printf '== %s\n' "$*"; }
@@ -93,7 +103,9 @@ while [ $# -gt 0 ]; do
     --tarball) TARBALL=${2:-}; shift ;;
     --sha256) SHA256=${2:-}; shift ;;
     --neon-host) NEON_HOSTS+=("${2:-}"); shift ;;
-    --receive-gcp-key) MODE=key ;;
+    --broker) BROKER=${2:-}; shift ;;
+    --stop) MODE=stop ;;
+    --receive-broker-token) MODE=token ;;
     --rollback) MODE=rollback ;;
     --purge-secrets) MODE=purge ;;
     --print-env-template) printf '%s\n' "${ENV_DEFAULTS[@]}"; exit 0 ;;
@@ -109,43 +121,62 @@ elif [ "$(id -u)" != 0 ]; then
   die "run as root (sudo), or use --dry-run"
 fi
 
-# ---------------------------------------------------------------- rollback / purge
-if [ "$MODE" = rollback ]; then
-  say "rollback: stop and disable the agent first, then funnel off; every step tolerant"
-  run_t systemctl disable --now "$SVC.service"
-  run_t tailscale funnel --https=443 --set-path /agent off
-  echo "agent stopped. env, key, proxy and egress rules kept (use --purge-secrets to remove secrets)."
-  exit 0
-fi
-if [ "$MODE" = purge ]; then
-  say "purge-secrets: stop the agent, funnel off, shred env, key and Neon credentials"
-  run_t systemctl disable --now "$SVC.service"
-  run_t tailscale funnel --https=443 --set-path /agent off
-  run_t systemctl stop "$RELAY.service"
-  run_t shred -u "$ENV_FILE"
-  run_t shred -u "$KEY_FILE"
-  run_t shred -u "$NEON_ENV"
-  run_t shred -u "$LOCAL_ENV"
+# ---------------------------------------------------------------- broker token via stdin
+if [ "$MODE" = token ]; then
+  say "receive the broker token on stdin -> STUDIO_BROKER_TOKEN in $ENV_FILE (never echoed, never in argv)"
+  if [ "$DRY" = 1 ]; then echo "+ read one line from stdin (32+ alphanumerics); rewrite the STUDIO_BROKER_TOKEN line of $ENV_FILE in place"; exit 0; fi
+  [ -f "$ENV_FILE" ] || die "$ENV_FILE missing; run the installer first"
+  python3 -c '
+import os, re, sys
+env = sys.argv[1]
+tok = sys.stdin.readline().strip()
+if not re.fullmatch(r"[A-Za-z0-9]{32,128}", tok):
+    sys.exit("stdin did not look like a broker token")
+lines = open(env).read().splitlines()
+out, done = [], False
+for l in lines:
+    if l.startswith("STUDIO_BROKER_TOKEN="):
+        l, done = "STUDIO_BROKER_TOKEN=" + tok, True
+    out.append(l)
+if not done:
+    out.append("STUDIO_BROKER_TOKEN=" + tok)
+tmp = env + ".new"
+with open(tmp, "w") as f:
+    f.write("\n".join(out) + "\n")
+st = os.stat(env)
+os.chmod(tmp, 0o600); os.chown(tmp, st.st_uid, st.st_gid); os.rename(tmp, env)
+' "$ENV_FILE" || die "token not installed"
+  say "token installed; rerun the installer to start the agent"
   exit 0
 fi
 
-# ---------------------------------------------------------------- GCP key via stdin
-if [ "$MODE" = key ]; then
-  say "receive GCP SA key on stdin -> $KEY_FILE (0600 $SVC), never echoed"
-  if [ "$DRY" = 1 ]; then
-    echo "+ umask 077; cat > $ETC_DIR/.gcp-sa.json.new  (stdin; non-empty, must contain a service_account type)"
-    echo "+ chown $SVC:$SVC; chmod 0600; mv -f to $KEY_FILE"
-    exit 0
-  fi
-  [ -d "$ETC_DIR" ] || die "$ETC_DIR missing; run the installer first"
-  umask 077
-  tmp=$ETC_DIR/.gcp-sa.json.new
-  cat >"$tmp"
-  if [ ! -s "$tmp" ] || ! grep -q '"type"[[:space:]]*:[[:space:]]*"service_account"' "$tmp"; then
-    rm -f "$tmp"; die "stdin did not look like a service account key"
-  fi
-  chown "$SVC:$SVC" "$tmp"; chmod 0600 "$tmp"; mv -f "$tmp" "$KEY_FILE"
-  say "key installed ($(stat -c '%a %U' "$KEY_FILE")); rerun the installer to start the agent"
+# ---------------------------------------------------------------- stop / rollback / purge
+if [ "$MODE" = stop ]; then
+  say "stop: hold the agent and the relay down (flag $STOP_FLAG); an install clears it, a reboot clears it"
+  if [ "$DRY" = 1 ]; then echo "+ touch $STOP_FLAG"; else install -d -o root -g "$SVC" -m 0750 "$(dirname "$STOP_FLAG")" 2>/dev/null || true; touch "$STOP_FLAG"; fi
+  run_t systemctl stop "$SVC.service"
+  run_t systemctl stop "$RELAY.service"
+  echo "agent and relay stopped; the egress refresh will not restart them while the flag exists. (--rollback also disables them.)"
+  exit 0
+fi
+if [ "$MODE" = rollback ]; then
+  say "rollback: stop and disable the agent first, then the relay (drops its pool), then funnel off; every step tolerant"
+  run_t systemctl disable --now "$SVC.service"
+  run_t systemctl disable --now "$RELAY.service"
+  run_t tailscale funnel --https=443 --set-path /agent off
+  echo "agent and relay stopped and disabled. env, Neon credentials, proxy and egress rules kept (use --purge-secrets to remove secrets)."
+  exit 0
+fi
+if [ "$MODE" = purge ]; then
+  say "purge-secrets: stop+disable agent and relay (they stay disabled), funnel off, shred env and Neon credentials"
+  run_t systemctl disable --now "$SVC.service"
+  run_t systemctl disable --now "$RELAY.service"
+  run_t tailscale funnel --https=443 --set-path /agent off
+  run_t shred -u "$ENV_FILE"
+  run_t shred -u "$OLD_KEY_FILE"
+  run_t shred -u "$AWS_CONFIG"
+  run_t shred -u "$NEON_ENV"
+  run_t shred -u "$LOCAL_ENV"
   exit 0
 fi
 
@@ -154,6 +185,12 @@ fi
 [[ $SHA256 =~ ^[0-9a-f]{64}$ ]] || die "--sha256 must be the 64-hex digest of the tarball (pin)"
 [ ${#NEON_HOSTS[@]} -gt 0 ] || die "--neon-host required (repeat for each Neon host in the two database URLs)"
 for h in "${NEON_HOSTS[@]}"; do [[ $h =~ ^[A-Za-z0-9.-]+$ ]] || die "bad --neon-host: $h"; done
+[[ $BROKER =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}:[0-9]{1,5}$ ]] || die "--broker must be TAILNET_IPV4:PORT (the t4 credential broker)"
+BROKER_IP=${BROKER%:*}
+python3 - "$BROKER_IP" <<'PY' || die "--broker $BROKER_IP is not a tailnet address (100.64.0.0/10)"
+import ipaddress, sys
+sys.exit(0 if ipaddress.ip_address(sys.argv[1]) in ipaddress.ip_network("100.64.0.0/10") else 1)
+PY
 if [ -f "$TARBALL" ]; then
   echo "$SHA256  $TARBALL" | sha256sum -c --quiet - || die "tarball sha256 mismatch"
 elif [ "$DRY" = 1 ]; then
@@ -177,7 +214,8 @@ render_agent_unit() {
   cat <<EOT
 [Unit]
 Description=Even Studio agent (FastAPI, 127.0.0.1:$PORT)
-Requires=studio-agent-nft.service studio-pgrelay.service
+Requires=studio-agent-nft.service
+Wants=studio-pgrelay.service
 BindsTo=studio-proxy.service
 PartOf=studio-agent-nft.service
 After=network-online.target studio-agent-nft.service studio-proxy.service studio-pgrelay.service
@@ -229,11 +267,11 @@ ProtectKernelLogs=yes
 ProtectControlGroups=yes
 ProtectClock=yes
 ProtectHostname=yes
-# network: second egress layer independent of nftables. The agent talks to loopback only (squid :8888, relay :6432);
-# it holds no Neon address and no Neon credential.
+# network: second egress layer independent of nftables. The agent talks to loopback only (squid :8888, relay :6432) and to the
+# t4 credential broker on the tailnet; it holds no Neon address, no Neon credential and no GCP key.
 RestrictAddressFamilies=AF_INET AF_INET6
 IPAddressDeny=any
-IPAddressAllow=127.0.0.1/32
+IPAddressAllow=127.0.0.1/32 $BROKER_IP/32
 # no DNS by any route: resolved (varlink/D-Bus), nscd, avahi and tailscale sockets are invisible to the agent
 InaccessiblePaths=-/run/systemd/resolve -/run/dbus -/run/nscd -/run/tailscale -/run/avahi-daemon -/var/run/dbus
 # ids-only logging is enforced by the app's log filter (src/studio_logging.py); the access log is off.
@@ -295,20 +333,29 @@ EOT
 
 render_proxy_conf() {
   cat <<EOT
-# CONNECT to :443 only. ssl_bump peeks at the TLS ClientHello and splices (blind tunnel) only when the server name
-# (SNI) is in the allowlist; everything else is terminated. There is no bump action, so nothing is ever decrypted.
-# The certificate below is a throwaway that Squid insists on when ssl-bump is enabled; no client trusts it and it
-# signs nothing.
+# CONNECT to :443 only, to exactly the names in $PROXY_HOSTS. ssl_bump peeks at the TLS ClientHello and splices (blind
+# tunnel) only when the server name (SNI) is in the same list; everything else is terminated. There is no bump action,
+# so nothing is decrypted. The certificate below is a throwaway that Squid insists on when ssl-bump is enabled; no client
+# trusts it, it signs nothing, and a denied client is reset before any handshake (deny_info TCP_RESET).
+# Exact names only, never a reverse lookup: "-n" on dstdomain, and IP-literal targets (v4 and v6) are denied first.
 http_port 127.0.0.1:$PROXY_PORT ssl-bump tls-cert=$PROXY_CERT generate-host-certificates=off
-acl allowed_dst dstdom_regex -i "$PROXY_HOSTS"
-acl allowed_sni ssl::server_name_regex -i "$PROXY_HOSTS"
+acl ip_literal url_regex -i ^([0-9]{1,3}\\.){3}[0-9]{1,3}(:[0-9]+)?\$
+acl ip_literal url_regex -i ^\\[
+acl ip_literal url_regex -i ^[0-9a-f]*:[0-9a-f]*:[0-9a-f:.]*\$
+acl allowed_dst dstdomain -n "$PROXY_HOSTS"
+acl allowed_sni ssl::server_name "$PROXY_HOSTS"
 acl step1 at_step SslBump1
 acl SSL_ports port 443
 acl CONNECT method CONNECT
+http_access deny ip_literal
 http_access deny !CONNECT
 http_access deny !SSL_ports
 http_access allow CONNECT allowed_dst
 http_access deny all
+deny_info TCP_RESET ip_literal
+deny_info TCP_RESET CONNECT
+deny_info TCP_RESET SSL_ports
+deny_info TCP_RESET all
 ssl_bump peek step1
 ssl_bump splice allowed_sni
 ssl_bump terminate all
@@ -327,18 +374,12 @@ EOT
 }
 
 render_proxy_hosts() {
-  # one anchored regex per destination, used for both the CONNECT target (no reverse DNS, so IP literals never match)
-  # and the TLS server name
+  # exact host names, one per line (no leading dot = no subdomains). No *.googleapis.com: Google front ends route on the
+  # HTTP Host header regardless of SNI, so an allowed Google name would reach every Google service. GCP federation lives
+  # on the t4 broker. No STS either: the broker hands over ready-made credentials.
   cat <<'EOT'
-^sts\.amazonaws\.com$
-^sts\.ap-south-1\.amazonaws\.com$
-^bedrock-runtime\.ap-south-1\.amazonaws\.com$
-^api\.typesafe\.ai$
-^oauth2\.googleapis\.com$
-^iamcredentials\.googleapis\.com$
-^sts\.googleapis\.com$
-^aiplatform\.googleapis\.com$
-^[a-z0-9-]+-aiplatform\.googleapis\.com$
+bedrock-runtime.ap-south-1.amazonaws.com
+api.typesafe.ai
 EOT
 }
 
@@ -507,8 +548,12 @@ write_file "$PROXY_CONF" 0640 root:proxy < <(render_proxy_conf); note_change pro
 write_file "$PROXY_HOSTS" 0640 root:proxy < <(render_proxy_hosts); note_change proxy
 write_file "$UNIT_DIR/studio-proxy.service" 0644 root:root < <(render_proxy_unit); note_change proxy
 write_file "$UNIT_DIR/$RELAY.service" 0644 root:root < <(render_relay_unit); note_change relay
+# AWS credentials for the agent: credential_process -> the t4 broker (no GCP key, no STS, no googleapis on this host)
+if [ "$DRY" = 1 ]; then echo "+ install -m 0755 -o root -g root $HERE/studio-aws-creds.py $AWS_HELPER"
+else install -m 0755 -o root -g root "$HERE/studio-aws-creds.py" "$AWS_HELPER"; fi
+write_file "$AWS_CONFIG" 0640 "root:$SVC" < <(printf '[default]\nregion = ap-south-1\ncredential_process = %s\n' "$AWS_HELPER")
 write_file "$UNIT_DIR/$SVC.service" 0644 root:root < <(render_agent_unit); note_change agent
-write_file "$EGRESS_CONF" 0644 root:root < <(printf 'NEON_HOSTS="%s"\n' "${NEON_HOSTS[*]}"); note_change nft
+write_file "$EGRESS_CONF" 0644 root:root < <(printf 'NEON_HOSTS="%s"\nBROKER_ADDR="%s"\n' "${NEON_HOSTS[*]}" "$BROKER"); note_change nft
 for pair in "studio-agent-egress-refresh.sh:$REFRESH_BIN" "studio-agent-egress-guard.sh:$GUARD_BIN" "studio-pgrelay-render.sh:$RELAY_BIN"; do
   src=$HERE/${pair%%:*} dst=${pair##*:}
   WROTE=0; if ! cmp -s "$src" "$dst" 2>/dev/null; then WROTE=1; fi
@@ -597,6 +642,17 @@ else
   done
 fi
 
+say "3a. migrate: no GCP key, no GCP/AWS-role/Vertex variable on this host; AWS credentials via the broker"
+if [ -e "$OLD_KEY_FILE" ]; then run shred -u "$OLD_KEY_FILE"; else echo "no old GCP key file"; fi
+if [ "$DRY" = 1 ]; then
+  echo "+ remove ${RETIRED_VARS[*]} lines from $ENV_FILE if present; set BEDROCK_AUTH=default-chain; set STUDIO_BROKER_URL=http://$BROKER/creds"
+elif [ -r "$ENV_FILE" ]; then
+  tmp=$(mktemp "$ENV_FILE.XXXXXX")
+  pat=$(IFS='|'; echo "${RETIRED_VARS[*]}")
+  grep -Ev "^($pat)=" "$ENV_FILE" | sed -e 's#^BEDROCK_AUTH=.*#BEDROCK_AUTH=default-chain#' -e "s#^STUDIO_BROKER_URL=.*#STUDIO_BROKER_URL=http://$BROKER/creds#" >"$tmp" || true
+  chmod 0600 "$tmp"; chown "root:$SVC" "$tmp"; mv -f "$tmp" "$ENV_FILE"
+fi
+
 say "3b. Neon relay credentials: $NEON_ENV (real Neon URLs, 0600, the only persistent copy) and $LOCAL_ENV (loopback passwords)"
 if [ ! -e "$NEON_ENV" ]; then
   write_file "$NEON_ENV" 0600 root:root < <(cat <<'EOT'
@@ -664,8 +720,7 @@ if [ "$NFT_CHANGED" = 1 ] || ! systemctl is-active --quiet studio-agent-nft.serv
 else echo "studio-agent-nft unchanged and active; not restarted"; fi
 run systemctl start studio-agent-egress-refresh.timer studio-agent-egress-guard.timer
 
-say "6. GCP SA key: copy over ssh stdin with --receive-gcp-key (see header); never echoed"
-[ -f "$KEY_FILE" ] || echo "note: $KEY_FILE not present yet"
+say "6. AWS credentials: t4 broker at $BROKER (token STUDIO_BROKER_TOKEN is copied from t4 by hand, file-to-file)"
 
 say "7. activate (kill switch: STUDIO_LIVE_READS stays 0 until O1 proof passes)"
 ready=1
@@ -673,11 +728,10 @@ if [ -r "$ENV_FILE" ]; then
   for v in "${REQUIRED_VARS[@]}"; do
     grep -Eq "^$v=.+" "$ENV_FILE" || { echo "env var $v is empty"; ready=0; }
   done
-  grep -Eq "^VERTEX_MODEL=.+" "$ENV_FILE" || echo "WARNING: VERTEX_MODEL is unset: the Vertex fallback is disabled"
+  echo "note: Vertex is off on this host by design (no VERTEX_* variable, no googleapis allowlist)"
 else
   echo "env file not readable here (dry-run as non-root, or not created yet): treated as not ready"; ready=0
 fi
-[ -f "$KEY_FILE" ] || { echo "key file missing"; ready=0; }
 if [ -r "$NEON_ENV" ]; then
   for v in GOV_NEON_URL STUDIO_NEON_URL; do
     grep -Eq "^$v=.+" "$NEON_ENV" || { echo "$NEON_ENV: $v is empty"; ready=0; }
@@ -708,6 +762,7 @@ agent_healthy() {
 }
 
 if [ "$ready" = 1 ]; then
+  run rm -f "$STOP_FLAG"  # an operator stop is ended by an install
   # relay first: it renders its config from neon.env on (re)start / reload
   run systemctl enable "$RELAY.service"
   if [ "$RELAY_CHANGED" = 1 ] || ! systemctl is-active --quiet "$RELAY.service" 2>/dev/null; then

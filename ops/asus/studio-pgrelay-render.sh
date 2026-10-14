@@ -6,8 +6,8 @@
 # Files: pgbouncer.ini + userlist.txt (0600 studio-pgrelay) in /run/studio-pgrelay, and /run/studio-agent/relay-hosts
 # (the relay's private /etc/hosts, bind-mounted by its unit: pins only, no DNS; it must exist before the unit's
 # namespace is set up, so the egress refresh creates it).
-#   (no args)      full render; runs as ExecStartPre=+ of studio-pgrelay.service and from ExecReload
-#   --hosts-only   rewrite just the hosts file, in place (called by the egress refresh when pins changed)
+#   (no args)      full render of the ini + userlist; ExecStartPre=+ of studio-pgrelay.service and ExecReload
+#   --hosts-only   replace just the hosts file (temp + rename; called by the egress refresh)
 # Nothing secret is printed.
 set -euo pipefail
 
@@ -31,20 +31,23 @@ run, pins_path = os.environ["RUN"], os.environ["PINS"]
 hosts_only = os.environ["HOSTS_ONLY"] == "1"
 uid = pwd.getpwnam(os.environ["SVC"]).pw_uid
 
-def write_inplace(path, text, mode, owner):
-    # in place (not rename): the relay's unit bind-mounts the hosts file inode over /etc/hosts
-    existed = os.path.exists(path)
-    with open(path, "r+" if existed else "w") as f:
-        f.seek(0); f.truncate(); f.write(text); f.flush(); os.fsync(f.fileno())
-    os.chmod(path, mode); os.chown(path, owner, -1)
+def write_atomic(path, text, mode, owner):
+    # sibling temp + rename: a reader sees the old or the new file, never a torn one. (A bind mount follows the inode, so the
+    # relay unit is restarted to pick up a replaced hosts file; see the egress refresh.)
+    tmp = path + ".new"
+    with open(tmp, "w") as f:
+        f.write(text); f.flush(); os.fsync(f.fileno())
+    os.chmod(tmp, mode); os.chown(tmp, owner, -1)
+    os.rename(tmp, path)
 
 pins = json.load(open(pins_path))
-lines = ["127.0.0.1 localhost"]
-for host, addrs in sorted(pins.items()):
-    for a in addrs:
-        lines.append(f"{a} {host}")
-write_inplace(os.environ["HOSTS"], "\n".join(lines) + "\n", 0o644, 0)
 if hosts_only:
+    lines = ["127.0.0.1 localhost"]
+    for host, addrs in sorted(pins.items()):
+        for a in addrs:
+            lines.append(f"{a} {host}")
+    os.makedirs(os.path.dirname(os.environ["HOSTS"]), exist_ok=True)
+    write_atomic(os.environ["HOSTS"], "\n".join(lines) + "\n", 0o644, 0)
     sys.exit(0)
 
 def kv(path):
@@ -105,7 +108,7 @@ ini = "\n".join(["[databases]"] + dbs + ["", "[pgbouncer]"] + [
     "log_disconnections = 0",
     "log_stats = 0",
 ]) + "\n"
-write_inplace(os.path.join(run, "pgbouncer.ini"), ini, 0o600, uid)
-write_inplace(os.path.join(run, "userlist.txt"), "\n".join(users) + "\n", 0o600, uid)
+write_atomic(os.path.join(run, "pgbouncer.ini"), ini, 0o600, uid)
+write_atomic(os.path.join(run, "userlist.txt"), "\n".join(users) + "\n", 0o600, uid)
 PY
-if [ "$HOSTS_ONLY" = 1 ]; then echo "relay hosts file rewritten"; else echo "relay files rendered"; fi
+if [ "$HOSTS_ONLY" = 1 ]; then echo "relay hosts file replaced"; else echo "relay files rendered"; fi
