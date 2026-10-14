@@ -1,4 +1,4 @@
-import { SignJWT, jwtVerify } from "jose";
+import { signPortalJwt, verifyPortalJwt } from "@/lib/jwt";
 import { cookies } from "next/headers";
 import bcrypt from "bcryptjs";
 
@@ -7,12 +7,6 @@ import bcrypt from "bcryptjs";
 // be mistaken for a physician token (and vice versa).
 const PCOOKIE = "epi_physician_session";
 const EXPIRY = "7d";
-
-function secret() {
-  const s = process.env.JWT_SECRET;
-  if (!s) throw new Error("JWT_SECRET environment variable is required");
-  return new TextEncoder().encode(s);
-}
 
 export interface PhysicianJWT {
   kind: "physician";
@@ -23,11 +17,7 @@ export interface PhysicianJWT {
 }
 
 export async function createPhysicianToken(p: PhysicianJWT): Promise<string> {
-  return new SignJWT(p as unknown as Record<string, unknown>)
-    .setProtectedHeader({ alg: "HS256" })
-    .setIssuedAt()
-    .setExpirationTime(EXPIRY)
-    .sign(secret());
+  return signPortalJwt(p as unknown as Record<string, unknown>, EXPIRY);
 }
 
 export async function setPhysicianCookie(token: string) {
@@ -41,8 +31,8 @@ export async function getCurrentPhysician(): Promise<PhysicianJWT | null> {
   const t = c.get(PCOOKIE)?.value;
   if (!t) return null;
   try {
-    const { payload } = await jwtVerify(t, secret());
-    if ((payload as Record<string, unknown>).kind !== "physician") return null;
+    const payload = await verifyPortalJwt(t);
+    if (!payload || (payload as Record<string, unknown>).kind !== "physician") return null;
     return payload as unknown as PhysicianJWT;
   } catch { return null; }
 }

@@ -1,18 +1,12 @@
 // ============================================================================
 // Minimal OAuth 2.1 helpers for the governance MCP server.
 // Authorization-code + PKCE (S256), public client (no client secret).
-// Codes / access / refresh tokens are stateless JWTs (HS256, JWT_SECRET) with a
+// Codes / access / refresh tokens are stateless JWTs (HS256, STAFF_JWT_SECRET, aud "mcp") with a
 // `typ` claim so they can't be confused with app session cookies. The human gate
 // is the shared secret MCP_BEARER_TOKEN, entered on the /api/oauth/authorize page.
 // ============================================================================
-import { SignJWT, jwtVerify } from "jose";
+import { signMcpJwt, verifyMcpJwt } from "@/lib/jwt";
 import { createHash } from "crypto";
-
-function secretKey(): Uint8Array {
-  const s = process.env.JWT_SECRET;
-  if (!s) throw new Error("JWT_SECRET not configured");
-  return new TextEncoder().encode(s);
-}
 
 /** The shared access secret (also the static bearer for curl). */
 export function mcpSecret(): string | null {
@@ -24,17 +18,13 @@ export function pkceS256(verifier: string): string {
 }
 
 async function sign(payload: Record<string, unknown>, typ: string, exp: string): Promise<string> {
-  return new SignJWT({ ...payload, typ })
-    .setProtectedHeader({ alg: "HS256" })
-    .setIssuedAt()
-    .setExpirationTime(exp)
-    .sign(secretKey());
+  return signMcpJwt({ ...payload, typ }, exp);
 }
 
 async function verify(token: string, typ: string): Promise<Record<string, unknown> | null> {
   try {
-    const { payload } = await jwtVerify(token, secretKey());
-    if ((payload as Record<string, unknown>).typ !== typ) return null;
+    const payload = await verifyMcpJwt(token);
+    if (!payload || (payload as Record<string, unknown>).typ !== typ) return null;
     return payload as Record<string, unknown>;
   } catch {
     return null;

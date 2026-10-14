@@ -3,19 +3,13 @@
 // PIN-only. Email/password + magic link deferred.
 // ============================================
 
-import { SignJWT, jwtVerify } from "jose";
+import { signStaffJwt, verifyStaffJwt } from "@/lib/jwt";
 import { cookies } from "next/headers";
 import bcrypt from "bcryptjs";
 
 const COOKIE_NAME = "epi_session";
 const JWT_EXPIRY = "7d";
 const SALT_ROUNDS = 10;
-
-function getJwtSecret() {
-  const secret = process.env.JWT_SECRET;
-  if (!secret) throw new Error("JWT_SECRET environment variable is required");
-  return new TextEncoder().encode(secret);
-}
 
 export interface JWTPayload {
   profileId: string;
@@ -34,17 +28,13 @@ export interface JWTPayload {
 }
 
 export async function createToken(payload: JWTPayload): Promise<string> {
-  return new SignJWT(payload as unknown as Record<string, unknown>)
-    .setProtectedHeader({ alg: "HS256" })
-    .setIssuedAt()
-    .setExpirationTime(JWT_EXPIRY)
-    .sign(getJwtSecret());
+  return signStaffJwt(payload as unknown as Record<string, unknown>, JWT_EXPIRY);
 }
 
 export async function verifyToken(token: string): Promise<JWTPayload | null> {
   try {
-    const { payload } = await jwtVerify(token, getJwtSecret());
-    return payload as unknown as JWTPayload;
+    const payload = await verifyStaffJwt(token);
+    return payload as unknown as JWTPayload | null;
   } catch {
     return null;
   }

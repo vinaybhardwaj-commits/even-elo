@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { jwtVerify } from "jose";
+import { verifyStaffJwt, verifyPortalJwt } from "@/lib/jwt";
 import { isPublicCaptureApi, isPublicCapturePage, isUploadCaptureHost } from "@/lib/capture/access";
 import { checkCronAuth } from "@/lib/cron-auth";
 import { isAllowedOnDoctorsHost, isDoctorsHost } from "@/lib/host-lock";
@@ -47,12 +47,6 @@ const ADMIN_BOOTSTRAP_ROUTES = [
   "/api/admin/dedupe-physicians",
   "/api/admin/map-cdmss-doctors",
 ];
-
-function getJwtSecret() {
-  const secret = process.env.JWT_SECRET;
-  if (!secret) return null;
-  return new TextEncoder().encode(secret);
-}
 
 interface MiddlewarePayload {
   profileId?: unknown;
@@ -118,13 +112,13 @@ export async function middleware(request: NextRequest) {
       return NextResponse.next();
     }
     const ptoken = request.cookies.get("epi_physician_session")?.value;
-    const psecret = getJwtSecret();
-    if (!ptoken || !psecret) {
+    if (!ptoken) {
       if (pathname.startsWith("/api/")) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
       return NextResponse.redirect(new URL("/portal/login", request.url));
     }
     try {
-      const { payload } = await jwtVerify(ptoken, psecret);
+      const payload = await verifyPortalJwt(ptoken);
+      if (!payload) throw new Error("invalid portal token");
       if ((payload as Record<string, unknown>).kind !== "physician") throw new Error("not physician");
       if ((payload as Record<string, unknown>).portal_must_change_pin === true && pathname !== "/portal/set-pin") {
         if (pathname.startsWith("/api/")) return NextResponse.json({ ok: false, error: "PIN change required" }, { status: 403 });
@@ -173,13 +167,9 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL("/auth/login", request.url));
   }
 
-  const secret = getJwtSecret();
-  if (!secret) {
-    return NextResponse.redirect(new URL("/auth/login", request.url));
-  }
-
   try {
-    const { payload: rawPayload } = await jwtVerify(token, secret);
+    const rawPayload = await verifyStaffJwt(token);
+    if (!rawPayload) throw new Error("invalid staff token");
     const payload = rawPayload as MiddlewarePayload;
 
     // Status must be active
