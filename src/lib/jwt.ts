@@ -35,6 +35,23 @@ export function legacyAcceptActive(now: number = Date.now()): boolean {
   return Number.isFinite(until) && now < until;
 }
 
+const MIN_SECRET_BYTES = 32;
+
+/**
+ * Signing guard: this surface's secret must be >= 32 bytes, and STAFF_JWT_SECRET
+ * must differ from PORTAL_JWT_SECRET. Errors name the env vars only, never values.
+ */
+function assertSigningSecrets(name: string, k: Uint8Array): void {
+  if (k.length < MIN_SECRET_BYTES) {
+    throw new Error(`${name} must be at least ${MIN_SECRET_BYTES} bytes`);
+  }
+  const staff = process.env.STAFF_JWT_SECRET;
+  const portal = process.env.PORTAL_JWT_SECRET;
+  if (staff && portal && staff === portal) {
+    throw new Error("STAFF_JWT_SECRET and PORTAL_JWT_SECRET must be different");
+  }
+}
+
 export async function signJwt(
   aud: JwtAudience,
   payload: Record<string, unknown>,
@@ -43,6 +60,7 @@ export async function signJwt(
   const name = SECRET_ENV[aud];
   const k = key(name);
   if (!k) throw new Error(`${name} environment variable is required`);
+  assertSigningSecrets(name, k);
   return new SignJWT(payload)
     .setProtectedHeader({ alg: ALG })
     .setAudience(aud)

@@ -123,3 +123,29 @@ describe("legacy window (JWT_LEGACY_ACCEPT_UNTIL)", () => {
     expect(await verifyStaffJwt(await signStaffJwt({ profileId: "p2" }, "1h"))).not.toBeNull();
   });
 });
+
+describe("signing-time secret check (fails closed, no secret in the message)", () => {
+  it("refuses to sign when STAFF and PORTAL secrets are identical", async () => {
+    process.env.PORTAL_JWT_SECRET = STAFF;
+    for (const sign of [signStaffJwt, signPortalJwt, signMcpJwt]) {
+      const err = await sign({}, "1h").then(() => null, (e: Error) => e);
+      expect(err?.message).toMatch(/STAFF_JWT_SECRET and PORTAL_JWT_SECRET must be different/);
+      expect(err?.message).not.toContain(STAFF);
+    }
+  });
+
+  it("refuses a secret shorter than 32 bytes, naming only the variable", async () => {
+    process.env.STAFF_JWT_SECRET = "short-secret-31-bytes-xxxxxxxxx".slice(0, 31);
+    const err = await signStaffJwt({}, "1h").then(() => null, (e: Error) => e);
+    expect(err?.message).toBe("STAFF_JWT_SECRET must be at least 32 bytes");
+    process.env.STAFF_JWT_SECRET = STAFF;
+    process.env.PORTAL_JWT_SECRET = "p".repeat(31);
+    const err2 = await signPortalJwt({}, "1h").then(() => null, (e: Error) => e);
+    expect(err2?.message).toBe("PORTAL_JWT_SECRET must be at least 32 bytes");
+  });
+
+  it("accepts exactly 32 bytes", async () => {
+    process.env.STAFF_JWT_SECRET = "s".repeat(32);
+    expect(await verifyStaffJwt(await signStaffJwt({}, "1h"))).not.toBeNull();
+  });
+});
