@@ -10,13 +10,13 @@ const SECRET = "mw-secret-not-real";
 const STAFF = "22222222-2222-4222-8222-222222222222";
 
 async function token() {
-  return new SignJWT({ profileId: STAFF }).setProtectedHeader({ alg: "HS256" }).setIssuedAt().setExpirationTime("1h").sign(new TextEncoder().encode(SECRET));
+  return new SignJWT({ profileId: STAFF }).setProtectedHeader({ alg: "HS256" }).setAudience("staff").setIssuedAt().setExpirationTime("1h").sign(new TextEncoder().encode(SECRET));
 }
 
 describe("studio middleware", () => {
   beforeEach(() => {
     live.mockReset();
-    process.env.JWT_SECRET = SECRET;
+    process.env.STAFF_JWT_SECRET = SECRET;
   });
 
   it("matches every path", async () => {

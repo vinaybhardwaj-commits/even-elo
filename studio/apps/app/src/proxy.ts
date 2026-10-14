@@ -18,7 +18,12 @@ export async function proxy(request: NextRequest) {
       origin: request.headers.get("origin"),
       cookies,
     },
-    { JWT_SECRET: process.env.JWT_SECRET, NODE_ENV: process.env.NODE_ENV },
+    {
+      STAFF_JWT_SECRET: process.env.STAFF_JWT_SECRET,
+      JWT_SECRET: process.env.JWT_SECRET, // only read inside the JWT_LEGACY_ACCEPT_UNTIL window
+      JWT_LEGACY_ACCEPT_UNTIL: process.env.JWT_LEGACY_ACCEPT_UNTIL,
+      NODE_ENV: process.env.NODE_ENV,
+    },
     { loadLiveStaff: (id) => loadLiveStaff(id) },
   );
 

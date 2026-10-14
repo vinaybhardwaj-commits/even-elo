@@ -5,12 +5,13 @@ import { authorizeStudioRequest, type LiveStaff, type ZoneRequest } from "../aut
 
 const SECRET = "test-secret-not-real";
 const key = new TextEncoder().encode(SECRET);
-const ENV = { JWT_SECRET: SECRET, NODE_ENV: "production" };
+const ENV = { STAFF_JWT_SECRET: SECRET, NODE_ENV: "production" };
 const STAFF = "11111111-1111-4111-8111-111111111111";
 
 async function session(claims: Record<string, unknown> = {}, opts: { alg?: "HS256" | "HS384"; secret?: Uint8Array; exp?: string | null } = {}) {
   const jwt = new SignJWT({ profileId: STAFF, status: "active", is_super_admin: true, ...claims })
     .setProtectedHeader({ alg: opts.alg ?? "HS256" })
+    .setAudience("staff")
     .setIssuedAt();
   if (opts.exp !== null) jwt.setExpirationTime(opts.exp ?? "1h");
   return jwt.sign(opts.secret ?? key);
@@ -43,7 +44,7 @@ describe("studio auth zone", () => {
     expect(d).toMatchObject({ ok: false, status: 401 });
   });
 
-  it("401 without JWT_SECRET (fail closed)", async () => {
+  it("401 without STAFF_JWT_SECRET (fail closed)", async () => {
     const d = await authorizeStudioRequest(await req(), { NODE_ENV: "production" }, live(SUPER));
     expect(d).toMatchObject({ ok: false, status: 401 });
   });

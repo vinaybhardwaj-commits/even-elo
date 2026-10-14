@@ -35,7 +35,7 @@ describe.skipIf(!BUILT && !process.env.CI)("built studio app under basePath /stu
     if (!BUILT) throw new Error("the app is not built (CI is set): run `pnpm --filter @repo/app build` before the tests");
     const port = await freePort();
     base = `http://127.0.0.1:${port}`;
-    cookie = `epi_session=${await new SignJWT({ profileId: STAFF }).setProtectedHeader({ alg: "HS256" }).setIssuedAt().setExpirationTime("1h").sign(new TextEncoder().encode(SECRET))}`;
+    cookie = `epi_session=${await new SignJWT({ profileId: STAFF }).setProtectedHeader({ alg: "HS256" }).setAudience("staff").setIssuedAt().setExpirationTime("1h").sign(new TextEncoder().encode(SECRET))}`;
     child = spawn(process.execPath, [resolve(APP_ROOT, "node_modules/next/dist/bin/next"), "start", "-p", String(port), "-H", "127.0.0.1"], {
       cwd: APP_ROOT,
       env: {
@@ -43,7 +43,7 @@ describe.skipIf(!BUILT && !process.env.CI)("built studio app under basePath /stu
         HOME: process.env.HOME ?? "",
         NODE_ENV: "production",
         NODE_OPTIONS: `--require ${resolve(__dirname, "fixtures/mock-neon-fetch.cjs")}`,
-        JWT_SECRET: SECRET,
+        STAFF_JWT_SECRET: SECRET,
         GOV_RO_DATABASE_URL: "postgresql://ro:ro@db.invalid/gov",
         AGENT_URL: "http://127.0.0.1:9/agent",
         STUDIO_SERVICE_TOKEN: "svc-not-real",

@@ -1,6 +1,6 @@
 // Studio auth zone (G1). PURE decision function: no I/O except the injected `loadLiveStaff`.
 // The Next middleware (src/middleware.ts) is a thin wrapper around `authorizeStudioRequest`.
-import { jwtVerify } from "jose";
+import { staffJwtConfigured, verifyStaffSession, type StaffJwtEnv } from "./staff-jwt";
 
 export const SESSION_COOKIE = "epi_session";
 export const PHYSICIAN_COOKIE = "epi_physician_session";
@@ -33,8 +33,7 @@ export interface ZoneRequest {
   cookies: Record<string, string | undefined>;
 }
 
-export interface ZoneEnv {
-  JWT_SECRET?: string;
+export interface ZoneEnv extends StaffJwtEnv {
   NODE_ENV?: string;
 }
 
@@ -83,17 +82,14 @@ export async function authorizeStudioRequest(req: ZoneRequest, env: ZoneEnv, dep
   // 2. A physician session cookie anywhere on the request is refused outright, even with a staff cookie.
   if (req.cookies[PHYSICIAN_COOKIE] !== undefined) return deny(401, "physician-cookie");
 
-  // 3. Staff session JWT: HS256 only, secret from env only.
+  // 3. Staff session JWT (G2): STAFF_JWT_SECRET, HS256, aud "staff", exp required; pre-G2 tokens only
+  // inside the JWT_LEGACY_ACCEPT_UNTIL window (see staff-jwt.ts). Secrets from env only.
   const token = req.cookies[SESSION_COOKIE];
   if (!token) return deny(401, "no-session");
-  if (!env.JWT_SECRET) return deny(401, "not-configured");
-  let payload: Record<string, unknown>;
-  try {
-    const res = await jwtVerify(token, new TextEncoder().encode(env.JWT_SECRET), { algorithms: ["HS256"], requiredClaims: ["exp"] });
-    payload = res.payload as Record<string, unknown>;
-  } catch {
-    return deny(401, "bad-session");
-  }
+  if (!staffJwtConfigured(env)) return deny(401, "not-configured");
+  const verified = await verifyStaffSession(token, env);
+  if (!verified) return deny(401, "bad-session");
+  const payload = verified as Record<string, unknown>;
   if (payload.kind === "physician") return deny(401, "physician-token");
   const staffId = typeof payload.profileId === "string" ? payload.profileId : "";
   if (!staffId) return deny(401, "no-profile");
