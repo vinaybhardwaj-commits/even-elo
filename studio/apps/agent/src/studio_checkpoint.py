@@ -17,6 +17,7 @@ from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
 from src.bounded_memory_saver import BoundedMemorySaver
+from src.studio_pins import pinned_conninfo
 
 logger = logging.getLogger("studio.checkpoint")
 
@@ -36,5 +37,5 @@ async def postgres_checkpointer(dsn: str | None = None):
     from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
     url = dsn or os.environ["STUDIO_DATABASE_URL"]
-    async with AsyncConnectionPool(conninfo=url, max_size=5, open=False, kwargs=pool_kwargs()) as pool:
+    async with AsyncConnectionPool(conninfo=pinned_conninfo(url), max_size=5, open=False, kwargs=pool_kwargs()) as pool:
         yield AsyncPostgresSaver(pool)

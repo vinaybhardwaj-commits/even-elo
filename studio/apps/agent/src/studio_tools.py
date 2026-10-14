@@ -34,6 +34,7 @@ from pydantic import BaseModel, Field
 
 from src import studio_audit
 from src.studio_db import connect_read_only
+from src.studio_pins import PinError
 
 logger = logging.getLogger("studio.tools")
 
@@ -262,6 +263,9 @@ async def run_read_tool(
             rows = load_fixture(tool_name, limit)
     except ToolError as exc:
         failure = str(exc)
+    except PinError:
+        logger.warning("tool=%s failed: no pinned database address", tool_name)
+        failure = "The governance database address is not pinned, so this read was refused."
     except Exception as exc:  # DB/driver error: never leak its text (can embed hostnames/DSN fragments)
         logger.warning("tool=%s failed type=%s", tool_name, type(exc).__name__)
         failure = "The governance database read failed."

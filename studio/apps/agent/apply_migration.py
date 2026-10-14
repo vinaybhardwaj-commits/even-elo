@@ -30,11 +30,12 @@ def render(sql: str, app_role: str) -> str:
 
 def apply(dsn: str, app_role: str, migrations_dir: Path = MIGRATIONS) -> list[str]:
     import psycopg
+    from src.studio_pins import pinned_conninfo
     from langgraph.checkpoint.postgres import PostgresSaver
 
     applied: list[str] = []
     # Neon: autocommit + no prepared statements; setup() runs its own DDL.
-    with psycopg.connect(dsn, autocommit=True, prepare_threshold=None) as conn:
+    with psycopg.connect(pinned_conninfo(dsn), autocommit=True, prepare_threshold=None) as conn:
         me = conn.execute("SELECT current_user").fetchone()[0]
         if me == app_role:
             raise SystemExit(

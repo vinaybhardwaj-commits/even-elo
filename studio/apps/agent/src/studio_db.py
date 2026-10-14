@@ -7,16 +7,19 @@ import os
 import psycopg
 from psycopg.rows import dict_row
 
+from src.studio_pins import pinned_conninfo
+
 
 class NotConfigured(RuntimeError):
     pass
 
 
 def _dsn(env_name: str) -> str:
+    """The connection string with hostaddr pinned (no DNS needed); PinError fails closed."""
     value = os.environ.get(env_name, "")
     if not value:
         raise NotConfigured(f"{env_name} is not set")
-    return value
+    return pinned_conninfo(value)
 
 
 async def connect_read_only() -> psycopg.AsyncConnection:
