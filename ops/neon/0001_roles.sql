@@ -18,6 +18,18 @@
 -- NOSUPERUSER is only in CREATE ROLE, and NOCREATEDB / NOREPLICATION / NOBYPASSRLS are re-asserted in the
 -- ALTER only when the executing role itself holds that attribute (Postgres refuses to even mention an
 -- attribute you do not hold); otherwise the live probe asserts them false.
+-- --password-preset: the role MUST already exist (the Neon API created it with its password).
+\set mustexist `[ "${ROLE_MUST_EXIST:-0}" = 1 ] && echo 1 || echo 0`
+\if :mustexist
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'studio_gov_ro') THEN
+    RAISE EXCEPTION 'studio_gov_ro does not exist: create it with ops/neon/neon-role.sh first (password preset)';
+  END IF;
+END
+$$;
+\endif
+
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'studio_gov_ro') THEN
@@ -56,11 +68,10 @@ GRANT SELECT ON physicians, physician_engagements, hospitals, gov_signal_snapsho
 GRANT SELECT (id, status, is_super_admin) ON profiles_with_roles TO studio_gov_ro;
 GRANT SELECT (id, must_change_pin) ON profiles TO studio_gov_ro;
 
--- Password: only when run-roles.sh supplied a secret file. By default it holds a SCRAM-SHA-256 VERIFIER
--- computed client-side, so the plaintext never reaches the server (logs, STATEMENT: lines, pg_stat_activity).
--- With --neon-plaintext-password (Neon's control plane rejects verifiers) it holds the random plaintext
--- instead. Either way this is the LAST statement before LOGIN, so a failure earlier in the transaction can
--- never put the secret into a STATEMENT: error log. Never echoed.
+-- Password: only when run-roles.sh supplied a SCRAM-SHA-256 VERIFIER file (computed client-side, so the
+-- plaintext never reaches the server: not in logs, STATEMENT: lines or pg_stat_activity). With
+-- run-roles.sh --password-preset (Neon: the API set the password) there is no file and no password
+-- statement at all. Plaintext passwords over SQL are never sent. Last statement before LOGIN. Never echoed.
 \set haspw `[ -s "$ROLE_PASSWORD_FILE" ] && echo 1 || echo 0`
 \if :haspw
 \set rolepw `cat "$ROLE_PASSWORD_FILE"`
