@@ -23,8 +23,14 @@ psql "service=owner" -Atc "SELECT version()"       # or any psql session as the 
 ## Owner role
 Neon owners are never superusers. The SQL works for a non-superuser CREATEROLE owner: NOSUPERUSER appears only in `CREATE ROLE`, and NOCREATEDB / NOREPLICATION / NOBYPASSRLS are re-asserted only if the owner itself holds that attribute (Postgres refuses to even mention one you lack); the probe asserts them false either way. It runs as ONE transaction (`psql --single-transaction`) and enables LOGIN as its last statement, so a failure leaves nothing half-configured. If `studio_gov_ro` was created earlier by a different role, the owner needs CREATEROLE with ADMIN OPTION on it (or drop/recreate it).
 
+## Neon: `--neon-plaintext-password`
+Neon's control plane rejects SCRAM verifiers in `ALTER ROLE ... PASSWORD` ("Neon only supports being given plaintext passwords"). On Neon run:
+`ops/neon/run-roles.sh --neon-plaintext-password OWNER_URL_FILE OUT_FILE`
+The random 192-bit plaintext is then sent by `ALTER ROLE ... PASSWORD :'rolepw'` (psql variable read from the 0600 tmpfs file; still never on argv or echoed). Still one transaction, and that ALTER is the last statement before `LOGIN`, so a failure anywhere earlier can never put the password into a `STATEMENT:` error log.
+**Trade-off:** in this mode the plaintext does reach the server, so **Neon's server-side logs may hold it if the ALTER itself fails** (or if statement logging is on). If `run-roles.sh` fails at or after the ALTER (non-zero exit with the role already changed), treat the password as exposed: re-run the script to rotate it, and do not use the old output file. The default (without the flag) keeps the plaintext off the server entirely and is what to use anywhere that accepts verifiers.
+
 ## What it guarantees
-- The **plaintext password never reaches the server**: the script derives a SCRAM-SHA-256 verifier (RFC 5802/7677, 16-byte salt, 4096 iterations) and `0001_roles.sql` sets `PASSWORD :'verifier'`. Server logs (`log_statement=all`, `STATEMENT:` lines on errors) and `pg_stat_activity` only ever see the verifier. The plaintext exists only in the 0600 output file (inside the URL).
+- By default the **plaintext password never reaches the server** (see the Neon flag above for the exception): the script derives a SCRAM-SHA-256 verifier (RFC 5802/7677, 16-byte salt, 4096 iterations) and `0001_roles.sql` sets `PASSWORD :'verifier'`. Server logs (`log_statement=all`, `STATEMENT:` lines on errors) and `pg_stat_activity` only ever see the verifier. The plaintext exists only in the 0600 output file (inside the URL).
 - No secret on any command line or in the environment: the owner URL is read from a file and handed to psql as a service file.
 - Re-running is a no-op except password rotation (new salt, new password). Rotate by running it again, then update both env stores.
 

@@ -61,7 +61,7 @@ def test_role_attributes_in_sql():
     assert sql.count("LOGIN;") == 1 and "--single-transaction" in SCRIPT.read_text()
     for setting in ("default_transaction_read_only = on", "statement_timeout = '15s'", "idle_in_transaction_session_timeout = '30s'"):
         assert setting in sql
-    assert "PASSWORD :'verifier'" in sql and not re.search(r"PASSWORD\s+'", sql) and ":'pw'" not in sql
+    assert "PASSWORD :'rolepw'" in sql and not re.search(r"PASSWORD\s+'", sql) and ":'pw'" not in sql
     assert sql.index("REVOKE ALL ON ALL TABLES") < sql.index("GRANT USAGE")
 
 
@@ -69,7 +69,8 @@ def test_dry_run_prints_statements_without_connecting_or_a_password(tmp_path):
     out = subprocess.run(["bash", str(SCRIPT), "--dry-run"], capture_output=True, text=True, check=True, env={"PATH": os.environ["PATH"], "PSQL": "/nonexistent/psql"})
     assert "CREATE ROLE studio_gov_ro" in out.stdout
     assert "openssl rand" in out.stdout
-    assert "PASSWORD :'verifier'" in out.stdout and "SCRAM-SHA-256" in out.stdout  # a verifier variable, never a password
+    assert "PASSWORD :'rolepw'" in out.stdout and "SCRAM-SHA-256" in out.stdout  # a variable, never a literal password
+    assert "--neon-plaintext-password" in out.stdout
     assert not list(tmp_path.iterdir())
 
 
@@ -295,7 +296,7 @@ def test_plaintext_password_never_reaches_the_server_logs_or_activity(pg, evenel
 
     # 4) A FAILING ALTER ROLE ... PASSWORD (error path; log_min_error_statement=error logs "STATEMENT: ...").
     failing = tmp_path / "failing.sql"
-    failing.write_text(SQL.read_text().replace("PASSWORD :'verifier';", "PASSWORD :'verifier' VALID UNTIL 'not-a-timestamp';"))
+    failing.write_text(SQL.read_text().replace("PASSWORD :'rolepw';", "PASSWORD :'rolepw' VALID UNTIL 'not-a-timestamp';"))
     mark = log.stat().st_size
     owner_file = tmp_path / "owner-fail"
     owner_file.write_text(owner_uri + "\n")
@@ -456,3 +457,92 @@ def test_a_failing_rerun_keeps_the_previous_state_and_never_exposes_a_half_confi
     with psycopg.connect(owner_uri, autocommit=True) as c:
         after = c.execute("SELECT rolcanlogin, rolconnlimit, rolconfig FROM pg_roles WHERE rolname = 'studio_gov_ro'").fetchone()
         assert after == before and c.execute("SELECT relacl::text FROM pg_class WHERE relname = 'physicians'").fetchone() == acl_before
+
+
+# ----- R11: --neon-plaintext-password (Neon's control plane rejects SCRAM verifiers) -----
+
+
+def _wrap(pg, owner_uri, tmp_path, tag, *flags, sql_file=None):
+    owner_file = tmp_path / f"owner-{tag}"
+    owner_file.write_text(owner_uri + "\n")
+    owner_file.chmod(0o600)
+    out = tmp_path / f"out-{tag}"
+    scratch = tmp_path / f"tmp-{tag}"
+    scratch.mkdir()
+    env = {"PATH": os.environ["PATH"], "PSQL": pg[1], "XDG_RUNTIME_DIR": str(scratch)}
+    if sql_file:
+        env["SQL_FILE"] = str(sql_file)
+    r = subprocess.run(["bash", str(SCRIPT), *flags, str(owner_file), str(out)], capture_output=True, text=True, env=env)
+    return r, out, scratch
+
+
+def test_password_alter_is_the_last_statement_before_login():
+    stmts = [l for l in SQL.read_text().splitlines() if l.startswith(("ALTER ROLE", "\\endif"))]
+    assert stmts[-3:] == ["ALTER ROLE studio_gov_ro PASSWORD :'rolepw';", "\\endif", "ALTER ROLE studio_gov_ro LOGIN;"]
+
+
+def test_flag_is_documented_and_unknown_flags_are_rejected(pg, evenelo, tmp_path):
+    assert "--neon-plaintext-password" in SCRIPT.read_text()
+    r, out, _ = _wrap(pg, evenelo[1], tmp_path, "badflag", "--bogus")
+    assert r.returncode == 2 and "unknown option" in r.stderr and not out.exists()
+
+
+def test_plaintext_mode_logs_in_with_the_plaintext_and_verifier_mode_stays_unchanged(pg_ns, tmp_path):
+    uri, psql = pg_ns
+    owner, owner_uri = _owner_db(pg_ns, "ptx", "CREATEROLE")
+    name = re.search(r"@/([^?]+)\?", owner_uri).group(1)
+    sock = uri.split("host=")[1]
+    with psycopg.connect(uri, autocommit=True) as c:
+        pgdata = Path(c.execute("SHOW data_directory").fetchone()[0])
+        hba = Path(c.execute("SHOW hba_file").fetchone()[0])
+        c.execute("ALTER SYSTEM SET password_encryption = 'scram-sha-256'")
+        c.execute("ALTER SYSTEM SET log_statement = 'all'")
+        hba.write_text("local all studio_gov_ro scram-sha-256\n" + hba.read_text())
+        c.execute("SELECT pg_reload_conf()")
+    log = pgdata / "log"
+
+    # Plaintext mode: the server receives the plaintext (so Neon accepts it) and hashes it itself.
+    mark = log.stat().st_size
+    r, out, scratch = _wrap(pg_ns, owner_uri, tmp_path, "plain", "--neon-plaintext-password")
+    assert r.returncode == 0, r.stderr
+    password = re.match(r"postgres(?:ql)?://studio_gov_ro:([0-9a-f]{48})@", out.read_text().strip()).group(1)
+    assert password not in r.stdout + r.stderr and not list(scratch.iterdir())
+    conn = psycopg.connect(host=sock, dbname=name, user="studio_gov_ro", password=password)
+    assert conn.execute("SELECT current_user").fetchone()[0] == "studio_gov_ro"
+    conn.close()
+    with pytest.raises(psycopg.OperationalError):
+        psycopg.connect(host=sock, dbname=name, user="studio_gov_ro", password="0" * 48)
+    with psycopg.connect(uri, autocommit=True) as c:
+        stored = c.execute("SELECT rolpassword FROM pg_authid WHERE rolname = 'studio_gov_ro'").fetchone()[0]
+    assert stored.startswith("SCRAM-SHA-256$") and scram_verifier_matches(stored, password)  # server-side hash
+    assert password in log.read_bytes()[mark:].decode(errors="replace")  # the documented trade-off: statement log holds it
+
+    # Verifier mode (default) on the same cluster: unchanged. New password, never in the log.
+    mark = log.stat().st_size
+    r2, out2, _ = _wrap(pg_ns, owner_uri, tmp_path, "verif")
+    assert r2.returncode == 0, r2.stderr
+    pw2 = re.match(r"postgres(?:ql)?://studio_gov_ro:([0-9a-f]{48})@", out2.read_text().strip()).group(1)
+    assert pw2 != password and pw2 not in log.read_bytes()[mark:].decode(errors="replace")
+    ok = psycopg.connect(host=sock, dbname=name, user="studio_gov_ro", password=pw2)
+    ok.close()
+    with pytest.raises(psycopg.OperationalError):
+        psycopg.connect(host=sock, dbname=name, user="studio_gov_ro", password=password)  # rotated away
+
+
+def test_plaintext_mode_failure_before_the_password_alter_never_logs_the_password(pg_ns, tmp_path):
+    uri, _ = pg_ns
+    owner, owner_uri = _owner_db(pg_ns, "ptf", "CREATEROLE")
+    with psycopg.connect(uri, autocommit=True) as c:
+        pgdata = Path(c.execute("SHOW data_directory").fetchone()[0])
+        c.execute("ALTER SYSTEM SET log_statement = 'all'")
+        c.execute("ALTER SYSTEM SET log_min_error_statement = 'error'")
+        c.execute("SELECT pg_reload_conf()")
+    log = pgdata / "log"
+    failing = tmp_path / "fail-before.sql"
+    failing.write_text(SQL.read_text().replace("GRANT SELECT (id, must_change_pin) ON profiles", "GRANT SELECT (id, no_such_column) ON profiles"))
+    mark = log.stat().st_size
+    r, out, scratch = _wrap(pg_ns, owner_uri, tmp_path, "ptf", "--neon-plaintext-password", sql_file=failing)
+    assert r.returncode != 0 and not out.exists() and not list(scratch.iterdir())
+    text = log.read_bytes()[mark:].decode(errors="replace")
+    assert "no_such_column" in text  # the failing statement was logged...
+    assert not re.findall(r"[0-9a-f]{48}", text)  # ...and no password was ever sent
