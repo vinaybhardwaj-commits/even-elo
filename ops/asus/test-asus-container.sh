@@ -243,11 +243,13 @@ if [ "$INTERNET" = 1 ]; then
   APIIP=$(x "dig +short api.typesafe.ai | head -1")
   check "IP-literal CONNECT to the allowlisted host's own address is refused" "! $AS curl -s -m 8 -x http://127.0.0.1:8888 --resolve api.typesafe.ai:443:$APIIP https://$APIIP/ -o /dev/null"
   check "CONNECT api.typesafe.ai with SNI api.typesafe.ai -> spliced (real handshake)" "timeout 20 $SCL -connect api.typesafe.ai:443 -servername api.typesafe.ai </dev/null 2>&1 | grep -q 'subject='"
+  check "F2: a ClientHello WITHOUT SNI is terminated even to an allowlisted name (no tunnel)" "! timeout 20 $SCL -connect api.typesafe.ai:443 -noservername </dev/null 2>&1 | grep -q 'subject=' && sleep 1 && ! journalctl -t squid --no-pager -o cat | grep -q 'TCP_TUNNEL.*CONNECT api.typesafe.ai:443 sni=-'"
   check "CONNECT api.typesafe.ai with SNI example.com -> refused (terminated)" "! timeout 20 $SCL -connect api.typesafe.ai:443 -servername example.com </dev/null 2>&1 | grep -q 'subject='"
   check "CONNECT bedrock-runtime.ap-south-1 with its own SNI -> spliced (a named destination)" "timeout 20 $SCL -connect bedrock-runtime.ap-south-1.amazonaws.com:443 -servername bedrock-runtime.ap-south-1.amazonaws.com </dev/null 2>&1 | grep -q 'subject='"
   check "allowlisted host via curl" "$AS curl -s -m 15 -o /dev/null -w '%{http_code}' -x http://127.0.0.1:8888 https://api.typesafe.ai/ | grep -qv 000"
 else echo "skip: allowlisted-host and SNI-mismatch checks need internet from the container"; fi
 check "proxy access log (journal) carries host:port and SNI only, no URL paths" "journalctl -t squid --no-pager -o cat | grep -q 'sni=' && ! journalctl -t squid --no-pager -o cat | grep -q 'api.typesafe.ai/'"
+check "squid SNI helper installed 0750 root:proxy and used (SNI recorded on spliced tunnels)" '[ "$(stat -c "%a %U:%G" /etc/studio-proxy/sni-check.sh)" = "750 root:proxy" ] && pgrep -af sni-check.sh >/dev/null'
 check "squid left no disk cache and no files in /opt or /etc/studio-agent" '! ls /var/spool/squid/* >/dev/null 2>&1'
 
 echo "--- B: pgbouncer relay (verify-full, endpoint pinned, own uid)"
@@ -292,6 +294,17 @@ c403=$(docker exec "$STUB2" curl -s -o /dev/null -w '%{http_code}' -H "Authoriza
 check "agent uid reaches the broker address and port only" "! $AS timeout 6 bash -c '</dev/tcp/$BROKERIP/22' && ! $AS timeout 6 bash -c '</dev/tcp/$STUB2IP/$BPORT'"
 check "boto3 default chain in the agent's venv resolves credentials through credential_process (as the agent uid)" "$AS env AWS_CONFIG_FILE=/etc/studio-agent/aws-config AWS_EC2_METADATA_DISABLED=true STUDIO_BROKER_URL=$BURL STUDIO_BROKER_TOKEN=$BROKER_TOKEN /opt/studio-agent/current/venv/bin/python -c 'import boto3; c=boto3.Session().get_credentials().get_frozen_credentials(); assert c.access_key==\"ASIASTUBKEY\" and c.token==\"stub-session-token\"'"
 check "the host has no GCP key, no GCP variable, no googleapis allowlist entry, no Vertex setting" '! find /etc /opt -name "gcp-sa.json" 2>/dev/null | grep -q . && ! grep -rIl "googleapis" /etc/studio-proxy /etc/studio-agent /etc/systemd/system 2>/dev/null | grep -q . && ! grep -Eq "GCP_|VERTEX|GOOGLE|AWS_ROLE_ARN" /etc/studio-agent/env'
+
+echo "--- F4/F5 (t4 broker installer, real run in the container): token never on argv, single-IP sources only"
+x 'printf "{\"type\":\"service_account\",\"client_email\":\"t@t.iam\"}" >/root/k.json; : >/tmp/sniff.out
+   (for i in $(seq 1 6000); do ps -eo args | grep -E "[0-9a-f]{64}" | grep -v "grep -E" >>/tmp/sniff.out; sleep 0.02; done) >/dev/null 2>&1 &
+   echo $! >/tmp/sniff.pid'
+check "broker installer (real run): env 0600 root, 64-hex token generated, listen/sources set, not started (role arn empty)" "/root/t4-broker/install-studio-broker.sh --listen 100.101.102.103:8765 --allowed-source 100.101.102.104 --gcp-key-file /root/k.json >/root/binst.out 2>&1; [ \"\$(stat -c '%a %U' /etc/studio-broker/env)\" = '600 root' ] && grep -Eq '^BROKER_TOKEN=[0-9a-f]{64}\$' /etc/studio-broker/env && grep -q '^BROKER_LISTEN=100.101.102.103:8765\$' /etc/studio-broker/env && grep -q '^BROKER_ALLOWED_SOURCES=100.101.102.104\$' /etc/studio-broker/env && ! systemctl is-active --quiet studio-broker"
+x 'kill $(cat /tmp/sniff.pid) 2>/dev/null; true'
+check "F4: the token never appeared on any process command line during the install" "[ ! -s /tmp/sniff.out ] && tok=\$(sed -n 's/^BROKER_TOKEN=//p' /etc/studio-broker/env) && ! grep -q \"\$tok\" /root/binst.out && ! grep -q \"\$tok\" /tmp/sniff.out && ! grep -qE 'BROKER_TOKEN=\\\$\\(|openssl rand' /root/t4-broker/install-studio-broker.sh"
+checkno "F5: --allowed-source 100.64.0.0/10 (a range) is refused" "/root/t4-broker/install-studio-broker.sh --dry-run --listen 100.101.102.103:8765 --allowed-source 100.64.0.0/10"
+check "F5: --allowed-source with /32 and a bare IPv6 is accepted" "/root/t4-broker/install-studio-broker.sh --dry-run --listen 100.101.102.103:8765 --allowed-source 100.101.102.104/32,fd7a:115c:a1e0::5 >/dev/null"
+x 'systemctl disable --now studio-broker >/dev/null 2>&1; userdel studio-broker 2>/dev/null; rm -rf /etc/studio-broker /opt/studio-broker; true'
 
 echo "--- sandbox probes: probe unit = copy of the live unit, ExecStart swapped (N1 + relay/proxy reach + M4)"
 xi 'cat >/usr/local/share/probe.py' <<'PROBE'
@@ -428,10 +441,10 @@ x 'sed -i "s#^STUDIO_LOG_LEVEL=.*#STUDIO_LOG_LEVEL=DEBUG#" /etc/studio-agent/env
 x "printf %s NOHITCANARY-1234567 | $PSC" >"$WORK/psc.out" 2>&1; rc=$?
 [ "$rc" = 1 ] && grep -q 'VIOLATION' "$WORK/psc.out" && ok "DEBUG log level -> violation exit 1" || bad "DEBUG log level exit 1 (rc=$rc)"
 x 'sed -i "s#^STUDIO_LOG_LEVEL=.*#STUDIO_LOG_LEVEL=INFO#" /etc/studio-agent/env'
-x 'echo 1 >/var/lib/studio-agent-egress-ok'
+x 'systemctl stop studio-agent-egress-refresh.timer; echo 1 >/var/lib/studio-agent-egress-ok'  # timer stopped: a tick would rewrite the stamp mid-test
 x "printf %s NOHITCANARY-1234567 | $PSC" >"$WORK/psc.out" 2>&1; rc=$?
 [ "$rc" = 3 ] && grep -q 'egress refresh last succeeded' "$WORK/psc.out" && ok "stale egress refresh -> INCONCLUSIVE exit 3" || bad "stale egress refresh exit 3 (rc=$rc)"
-x 'systemctl start studio-agent-egress-refresh.service'
+x 'systemctl start studio-agent-egress-refresh.service; systemctl start studio-agent-egress-refresh.timer'
 check "refresh service rewrites the success stamp; check clean again" "printf %s NOHITCANARY-1234567 | $PSC"
 
 echo "--- rollback twice, purge"

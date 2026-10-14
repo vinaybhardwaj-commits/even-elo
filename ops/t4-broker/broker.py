@@ -7,8 +7,9 @@ and returns short-lived AWS credentials in `credential_process` format. The cred
 allows only bedrock:InvokeModel / InvokeModelWithResponseStream on the two pinned model ids, so a stolen set of
 credentials can do nothing else, whatever the role itself allows.
 
-Client auth: the caller's source address must be in BROKER_ALLOWED_SOURCES (the Asus tailnet IP) AND it must present
-the bearer token BROKER_TOKEN. The listener refuses to start on a non-tailnet address.
+Client auth: the caller's source address must be one of BROKER_ALLOWED_SOURCES (single IPs, never a range: the Asus tailnet
+IP) AND it must present the bearer token BROKER_TOKEN. The listener refuses to start on a non-tailnet address, serves at most
+BROKER_MAX_CONNECTIONS (32) connections at a time and drops a connection that stays silent for BROKER_READ_TIMEOUT (10) seconds.
 
 Nothing secret is logged: only the caller address, the outcome and the credential expiry.
 Standard library only at import time; google-auth / boto3 are imported when a federation is actually performed.
@@ -39,6 +40,23 @@ def is_tailnet(addr: str) -> bool:
     return ip in TAILNET_V4 or ip in TAILNET_V6
 
 
+def parse_sources(text: str):
+    """Single addresses only: a bare IPv4/IPv6 address or an explicit /32 (/128). A range such as 100.64.0.0/10 would admit
+    every tailnet node that ever obtains the token, so it is refused."""
+    out = []
+    for raw in text.split(","):
+        raw = raw.strip()
+        if not raw:
+            continue
+        net = ipaddress.ip_network(raw, strict=False)
+        if net.prefixlen != net.max_prefixlen:
+            raise ConfigError(f"BROKER_ALLOWED_SOURCES must list single IP addresses, not the range {raw}")
+        out.append(net)
+    if not out:
+        raise ConfigError("BROKER_ALLOWED_SOURCES is empty")
+    return out
+
+
 def load_config(env=None) -> dict:
     env = os.environ if env is None else env
     def need(name):
@@ -52,7 +70,7 @@ def load_config(env=None) -> dict:
     models = [m.strip() for m in need("BROKER_MODEL_IDS").split(",") if m.strip()]
     if not models:
         raise ConfigError("BROKER_MODEL_IDS is empty")
-    sources = [ipaddress.ip_network(s.strip(), strict=False) for s in need("BROKER_ALLOWED_SOURCES").split(",") if s.strip()]
+    sources = parse_sources(need("BROKER_ALLOWED_SOURCES"))
     duration = int(env.get("BROKER_DURATION", "3600"))
     return {
         "listen": (host.strip("[]"), int(port)),
@@ -64,6 +82,8 @@ def load_config(env=None) -> dict:
         "region": env.get("BROKER_AWS_REGION", "ap-south-1").strip(),
         "models": models,
         "duration": max(MIN_DURATION, min(MAX_DURATION, duration)),
+        "max_connections": max(1, int(env.get("BROKER_MAX_CONNECTIONS", "32"))),
+        "read_timeout": max(1.0, float(env.get("BROKER_READ_TIMEOUT", "10"))),
     }
 
 
@@ -85,6 +105,11 @@ def model_resources(role_arn: str, model_ids, region: str):
 
 
 def session_policy(role_arn: str, model_ids, region: str) -> dict:
+    """aws:RequestedRegion is the region of the API ENDPOINT that receives the call, not where a cross-region inference
+    profile routes the model, so pinning it to ap-south-1 keeps the 'global.*' profile working while stolen credentials
+    cannot call bedrock-runtime in any other region. The foundation-model ARN keeps region '*' because the profile's
+    destination regions are chosen by AWS, not by the caller. (If AWS ever evaluates a destination region as the requested
+    region, widen the condition to the regions the profile routes to; verify on the live account.)"""
     return {
         "Version": "2012-10-17",
         "Statement": [{
@@ -92,15 +117,21 @@ def session_policy(role_arn: str, model_ids, region: str) -> dict:
             "Effect": "Allow",
             "Action": list(ACTIONS),
             "Resource": model_resources(role_arn, model_ids, region),
+            "Condition": {"StringEquals": {"aws:RequestedRegion": region}},
         }],
     }
 
 
-def policy_allows(policy: dict, action: str, resource: str) -> bool:
-    """Minimal IAM evaluation of an identity-style policy (Allow statements with wildcard Action/Resource, no
-    conditions, no NotAction). A session policy only ever restricts the role, so 'allowed here' is necessary, not sufficient."""
+def policy_allows(policy: dict, action: str, resource: str, context=None) -> bool:
+    """Minimal IAM evaluation of an identity-style policy (Allow/Deny statements with wildcard Action/Resource, StringEquals
+    conditions on the keys in `context`, no NotAction). A condition key that is absent from the context fails the condition.
+    A session policy only ever restricts the role, so 'allowed here' is necessary, not sufficient."""
+    context = context or {}
     allowed = False
     for st in policy.get("Statement", []):
+        cond = st.get("Condition", {}).get("StringEquals", {})
+        if any(context.get(k) != v for k, v in cond.items()):
+            continue
         acts = st["Action"] if isinstance(st["Action"], list) else [st["Action"]]
         res = st["Resource"] if isinstance(st["Resource"], list) else [st["Resource"]]
         hit = any(fnmatch.fnmatchcase(action.lower(), a.lower()) for a in acts) and any(fnmatch.fnmatchcase(resource, r) for r in res)
@@ -163,10 +194,32 @@ class Cache:
             return dict(self.value)
 
 
+class LimitedServer(ThreadingHTTPServer):
+    """Thread per connection, but at most `max_connections` at once: a further connection is closed immediately."""
+    daemon_threads = True
+
+    def __init__(self, addr, handler, max_connections):
+        super().__init__(addr, handler)
+        self._slots = threading.BoundedSemaphore(max_connections)
+
+    def process_request(self, request, client_address):
+        if not self._slots.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        super().process_request(request, client_address)
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._slots.release()
+
+
 def make_handler(cfg: dict, cache: Cache):
     class Handler(BaseHTTPRequestHandler):
         server_version = "studio-broker"
         sys_version = ""
+        timeout = cfg["read_timeout"]  # a connection that goes quiet is dropped
 
         def log_message(self, fmt, *args):  # ids only: caller address and outcome
             sys.stdout.write("%s %s\n" % (self.client_address[0], fmt % args))
@@ -210,9 +263,7 @@ def serve(cfg: dict, federate_fn=federate, require_tailnet: bool = True) -> Thre
     host = cfg["listen"][0]
     if require_tailnet and not is_tailnet(host):
         raise ConfigError(f"refusing to listen on {host}: not a tailnet address")
-    srv = ThreadingHTTPServer(cfg["listen"], make_handler(cfg, Cache(cfg, federate_fn)))
-    srv.daemon_threads = True
-    return srv
+    return LimitedServer(cfg["listen"], make_handler(cfg, Cache(cfg, federate_fn)), cfg["max_connections"])
 
 
 def main() -> int:

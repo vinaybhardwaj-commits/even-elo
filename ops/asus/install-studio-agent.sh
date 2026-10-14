@@ -27,6 +27,7 @@ PROXY_DIR=/etc/studio-proxy
 PROXY_CONF=$PROXY_DIR/squid.conf
 PROXY_HOSTS=$PROXY_DIR/hosts.txt
 PROXY_CERT=$PROXY_DIR/splice-only.pem
+PROXY_SNI_HELPER=$PROXY_DIR/sni-check.sh
 RELAY=studio-pgrelay
 RELAY_DIR=/etc/studio-pgrelay
 NEON_ENV=$RELAY_DIR/neon.env
@@ -345,6 +346,11 @@ acl ip_literal url_regex -i ^[0-9a-f]*:[0-9a-f]*:[0-9a-f:.]*\$
 acl allowed_dst dstdomain -n "$PROXY_HOSTS"
 acl allowed_sni ssl::server_name "$PROXY_HOSTS"
 acl step1 at_step SslBump1
+acl step2 at_step SslBump2
+# Squid's ssl::server_name falls back to the CONNECT host when the ClientHello has no SNI, so it cannot tell the two apart:
+# an external ACL fed the real client SNI (%ssl::>sni, "-" when absent) does, and a hello without SNI is terminated.
+external_acl_type sni_present ttl=0 negative_ttl=0 children-max=2 %ssl::>sni $PROXY_SNI_HELPER
+acl has_sni external sni_present
 acl SSL_ports port 443
 acl CONNECT method CONNECT
 http_access deny ip_literal
@@ -357,7 +363,7 @@ deny_info TCP_RESET CONNECT
 deny_info TCP_RESET SSL_ports
 deny_info TCP_RESET all
 ssl_bump peek step1
-ssl_bump splice allowed_sni
+ssl_bump splice step2 has_sni allowed_sni
 ssl_bump terminate all
 cache deny all
 cache_mem 8 MB
@@ -370,6 +376,16 @@ client_persistent_connections off
 shutdown_lifetime 3 seconds
 logformat studio %Ss/%03>Hs %rm %>rd:%>rP sni=%ssl::>sni
 access_log syslog:daemon.info studio
+EOT
+}
+
+render_sni_helper() {
+  cat <<'EOT'
+#!/bin/sh
+# external ACL helper for Squid: one query per line = the client's SNI ("-" when the ClientHello carries none)
+while read -r name _rest; do
+  case "$name" in ""|-) echo ERR ;; *) echo OK ;; esac
+done
 EOT
 }
 
@@ -546,6 +562,7 @@ if [ ! -s "$PROXY_CERT" ]; then
 fi
 write_file "$PROXY_CONF" 0640 root:proxy < <(render_proxy_conf); note_change proxy
 write_file "$PROXY_HOSTS" 0640 root:proxy < <(render_proxy_hosts); note_change proxy
+write_file "$PROXY_SNI_HELPER" 0750 root:proxy < <(render_sni_helper); note_change proxy
 write_file "$UNIT_DIR/studio-proxy.service" 0644 root:root < <(render_proxy_unit); note_change proxy
 write_file "$UNIT_DIR/$RELAY.service" 0644 root:root < <(render_relay_unit); note_change relay
 # AWS credentials for the agent: credential_process -> the t4 broker (no GCP key, no STS, no googleapis on this host)

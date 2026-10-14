@@ -37,7 +37,7 @@ if [ "$(cat "$R/hosts.txt")" = "bedrock-runtime.ap-south-1.amazonaws.com
 api.typesafe.ai" ]; then ok "squid host list: exactly bedrock-runtime.ap-south-1 and api.typesafe.ai"; else bad "squid host list"; fi
 if grep -qi 'googleapis\|sts\.' "$R/hosts.txt"; then bad "squid host list names a Google/STS host"; else ok "squid host list: no googleapis, no STS"; fi
 for pat in '^acl allowed_dst dstdomain -n ' '^acl allowed_sni ssl::server_name ' '^acl ip_literal url_regex' '^http_access deny ip_literal$' '^http_access deny !CONNECT' '^http_access deny !SSL_ports' '^http_access deny all' \
-  '^deny_info TCP_RESET ip_literal' '^deny_info TCP_RESET all' '^ssl_bump peek step1' '^ssl_bump splice allowed_sni' '^ssl_bump terminate all' '^cache deny all' '^http_port 127\.0\.0\.1:8888 ssl-bump'; do
+  '^deny_info TCP_RESET ip_literal' '^deny_info TCP_RESET all' '^ssl_bump peek step1' '^ssl_bump splice step2 has_sni allowed_sni' '^external_acl_type sni_present .*%ssl::>sni' '^acl has_sni external sni_present' '^ssl_bump terminate all' '^cache deny all' '^http_port 127\.0\.0\.1:8888 ssl-bump'; do
   if grep -Eq -- "$pat" "$R/squid.conf"; then ok "squid.conf: $pat"; else bad "squid.conf missing: $pat"; fi
 done
 if grep -Eq 'dstdom_regex|server_name_regex' "$R/squid.conf"; then bad "squid.conf uses regex ACLs"; else ok "squid.conf: no regex ACLs"; fi

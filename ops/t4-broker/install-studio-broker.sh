@@ -19,7 +19,7 @@ ENV_DEFAULTS=(
   BROKER_LISTEN= BROKER_ALLOWED_SOURCES= BROKER_TOKEN=
   BROKER_ROLE_ARN= BROKER_GCP_AUDIENCE= "BROKER_GCP_SA_KEY_FILE=$KEY_FILE"
   BROKER_AWS_REGION=ap-south-1 "BROKER_MODEL_IDS=global.anthropic.claude-sonnet-5-5,global.anthropic.claude-haiku-5-5"
-  BROKER_DURATION=3600
+  BROKER_DURATION=3600 BROKER_MAX_CONNECTIONS=32 BROKER_READ_TIMEOUT=10
 )
 REQUIRED=(BROKER_LISTEN BROKER_ALLOWED_SOURCES BROKER_TOKEN BROKER_ROLE_ARN BROKER_GCP_AUDIENCE BROKER_MODEL_IDS)
 
@@ -63,13 +63,25 @@ ip = ipaddress.ip_address(sys.argv[1])
 sys.exit(0 if ip in ipaddress.ip_network("100.64.0.0/10") or ip in ipaddress.ip_network("fd7a:115c:a1e0::/48") else 1)
 PY
 [ -n "$SOURCES" ] || die "--allowed-source required (the Asus tailnet IP)"
-[[ $SOURCES =~ ^[0-9a-fA-F:./,]+$ ]] || die "bad --allowed-source"
+python3 - "$SOURCES" <<'PY' || die "--allowed-source must list single IP addresses (bare, or /32 or /128), never a range"
+import ipaddress, sys
+items = [i.strip() for i in sys.argv[1].split(",") if i.strip()]
+ok = bool(items)
+for i in items:
+    try:
+        n = ipaddress.ip_network(i, strict=False)
+    except ValueError:
+        ok = False
+        break
+    ok = ok and n.prefixlen == n.max_prefixlen
+sys.exit(0 if ok else 1)
+PY
 if [ -z "$KEYSRC" ]; then
   [ "$DRY" = 1 ] || [ -f "$KEY_FILE" ] || die "--gcp-key-file required on first install"
 elif [ ! -f "$KEYSRC" ] && [ "$DRY" = 0 ]; then
   die "key file not found: $KEYSRC"
 fi
-for c in uv systemctl python3 openssl; do
+for c in uv systemctl python3; do
   if ! command -v "$c" >/dev/null; then
     if [ "$DRY" = 1 ]; then echo "(dry-run: missing $c)"; else die "missing prerequisite: $c"; fi
   fi
@@ -147,7 +159,7 @@ if [ -n "$KEYSRC" ]; then
 fi
 if [ ! -e "$ENV_FILE" ]; then
   if [ "$DRY" = 1 ]; then
-    echo "+ create $ENV_FILE (0600 root) with a fresh BROKER_TOKEN from openssl rand -hex 32"
+    echo "+ create $ENV_FILE (0600 root) with a fresh BROKER_TOKEN (generated in python, never on argv)"
   else
     (
       umask 077
@@ -156,7 +168,15 @@ if [ ! -e "$ENV_FILE" ]; then
         printf '%s\n' "${ENV_DEFAULTS[@]}"
       } >"$ENV_FILE"
     )
-    sed -i "s#^BROKER_LISTEN=.*#BROKER_LISTEN=$LISTEN#; s#^BROKER_ALLOWED_SOURCES=.*#BROKER_ALLOWED_SOURCES=$SOURCES#; s#^BROKER_TOKEN=.*#BROKER_TOKEN=$(openssl rand -hex 32)#" "$ENV_FILE"
+    # the token is generated inside python and written to the file: it is never on any command line
+    python3 -c '
+import re, secrets, sys
+path, listen, sources = sys.argv[1:4]
+text = open(path).read()
+for key, val in (("BROKER_LISTEN", listen), ("BROKER_ALLOWED_SOURCES", sources), ("BROKER_TOKEN", secrets.token_hex(32))):
+    text = re.sub(r"(?m)^%s=.*$" % key, lambda m, k=key, v=val: "%s=%s" % (k, v), text)
+open(path, "w").write(text)
+' "$ENV_FILE" "$LISTEN" "$SOURCES"
     chown root:root "$ENV_FILE"; chmod 0600 "$ENV_FILE"
   fi
 else

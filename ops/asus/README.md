@@ -13,7 +13,8 @@ studio-agent (uid studio-agent) --127.0.0.1:8888--> studio-proxy (squid, uid pro
 - **Web egress (squid).** Exactly two names: `bedrock-runtime.ap-south-1.amazonaws.com` and `api.typesafe.ai` (`/etc/studio-proxy/hosts.txt`, one exact name per line).
   `CONNECT` to `:443` only; plain HTTP, other ports and **IP-literal targets (v4 and v6) are denied first** and with a plain TCP reset (no `200`, no handshake with the proxy's
   throwaway certificate). Matching never uses reverse DNS (`dstdomain -n`): a spoofed PTR cannot turn an IP into an allowlisted name. `ssl_bump peek` reads the TLS ClientHello and
-  `splice`s (blind tunnel) only when the **server name (SNI)** is in the same list; otherwise the connection is terminated. There is no bump action: nothing is decrypted and no
+  `splice`s (blind tunnel) only when the **server name (SNI)** is in the same list; otherwise the connection is terminated. A ClientHello **without SNI** is terminated too
+  (Squid's own `ssl::server_name` falls back to the CONNECT host, so an external ACL fed the real client SNI, `sni-check.sh`, decides). There is no bump action: nothing is decrypted and no
   CA is trusted anywhere. Squid insists on a certificate when `ssl-bump` is on, so the installer generates a throwaway `splice-only.pem` (0640 root:proxy) that signs nothing.
   No disk cache; the access log (journal, tag `squid`) carries only status, method, host:port and SNI.
 - **No Google on this host.** There is no `*.googleapis.com` (or STS) name on the allowlist: Google front ends route on the HTTP `Host` header whatever the SNI says, so an
