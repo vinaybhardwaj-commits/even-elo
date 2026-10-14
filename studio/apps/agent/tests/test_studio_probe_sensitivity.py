@@ -48,6 +48,11 @@ CASES = {
         "DROP SCHEMA extra CASCADE",
         "test_every_relation_in_every_schema_outside_the_grant_list_is_denied",
     ),
+    "CREATE on schema public (extension / object creation path)": (
+        "GRANT CREATE ON SCHEMA public TO studio_gov_ro",
+        "REVOKE CREATE ON SCHEMA public FROM studio_gov_ro",
+        "test_no_server_side_egress_primitives_dblink_postgres_fdw",
+    ),
     "PUBLIC-executable SECURITY DEFINER function that writes": (
         "CREATE FUNCTION public.studio_probe_sd() RETURNS void LANGUAGE sql SECURITY DEFINER AS $$ UPDATE hospitals SET name = name $$",
         "DROP FUNCTION public.studio_probe_sd()",

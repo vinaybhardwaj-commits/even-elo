@@ -252,3 +252,12 @@ def test_connection_limit_and_timeouts_are_set():
     assert scalar("SELECT current_setting('statement_timeout')") == "15s"
     assert scalar("SELECT current_setting('idle_in_transaction_session_timeout')") == "30s"
     assert scalar("SELECT current_setting('default_transaction_read_only')") == "on"
+
+
+def test_no_server_side_egress_primitives_dblink_postgres_fdw():
+    """CREATE EXTENSION dblink / postgres_fdw must fail with InsufficientPrivilege; neither installed or
+    callable; no CREATE on the database or any schema; no foreign servers or FDW usage."""
+    from tests.egress import assert_no_egress
+
+    with psycopg.connect(DSN, autocommit=False, prepare_threshold=None) as conn:
+        assert_no_egress(conn, "studio_gov_ro")

@@ -273,3 +273,49 @@ def test_read_tool_sql_runs_against_the_real_schema_shape(pg_uri):
             c.execute("INSERT INTO hospitals (code, name) VALUES ('H2','x')")
         c.execute("SET default_transaction_read_only = off")
         c.execute("DROP SCHEMA tools CASCADE")
+
+
+def test_studio_app_role_has_no_create_and_no_server_side_egress_after_migration(migrated, pg_uri):
+    """Simulate PG14-style defaults (CREATE on public for PUBLIC, CREATE on the database for the role),
+    re-run the idempotent migration, then run the egress checks as studio_app."""
+    from tests.egress import assert_no_egress
+
+    with psycopg.connect(pg_uri, autocommit=True) as c:
+        c.execute("GRANT CREATE ON SCHEMA public TO PUBLIC")
+        c.execute("SELECT 1")
+        db = c.execute("SELECT current_database()").fetchone()[0]
+        c.execute(f'GRANT CREATE ON DATABASE "{db}" TO studio_app')
+    apply_migration.apply(pg_uri, "studio_app")
+    with as_app(pg_uri) as c:
+        c.autocommit = False
+        assert_no_egress(c, "studio_app")
+
+
+def test_egress_checks_catch_a_role_that_may_create(migrated, pg_uri):
+    """Sensitivity: the owner/superuser (CREATE everywhere, may CREATE EXTENSION) must FAIL the checks."""
+    from tests.egress import assert_no_egress
+
+    with psycopg.connect(pg_uri, autocommit=False) as c:
+        with pytest.raises(AssertionError, match="CREATE"):
+            assert_no_egress(c, "superuser")
+    with psycopg.connect(pg_uri, autocommit=True) as c:
+        c.execute("DROP ROLE IF EXISTS egress_probe")
+        c.execute("CREATE ROLE egress_probe NOLOGIN")
+        c.execute("GRANT CREATE ON SCHEMA public TO egress_probe")
+    with psycopg.connect(pg_uri, autocommit=False) as c:
+        c.execute("SET ROLE egress_probe")
+        with pytest.raises(AssertionError, match="CREATE on"):
+            assert_no_egress(c, "egress_probe")
+
+
+def test_create_extension_is_refused_for_the_app_role_when_the_extension_exists(migrated, pg_uri):
+    """Uses pgvector (shipped with the scratch server, not trusted) to prove the mechanism for a role
+    without superuser: CREATE EXTENSION raises InsufficientPrivilege. dblink/postgres_fdw are contrib and
+    absent from the scratch server; the live probe covers them against the real role."""
+    with as_app(pg_uri) as c:
+        avail = c.execute("SELECT count(*) FROM pg_available_extensions WHERE name = 'vector'").fetchone()[0]
+        if not avail:
+            pytest.skip("no stand-in extension on this server")
+        c.autocommit = False
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            c.execute("CREATE EXTENSION vector")

@@ -67,4 +67,14 @@ GRANT SELECT, INSERT, DELETE ON studio_nonce TO {{app_role}};
 GRANT SELECT, INSERT, UPDATE, DELETE ON studio_threads TO {{app_role}};
 GRANT SELECT, INSERT, UPDATE, DELETE ON checkpoint_migrations, checkpoints, checkpoint_blobs, checkpoint_writes TO {{app_role}};
 
+-- No CREATE anywhere for the app role (or PUBLIC): with CREATE a role could add objects, and the
+-- server-side egress extensions (dblink, postgres_fdw) are only a CREATE EXTENSION away for roles
+-- that may create in the database. PG14 and older grant CREATE on schema public to PUBLIC by default.
+DO $$
+BEGIN
+  EXECUTE format('REVOKE CREATE ON DATABASE %I FROM PUBLIC, {{app_role}}', current_database());
+END
+$$;
+REVOKE CREATE ON SCHEMA public FROM PUBLIC, {{app_role}};
+
 INSERT INTO studio_migrations (id) VALUES ('0001_studio') ON CONFLICT (id) DO NOTHING;
