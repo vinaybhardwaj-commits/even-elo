@@ -27,7 +27,21 @@ ops/neon/run-roles.sh --login "$XDG_RUNTIME_DIR/owner-url"
 # 4. probe once with the new DSN
 GOV_RO_DATABASE_URL="$(<"$XDG_RUNTIME_DIR/gov-ro-url")" uv run --directory studio/apps/agent pytest tests/test_lc1_live_probe.py -q
 ```
-Then move the DSN into the even-studio Vercel project and the Asus agent env (never even-elo), and destroy the files. Rotate later with step 2 + 3 (same file discipline).
+Then move the DSN into the even-studio Vercel project and the Asus agent env (never even-elo), and destroy the files. To rotate later, follow **Rotation** below: do NOT just repeat steps 2 and 3.
+
+## Rotation (the role is already LOGIN)
+Resetting a password on a live LOGIN role is where the API's side effects bite: if `reset_password` adds `neon_superuser` (open question b), a naive repeat of steps 2 + 3 leaves the role LOGIN-able *and* a member between the reset and the check (reproduced in the tests). So:
+```bash
+# step 0: take the role offline in its OWN committed statement (idempotent, no password involved)
+ops/neon/run-roles.sh --nologin "$XDG_RUNTIME_DIR/owner-url"                  # add --role studio_app for the state role
+# step 1: Neon issues a new password into a NEW 0600 DSN file (an existing OUT is never overwritten)
+ops/neon/neon-role.sh reset-password "$XDG_RUNTIME_DIR/neon-api-key" "$P" "$B" studio_gov_ro "$XDG_RUNTIME_DIR/gov-ro-url-new" --dsn-from "$XDG_RUNTIME_DIR/owner-url"
+# step 2: memberships + grants re-checked, then LOGIN
+ops/neon/run-roles.sh --login "$XDG_RUNTIME_DIR/owner-url"
+# step 3: probe with the new DSN, swap it into both env stores, destroy old and new files
+```
+- Containment is automatic too: **a failed `--login` itself issues `ALTER ROLE ... NOLOGIN` (its own committed statement) before exiting non-zero**, so a role the API made a member of anything can never stay LOGIN-able after a failed check. It prints `NOLOGIN (contained)`; fix the cause (a `neon_superuser` member cannot be un-granted by the owner: drop the role and stop), then run `--login` again. Between step 0 and a successful step 2 the Studio has no database access (plan a short window; the old DSN stops working at step 0).
+- **If the OUT file is empty** (the script was killed, e.g. `kill -9`/OOM, after the reset call): the password was already rotated server-side and is lost. Delete the empty OUT (and shred any leftover `neon-role.*/curl.cfg` in `$XDG_RUNTIME_DIR` or `/dev/shm`: it holds the API key), then **reset again**. Normal failures, `INT`, `TERM` and `HUP` remove the OUT and the curl config themselves; only an uncatchable kill leaves them.
 
 ## Why SQL creates the roles, and the API only issues passwords
 Roles created through the Neon API/Console are granted `neon_superuser`, which a non-superuser owner cannot revoke, and the owner is not ADMIN of them (refute R12: the role would be a `neon_superuser` member with no grants, LOGIN-able). Roles created by SQL get no such membership and the creator holds ADMIN (PG16+). A plaintext `ALTER ROLE ... PASSWORD` over SQL is not allowed (it would put the password in server logs), and Neon rejects SCRAM verifiers, hence the API for the password.

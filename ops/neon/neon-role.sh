@@ -62,10 +62,12 @@ cleanup() {
     if [[ -f $f ]]; then shred -u "$f" 2>/dev/null || rm -f "$f"; fi
   done
   rmdir "$tmp" 2>/dev/null || true
-  # A failed run must not leave a half-written output behind.
+  # A failed or interrupted run must not leave an (empty or partial) output behind. If the reset call was
+  # already made, the password was rotated server-side and is lost: the runbook says reset again.
   if [[ $rc -ne 0 && -n $out_created && -f $out_created ]]; then shred -u "$out_created" 2>/dev/null || rm -f "$out_created"; fi
 }
 trap cleanup EXIT
+trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 

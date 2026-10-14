@@ -146,6 +146,7 @@ class MockNeon:
     def __init__(self, cluster=None):
         self.cluster, self.requests, self.hidden, self.add_superuser_on_reset = cluster, [], set(), False
         self.issued = {}
+        self.reset_delay = 0.0  # seconds to hold the response AFTER the server-side rotation (kill tests)
         outer = self
 
         class H(BaseHTTPRequestHandler):
@@ -188,6 +189,8 @@ class MockNeon:
                         outer.cluster.su_exec(f"ALTER ROLE {role} PASSWORD '{pw}'")  # what Neon does server-side
                         if outer.add_superuser_on_reset:
                             outer.cluster.su_exec(f"GRANT neon_superuser TO {role}")
+                    if outer.reset_delay:
+                        time.sleep(outer.reset_delay)
                     return self._send(200, {"role": {"name": role, "password": pw}, "operations": []})
                 return self._send(404, {"message": "no such route"})
 

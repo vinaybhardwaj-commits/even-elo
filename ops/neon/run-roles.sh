@@ -7,9 +7,13 @@
 #     2. neon-role.sh reset-password KEY PROJECT BRANCH R OUT --dsn-from OWNER_URL_FILE   (Neon issues the password)
 #     3. run-roles.sh --login [--role R] OWNER_URL_FILE    memberships re-checked, then ALTER ROLE R LOGIN
 #     4. probe (tests/test_lc1_live_probe.py, tests/test_studio_app_role_probe.py)
+#   ROTATION (the role is already LOGIN): run-roles.sh --nologin FIRST (own committed statement), then step 2, then
+#   step 3. A FAILED --login also issues the NOLOGIN statement itself before exiting non-zero (contain, not
+#   just detect): a role the API made a member of neon_superuser must not stay LOGIN-able.
 #
 #   --role studio_gov_ro (default, governance DB: 0001_roles.sql) | studio_app (studio DB: 0002_studio_app_role.sql;
 #   its table grants come from apply_migration.py, run before step 3)
+#   --nologin                          set the role NOLOGIN in its own committed statement (rotation step 0)
 #   --dry-run                          print the SQL for the chosen step, connect to nothing
 #   --allow-disk-tmp                   allow a disk-backed temp dir (default: tmpfs only)
 #
@@ -25,11 +29,12 @@ umask 077
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 psql_bin=${PSQL:-psql}
 
-allow_disk=0 login=0 dry=0 role=studio_gov_ro
+allow_disk=0 login=0 nologin=0 dry=0 role=studio_gov_ro
 while [[ ${1:-} == --* ]]; do
   case $1 in
     --allow-disk-tmp) allow_disk=1 ;;
     --login) login=1 ;;
+    --nologin) nologin=1 ;;
     --dry-run) dry=1 ;;
     --role) role=${2:-}; shift ;;
     *) echo "unknown option $1" >&2; exit 2 ;;
@@ -41,7 +46,11 @@ case $role in
   studio_app) setup_sql=0002_studio_app_role.sql; probe_table=studio_audit; probe_priv=INSERT ;;
   *) echo "--role must be studio_gov_ro or studio_app" >&2; exit 2 ;;
 esac
-if [[ $login -eq 1 ]]; then sql_file=${SQL_FILE:-$here/0003_login.sql}; else sql_file=${SQL_FILE:-$here/$setup_sql}; fi
+if [[ $login -eq 1 && $nologin -eq 1 ]]; then echo "--login and --nologin are exclusive" >&2; exit 2; fi
+if [[ $nologin -eq 1 ]]; then sql_file=${SQL_FILE:-$here/0004_nologin.sql}
+elif [[ $login -eq 1 ]]; then sql_file=${SQL_FILE:-$here/0003_login.sql}
+else sql_file=${SQL_FILE:-$here/$setup_sql}; fi
+nologin_sql=$here/0004_nologin.sql
 
 if [[ $dry -eq 1 ]]; then
   echo "-- dry run: nothing is connected; no password is generated, read or sent by this script"
@@ -50,7 +59,7 @@ if [[ $dry -eq 1 ]]; then
   exit 0
 fi
 
-[[ $# -eq 1 ]] || { echo "usage: $0 [--allow-disk-tmp] [--login] [--role studio_gov_ro|studio_app] OWNER_URL_FILE | --dry-run" >&2; exit 2; }
+[[ $# -eq 1 ]] || { echo "usage: $0 [--allow-disk-tmp] [--login|--nologin] [--role studio_gov_ro|studio_app] OWNER_URL_FILE | --dry-run" >&2; exit 2; }
 owner_file=$1
 [[ -f $owner_file && -r $owner_file ]] || { echo "owner url file not readable" >&2; exit 2; }
 
@@ -71,6 +80,7 @@ cleanup() {
   rmdir "$tmp" 2>/dev/null || true
 }
 trap cleanup EXIT
+trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
@@ -95,8 +105,32 @@ open(os.environ["SERVICE_FILE"], "w").write("\n".join(lines) + "\n")
 PY
 chmod 600 "$tmp/svc"
 
-PGSERVICEFILE="$tmp/svc" "$psql_bin" -X -q --single-transaction -v ON_ERROR_STOP=1 \
-  -v "role=$role" -v "probe_table=$probe_table" -v "probe_priv=$probe_priv" \
-  -f "$sql_file" "service=owner" >/dev/null
+psql_run() { # psql_run SQL_FILE [--single-transaction]: stdout discarded, errors on stderr
+  local file=$1; shift
+  PGSERVICEFILE="$tmp/svc" "$psql_bin" -X -q "$@" -v ON_ERROR_STOP=1 \
+    -v "role=$role" -v "probe_table=$probe_table" -v "probe_priv=$probe_priv" \
+    -f "$file" "service=owner" >/dev/null
+}
+
+if [[ $nologin -eq 1 ]]; then
+  psql_run "$sql_file"   # a single statement: committed on its own
+  echo "$role: NOLOGIN (no password was touched)"
+  exit 0
+fi
+
+rc=0
+psql_run "$sql_file" --single-transaction || rc=$?
+
+if [[ $rc -ne 0 && $login -eq 1 ]]; then
+  # Contain, not just detect: whatever made the checks fail, the role must not stay LOGIN-able
+  # (a rotation runs on a role that is already LOGIN, and the API may just have added neon_superuser).
+  if psql_run "$nologin_sql" 2>/dev/null; then
+    echo "$role: login checks FAILED; role set NOLOGIN (contained). Fix the cause, then run --login again." >&2
+  else
+    echo "$role: login checks FAILED and NOLOGIN could not be confirmed: run --nologin immediately." >&2
+  fi
+  exit "$rc"
+fi
+[[ $rc -eq 0 ]] || exit "$rc"
 
 if [[ $login -eq 1 ]]; then echo "$role: LOGIN enabled (memberships and grants verified)"; else echo "$role: created/configured NOLOGIN (no password; next: neon-role.sh reset-password, then --login)"; fi
