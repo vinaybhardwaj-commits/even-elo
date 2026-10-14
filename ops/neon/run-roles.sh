@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
 # Apply ops/neon/0001_roles.sql with a fresh random password for studio_gov_ro.
 #
-#   ops/neon/run-roles.sh OWNER_URL_FILE OUT_FILE      # OWNER_URL_FILE: 0600 file holding the OWNER's DIRECT url
-#   ops/neon/run-roles.sh --dry-run                    # print the statements, password masked, connect to nothing
+#   ops/neon/run-roles.sh [--allow-disk-tmp] OWNER_URL_FILE OUT_FILE
+#       OWNER_URL_FILE: 0600 file holding the OWNER's DIRECT url (e.g. from `vercel env pull`)
+#   ops/neon/run-roles.sh --dry-run                    # print the statements, connect to nothing
 #
-# The owner URL is read from a file (e.g. written by `vercel env pull`), never taken from argv or the
-# environment. The password goes only through 0600 temp files and a psql variable; the resulting
-# GOV_RO url is written only to OUT_FILE (0600). Nothing secret is printed. The output url keeps the
-# owner url's host: swap in the pooled host if the app should use the pooler.
-# Env: PSQL (default psql), SQL_FILE (default: 0001_roles.sql next to this script).
+# The PLAINTEXT password never reaches the server: this script computes a SCRAM-SHA-256 verifier
+# client-side and the SQL sends only that. The plaintext lives only in OUT_FILE (0600), inside the
+# GOV_RO url. The owner URL is read from a file, never from argv or the environment; psql gets a
+# service file, so nothing secret is on any command line. Temp files live on tmpfs
+# ($XDG_RUNTIME_DIR, else /dev/shm); a disk-backed temp dir is refused unless --allow-disk-tmp.
+# The output url keeps the owner url's host: swap in the pooler host if the app should use it.
+# Env: PSQL (default psql), SQL_FILE (default: 0001_roles.sql next to this script),
+#      STUDIO_ROLES_SHM (tmpfs fallback dir, default /dev/shm).
 set -euo pipefail
 umask 077
 
@@ -18,21 +22,32 @@ psql_bin=${PSQL:-psql}
 
 if [[ ${1:-} == --dry-run ]]; then
   echo "-- dry run: nothing is connected, no password is generated"
-  echo "-- would: umask 077; openssl rand -hex 24 > <0600 temp file>; PWFILE=<that file>"
+  echo "-- would: umask 077; pick a tmpfs dir (\$XDG_RUNTIME_DIR, else /dev/shm); openssl rand -hex 24 > <0600 file>"
+  echo "-- would: compute SCRAM-SHA-256\$4096:<salt>\$<StoredKey>:<ServerKey> from it; only the verifier is sent"
   echo "-- would: $psql_bin -X -q -v ON_ERROR_STOP=1 -f $sql_file (service file from the owner url)"
-  echo "-- statements:"
-  sed -E "s/^(ALTER ROLE studio_gov_ro PASSWORD ).*/\1'********';/" "$sql_file"
-  echo "-- would write: the studio_gov_ro url with password ******** to OUT_FILE (0600)"
+  echo "-- statements (the verifier is read from a file into a psql variable, never printed):"
+  cat "$sql_file"
+  echo "-- would write: the studio_gov_ro url with the plaintext password to OUT_FILE (0600)"
   exit 0
 fi
 
-[[ $# -eq 2 ]] || { echo "usage: $0 OWNER_URL_FILE OUT_FILE | --dry-run" >&2; exit 2; }
+allow_disk=0
+if [[ ${1:-} == --allow-disk-tmp ]]; then allow_disk=1; shift; fi
+[[ $# -eq 2 ]] || { echo "usage: $0 [--allow-disk-tmp] OWNER_URL_FILE OUT_FILE | --dry-run" >&2; exit 2; }
 owner_file=$1
 out_file=$2
 [[ -f $owner_file && -r $owner_file ]] || { echo "owner url file not readable" >&2; exit 2; }
 [[ ! -e $out_file ]] || { echo "refusing to overwrite $out_file" >&2; exit 2; }
 
-tmp=$(mktemp -d)
+tmpbase=
+for d in "${XDG_RUNTIME_DIR:-}" "${STUDIO_ROLES_SHM:-/dev/shm}"; do
+  if [[ -n $d && -d $d && -w $d ]]; then tmpbase=$d; break; fi
+done
+if [[ -z $tmpbase ]]; then
+  [[ $allow_disk -eq 1 ]] || { echo "no tmpfs temp dir (\$XDG_RUNTIME_DIR, /dev/shm); refusing to put secrets on disk. Use --allow-disk-tmp to override." >&2; exit 2; }
+  tmpbase=${TMPDIR:-/tmp}
+fi
+tmp=$(mktemp -d "$tmpbase/studio-roles.XXXXXX")
 cleanup() {
   local f
   for f in "$tmp"/*; do
@@ -44,12 +59,15 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-export PWFILE="$tmp/pw"
-openssl rand -hex 24 > "$PWFILE"   # hex only: safe inside a url, no encoding needed
+pwfile="$tmp/pw"
+export VERIFIERFILE="$tmp/verifier"
+openssl rand -hex 24 > "$pwfile"   # hex only: safe inside a url, no encoding needed
 
-# Owner url -> psql service file (so no secret is ever on psql's argv).
-OWNER_URL_FILE=$owner_file SERVICE_FILE="$tmp/svc" python3 - <<'PY'
-import os, urllib.parse as u
+# One python step (script on stdin, paths via env): owner url -> psql service file, and the password
+# -> SCRAM-SHA-256 verifier (RFC 5802 / 7677, as `\password` does).
+OWNER_URL_FILE=$owner_file SERVICE_FILE="$tmp/svc" PWFILE_IN=$pwfile VERIFIER_OUT=$VERIFIERFILE python3 - <<'PY'
+import base64, hashlib, hmac, os, urllib.parse as u
+
 raw = open(os.environ["OWNER_URL_FILE"]).read().strip()
 p = u.urlsplit(raw)
 q = dict(u.parse_qsl(p.query))
@@ -64,13 +82,24 @@ if db: lines.append(f"dbname={u.unquote(db)}")
 for k, v in q.items():
     if k in ("sslmode", "channel_binding", "options", "sslrootcert"): lines.append(f"{k}={v}")
 open(os.environ["SERVICE_FILE"], "w").write("\n".join(lines) + "\n")
+
+password = open(os.environ["PWFILE_IN"]).read().strip().encode()  # hex: SASLprep is the identity
+salt = os.urandom(16)
+iterations = 4096
+salted = hashlib.pbkdf2_hmac("sha256", password, salt, iterations, 32)
+client_key = hmac.new(salted, b"Client Key", hashlib.sha256).digest()
+stored_key = hashlib.sha256(client_key).digest()
+server_key = hmac.new(salted, b"Server Key", hashlib.sha256).digest()
+b64 = lambda b: base64.b64encode(b).decode()
+verifier = f"SCRAM-SHA-256${iterations}:{b64(salt)}${b64(stored_key)}:{b64(server_key)}"
+open(os.environ["VERIFIER_OUT"], "w").write(verifier + "\n")
 PY
-chmod 600 "$tmp/svc"
+chmod 600 "$tmp/svc" "$VERIFIERFILE"
 
 PGSERVICEFILE="$tmp/svc" "$psql_bin" -X -q -v ON_ERROR_STOP=1 -f "$sql_file" "service=owner" >/dev/null
 
 # Build the GOV_RO url with bash string operations only (no argv exposure), keep the owner's host/db/params.
-raw=$(<"$owner_file"); pw=$(<"$PWFILE")
+raw=$(<"$owner_file"); pw=$(<"$pwfile")
 scheme=${raw%%://*}://
 rest=${raw#*://}
 authority=${rest%%/*}

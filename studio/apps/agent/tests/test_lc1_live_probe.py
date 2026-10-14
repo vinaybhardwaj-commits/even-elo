@@ -132,21 +132,40 @@ def test_ddl_is_denied(sql):
     assert attempt(sql) == "denied"
 
 
-def test_no_write_privilege_on_any_table_or_sequence():
+NON_SYSTEM = "n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg_toast%%' AND n.nspname NOT LIKE 'pg_temp%%'"
+
+
+def test_no_write_privilege_on_any_table_in_any_schema():
+    """INSERT/UPDATE use has_any_column_privilege: has_table_privilege ignores column-level grants
+    (GRANT UPDATE (status) ON incidents would slip through it)."""
     writable = scalar(
-        """SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-           WHERE n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg_toast%%'
-             AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
-             AND (has_table_privilege(c.oid, 'INSERT') OR has_table_privilege(c.oid, 'UPDATE')
+        f"""SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+           WHERE {NON_SYSTEM} AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
+             AND (has_any_column_privilege(c.oid, 'INSERT') OR has_any_column_privilege(c.oid, 'UPDATE')
                   OR has_table_privilege(c.oid, 'DELETE') OR has_table_privilege(c.oid, 'TRUNCATE'))"""
     )
     assert writable == 0
-    seq = scalar(
-        """SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-           WHERE c.relkind = 'S' AND n.nspname NOT IN ('pg_catalog', 'information_schema')
-             AND CASE WHEN c.relkind = 'S' THEN has_sequence_privilege(c.oid, 'UPDATE') ELSE false END"""
+
+
+def test_no_usage_or_update_on_any_sequence_in_any_schema():
+    """USAGE allows nextval(), which is a write; check both USAGE and UPDATE."""
+    for priv in ("USAGE", "UPDATE"):
+        n = scalar(
+            f"""SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+               WHERE c.relkind = 'S' AND {NON_SYSTEM}
+                 AND CASE WHEN c.relkind = 'S' THEN has_sequence_privilege(c.oid, '{priv}') ELSE false END"""
+        )
+        assert n == 0, priv
+
+
+def test_no_executable_security_definer_function_outside_system_schemas():
+    """A SECURITY DEFINER function runs with its owner's rights: if the role may EXECUTE one, it can
+    write however read-only its own grants are (PUBLIC gets EXECUTE on new functions by default)."""
+    n = scalar(
+        f"""SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+           WHERE p.prosecdef AND {NON_SYSTEM} AND has_function_privilege(p.oid, 'EXECUTE')"""
     )
-    assert seq == 0
+    assert n == 0
 
 
 def test_no_create_on_database_or_any_schema():
@@ -195,14 +214,15 @@ def test_role_has_no_memberships():
     assert scalar("SELECT count(*) FROM pg_auth_members WHERE member = (SELECT oid FROM pg_roles WHERE rolname = current_user)") == 0
 
 
-def _public_tables():
+def _relations():
+    """(schema, relation) for every table/view/matview/foreign table in every non-system schema."""
     with psycopg.connect(DSN, autocommit=False, prepare_threshold=None) as conn:
         try:
             return [
-                r[0]
+                (r[0], r[1])
                 for r in conn.execute(
-                    """SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-                       WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm', 'f') ORDER BY 1"""
+                    f"""SELECT n.nspname, c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                       WHERE {NON_SYSTEM} AND c.relkind IN ('r', 'p', 'v', 'm', 'f') ORDER BY 1, 2"""
                 ).fetchall()
             ]
         finally:
@@ -210,19 +230,19 @@ def _public_tables():
 
 
 def test_the_catalogue_is_enumerated_and_the_named_examples_exist():
-    tables = _public_tables()
+    public = {r for s_, r in _relations() if s_ == "public"}
     for named in ("profile_hospital_roles", "gov_capture_gaps", "incident_replies"):
-        assert named in tables, named
+        assert named in public, named
 
 
-def test_every_public_relation_outside_the_grant_list_is_denied():
-    granted = set(GOV_TABLES)
+def test_every_relation_in_every_schema_outside_the_grant_list_is_denied():
+    granted = {("public", t) for t in GOV_TABLES}
     checked = 0
-    for rel in _public_tables():
-        if rel in granted:
+    for schema, rel in _relations():
+        if (schema, rel) in granted:
             continue
         # profiles / profiles_with_roles have column grants only, so a whole-row read is denied too.
-        assert attempt(f'SELECT * FROM "{rel}" WHERE false') == "denied", rel
+        assert attempt(f'SELECT * FROM "{schema}"."{rel}" WHERE false') == "denied", f"{schema}.{rel}"
         checked += 1
     assert checked >= 3
 

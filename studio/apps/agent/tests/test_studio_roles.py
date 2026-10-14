@@ -55,7 +55,7 @@ def test_role_attributes_in_sql():
     assert sql.count("NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 5") == 2
     for setting in ("default_transaction_read_only = on", "statement_timeout = '15s'", "idle_in_transaction_session_timeout = '30s'"):
         assert setting in sql
-    assert "PASSWORD :'pw'" in sql and not re.search(r"PASSWORD\s+'", sql)
+    assert "PASSWORD :'verifier'" in sql and not re.search(r"PASSWORD\s+'", sql) and ":'pw'" not in sql
     assert sql.index("REVOKE ALL ON ALL TABLES") < sql.index("GRANT USAGE")
 
 
@@ -63,7 +63,7 @@ def test_dry_run_prints_statements_without_connecting_or_a_password(tmp_path):
     out = subprocess.run(["bash", str(SCRIPT), "--dry-run"], capture_output=True, text=True, check=True, env={"PATH": os.environ["PATH"], "PSQL": "/nonexistent/psql"})
     assert "CREATE ROLE studio_gov_ro" in out.stdout
     assert "openssl rand" in out.stdout
-    assert "PASSWORD '********'" in out.stdout and ":'pw'" not in out.stdout  # masked, no variable shown
+    assert "PASSWORD :'verifier'" in out.stdout and "SCRAM-SHA-256" in out.stdout  # a verifier variable, never a password
     assert not list(tmp_path.iterdir())
 
 
@@ -111,7 +111,7 @@ def run_wrapper(pg, owner_uri, tmp_path, tag):
     scratch.mkdir()
     r = subprocess.run(
         ["bash", str(SCRIPT), str(owner_file), str(out_file)],
-        capture_output=True, text=True, env={"PATH": os.environ["PATH"], "PSQL": psql, "TMPDIR": str(scratch)},
+        capture_output=True, text=True, env={"PATH": os.environ["PATH"], "PSQL": psql, "XDG_RUNTIME_DIR": str(scratch)},
     )
     return r, out_file, scratch
 
@@ -186,6 +186,154 @@ def test_a_failing_sql_run_still_shreds_its_temp_files_and_writes_no_url(pg, eve
     scratch.mkdir()
     r = subprocess.run(
         ["bash", str(SCRIPT), str(owner_file), str(out_file)],
-        capture_output=True, text=True, env={"PATH": os.environ["PATH"], "PSQL": pg[1], "TMPDIR": str(scratch), "SQL_FILE": str(bad)},
+        capture_output=True, text=True, env={"PATH": os.environ["PATH"], "PSQL": pg[1], "XDG_RUNTIME_DIR": str(scratch), "SQL_FILE": str(bad)},
     )
     assert r.returncode != 0 and not out_file.exists() and not list(scratch.iterdir())
+
+
+# ----- R7: the plaintext password never reaches the server -----
+
+
+def scram_verifier_matches(verifier: str, password: str) -> bool:
+    """Independent RFC 5802/7677 check: StoredKey/ServerKey recomputed from the password and the salt."""
+    import base64
+    import hashlib
+    import hmac
+
+    m = re.fullmatch(r"SCRAM-SHA-256\$(\d+):([A-Za-z0-9+/=]+)\$([A-Za-z0-9+/=]+):([A-Za-z0-9+/=]+)", verifier)
+    assert m, verifier
+    iters, salt, stored, server = int(m.group(1)), base64.b64decode(m.group(2)), m.group(3), m.group(4)
+    assert iters == 4096 and len(salt) == 16
+    salted = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, iters, 32)
+    ck = hmac.new(salted, b"Client Key", hashlib.sha256).digest()
+    return (
+        base64.b64encode(hashlib.sha256(ck).digest()).decode() == stored
+        and base64.b64encode(hmac.new(salted, b"Server Key", hashlib.sha256).digest()).decode() == server
+    )
+
+
+def _enable_scram_login(pg_server, owner_uri):
+    """Make the scratch server really check passwords for studio_gov_ro (trust is the pgserver default)."""
+    with psycopg.connect(owner_uri, autocommit=True) as c:
+        hba = Path(c.execute("SHOW hba_file").fetchone()[0])
+        c.execute("ALTER SYSTEM SET password_encryption = 'scram-sha-256'")
+        c.execute("ALTER SYSTEM SET log_statement = 'all'")
+        c.execute("ALTER SYSTEM SET log_min_error_statement = 'error'")
+        c.execute("ALTER SYSTEM SET log_min_duration_statement = 0")
+        hba.write_text("local all studio_gov_ro scram-sha-256\n" + hba.read_text())
+        c.execute("SELECT pg_reload_conf()")
+
+
+class ActivityPoller:
+    """Samples pg_stat_activity.query while the wrapper runs (what any other session could see)."""
+
+    def __init__(self, owner_uri):
+        import threading
+
+        self.uri, self.seen, self.stop = owner_uri, [], threading.Event()
+        self.thread = threading.Thread(target=self.run, daemon=True)
+
+    def run(self):
+        with psycopg.connect(self.uri, autocommit=True) as c:
+            while not self.stop.is_set():
+                self.seen += [r[0] for r in c.execute("SELECT query FROM pg_stat_activity WHERE pid <> pg_backend_pid()").fetchall() if r[0]]
+
+    def __enter__(self):
+        self.thread.start()
+        return self
+
+    def __exit__(self, *a):
+        self.stop.set()
+        self.thread.join(5)
+
+
+def test_plaintext_password_never_reaches_the_server_logs_or_activity(pg, evenelo, tmp_path):
+    import psycopg.errors
+
+    uri, psql = pg
+    name, owner_uri = evenelo
+    import pgserver  # noqa: F401  (pg fixture already required it)
+
+    with psycopg.connect(owner_uri) as c:
+        pgdata = Path(c.execute("SHOW data_directory").fetchone()[0])
+    log = pgdata / "log"
+    _enable_scram_login(None, owner_uri)
+
+    # 1) Normal run, with the statement log on 'all' and a poller watching pg_stat_activity.
+    mark = log.stat().st_size
+    with ActivityPoller(owner_uri) as poller:
+        r, out_file, scratch = run_wrapper(pg, owner_uri, tmp_path, "scram")
+    assert r.returncode == 0, r.stderr
+    url = out_file.read_text().strip()
+    password = re.match(r"postgres(?:ql)?://studio_gov_ro:([0-9a-f]{48})@", url).group(1)
+    server_log = log.read_bytes()[mark:].decode(errors="replace")
+    assert "ALTER ROLE studio_gov_ro PASSWORD" in server_log  # the statement IS logged (log_statement=all)...
+    assert password not in server_log  # ...but only with the verifier
+    assert all(password not in q for q in poller.seen)
+    assert password not in r.stdout + r.stderr
+
+    # 2) The stored verifier is SCRAM-SHA-256 and matches the plaintext only the output file holds.
+    with psycopg.connect(owner_uri) as c:
+        stored = c.execute("SELECT rolpassword FROM pg_authid WHERE rolname = 'studio_gov_ro'").fetchone()[0]
+    assert stored.startswith("SCRAM-SHA-256$")
+    assert scram_verifier_matches(stored, password)
+    assert not scram_verifier_matches(stored, password[::-1])
+
+    # 3) Login with the plaintext really works (scram enforced in pg_hba), a wrong password does not.
+    sock = owner_uri.split("host=")[1]
+    ok = psycopg.connect(host=sock, dbname=name, user="studio_gov_ro", password=password)
+    assert ok.execute("SELECT current_user").fetchone()[0] == "studio_gov_ro"
+    ok.close()
+    with pytest.raises(psycopg.OperationalError):
+        psycopg.connect(host=sock, dbname=name, user="studio_gov_ro", password="0" * 48)
+
+    # 4) A FAILING ALTER ROLE ... PASSWORD (error path; log_min_error_statement=error logs "STATEMENT: ...").
+    failing = tmp_path / "failing.sql"
+    failing.write_text(SQL.read_text().replace("PASSWORD :'verifier';", "PASSWORD :'verifier' VALID UNTIL 'not-a-timestamp';"))
+    mark = log.stat().st_size
+    owner_file = tmp_path / "owner-fail"
+    owner_file.write_text(owner_uri + "\n")
+    owner_file.chmod(0o600)
+    out2 = tmp_path / "out-fail"
+    scratch2 = tmp_path / "tmp-fail"
+    scratch2.mkdir()
+    r2 = subprocess.run(
+        ["bash", str(SCRIPT), str(owner_file), str(out2)],
+        capture_output=True, text=True, env={"PATH": os.environ["PATH"], "PSQL": psql, "XDG_RUNTIME_DIR": str(scratch2), "SQL_FILE": str(failing)},
+    )
+    assert r2.returncode != 0 and not out2.exists() and not list(scratch2.iterdir())
+    fail_log = log.read_bytes()[mark:].decode(errors="replace")
+    assert "STATEMENT:  ALTER ROLE studio_gov_ro PASSWORD" in fail_log and "ERROR" in fail_log  # the failing statement was logged...
+    assert "SCRAM-SHA-256$4096:" in fail_log  # ...with the verifier
+    pw2 = re.findall(r"[0-9a-f]{48}", fail_log)
+    assert pw2 == []  # no 48-hex plaintext anywhere in the log of the failure
+
+    # 5) Negative control: the OLD plaintext form WOULD have leaked on the same path (the harness can see it).
+    leak = "f" * 48
+    leak_sql = tmp_path / "leak.sql"
+    leak_sql.write_text(f"ALTER ROLE studio_gov_ro PASSWORD '{leak}' VALID UNTIL 'not-a-timestamp';\n")
+    mark = log.stat().st_size
+    subprocess.run([psql, "-X", "-q", "-f", str(leak_sql), owner_uri], capture_output=True, text=True)
+    assert leak in log.read_bytes()[mark:].decode(errors="replace")
+
+
+def test_temp_dir_is_tmpfs_only_unless_allowed(pg, evenelo, tmp_path):
+    _, psql = pg
+    _, owner_uri = evenelo
+    owner_file = tmp_path / "owner-tmpfs"
+    owner_file.write_text(owner_uri + "\n")
+    owner_file.chmod(0o600)
+    env = {"PATH": os.environ["PATH"], "PSQL": psql, "STUDIO_ROLES_SHM": str(tmp_path / "no-such-shm"), "TMPDIR": str(tmp_path)}
+    out = tmp_path / "o1"
+    r = subprocess.run(["bash", str(SCRIPT), str(owner_file), str(out)], capture_output=True, text=True, env=env)
+    assert r.returncode == 2 and "tmpfs" in r.stderr and not out.exists()
+    assert not list(tmp_path.glob("studio-roles.*"))  # nothing was written to the disk-backed dir
+    out2 = tmp_path / "o2"
+    r = subprocess.run(["bash", str(SCRIPT), "--allow-disk-tmp", str(owner_file), str(out2)], capture_output=True, text=True, env=env)
+    assert r.returncode == 0 and out2.exists() and not list(tmp_path.glob("studio-roles.*"))
+    # XDG_RUNTIME_DIR wins over /dev/shm.
+    xdg = tmp_path / "xdg"
+    xdg.mkdir()
+    out3 = tmp_path / "o3"
+    r = subprocess.run(["bash", str(SCRIPT), str(owner_file), str(out3)], capture_output=True, text=True, env={**env, "XDG_RUNTIME_DIR": str(xdg)})
+    assert r.returncode == 0 and not list(xdg.iterdir())

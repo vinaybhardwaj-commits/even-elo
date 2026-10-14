@@ -1,7 +1,7 @@
 -- Neon role for the Studio read-only governance connection (GOV_RO_DATABASE_URL).
 -- Run ONLY through ops/neon/run-roles.sh (owner role, DIRECT connection). Idempotent.
 -- Never run against Neon from CI or from a build step; the password never appears in this file:
--- it arrives as the psql variable :pw, read from a 0600 file by run-roles.sh.
+-- a SCRAM-SHA-256 verifier arrives as the psql variable :verifier, read from a 0600 file by run-roles.sh.
 --
 -- Grants are exactly: USAGE on schema public; SELECT on six governance tables; COLUMN grants
 -- (id, status, is_super_admin) on profiles_with_roles and (id, must_change_pin) on profiles.
@@ -36,9 +36,11 @@ GRANT SELECT ON physicians, physician_engagements, hospitals, gov_signal_snapsho
 GRANT SELECT (id, status, is_super_admin) ON profiles_with_roles TO studio_gov_ro;
 GRANT SELECT (id, must_change_pin) ON profiles TO studio_gov_ro;
 
--- Password: only when run-roles.sh supplied one (psql variable, never echoed).
-\set haspw `[ -s "$PWFILE" ] && echo 1 || echo 0`
-\if :haspw
-\set pw `cat "$PWFILE"`
-ALTER ROLE studio_gov_ro PASSWORD :'pw';
+-- Password: only when run-roles.sh supplied a SCRAM-SHA-256 VERIFIER (computed client-side from a random
+-- password that never leaves the machine). The plaintext is never sent to the server, so it cannot appear
+-- in server logs, STATEMENT: lines on errors, or pg_stat_activity. Never echoed.
+\set hasverifier `[ -s "$VERIFIERFILE" ] && echo 1 || echo 0`
+\if :hasverifier
+\set verifier `cat "$VERIFIERFILE"`
+ALTER ROLE studio_gov_ro PASSWORD :'verifier';
 \endif
