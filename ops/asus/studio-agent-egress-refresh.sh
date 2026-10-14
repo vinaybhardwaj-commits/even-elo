@@ -1,18 +1,24 @@
 #!/usr/bin/env bash
 # Rebuild the studio-agent egress layers from the CURRENT upstream DNS answer for the Neon host(s):
-#   1. nftables table inet studio_agent (uid studio-agent: proxy port + Neon:5432 only)
-#   2. systemd IPAddressAllow= on studio-agent.service (independent second layer)
+#   1. nftables table inet studio_agent:
+#        uid studio-agent  -> 127.0.0.1:8888 (squid) and 127.0.0.1:6432 (pgbouncer relay) only
+#        uid studio-pgrelay -> the pinned Neon IPs on :5432 only
+#   2. IPAddressAllow= on studio-pgrelay.service (second layer; the agent unit is static 127.0.0.1/32)
 #   3. /run/studio-agent/neon-pins.json  {"<host>": [ipv4..., ipv6...]}  (0640 root:studio-agent)
-#      The agent connects with hostaddr= taken from this file; the agent uid has no DNS and /etc/hosts is not touched.
-# Serialised with flock. The agent is restarted only when the pins changed.
+#   4. the relay's private hosts file /run/studio-agent/relay-hosts (via studio-pgrelay-render --hosts-only) and a reload of the relay when pins changed
+# The agent never sees Neon addresses: it only talks to the relay. Serialised with flock.
 # Resolution bypasses NSS, /etc/hosts and the resolved cache (resolvectl query --cache=no --synthesize=no, else dig @upstream).
 # If any host fails to resolve the script exits 1 and leaves the existing rules and pins as they are.
+# After a success it starts the relay and the agent if they are enabled but not running (boot-time retry, see unit Restart=).
 #   --check   render and `nft -c` only; addresses from $STUDIO_EGRESS_TEST_IPS; changes nothing.
 set -euo pipefail
 
 CONF=/etc/studio-agent/egress.conf
 SVC=studio-agent
+RELAY_SVC=studio-pgrelay
 PROXY_PORT=8888
+RELAY_PORT=6432
+RELAY_BIN=/usr/local/sbin/studio-pgrelay-render
 RUN_DIR=/run/studio-agent
 PINS=$RUN_DIR/neon-pins.json
 STAMP=/var/lib/studio-agent-egress-ok
@@ -22,11 +28,13 @@ CHECK=0
 
 if [ "$CHECK" = 1 ]; then
   NEON_HOSTS=${NEON_HOSTS:-example.invalid}
-  UID_AGENT=$(id -u "$SVC" 2>/dev/null || echo 65000) # user may not exist yet (dry-run)
+  UID_AGENT=$(id -u "$SVC" 2>/dev/null || echo 65000) # users may not exist yet (dry-run)
+  UID_RELAY=$(id -u "$RELAY_SVC" 2>/dev/null || echo 65001)
 else
   # shellcheck source=/dev/null
   . "$CONF"
   UID_AGENT=$(id -u "$SVC")
+  UID_RELAY=$(id -u "$RELAY_SVC")
   mkdir -p "$(dirname "$LOCK")"
   exec 9>"$LOCK"
   flock 9
@@ -108,16 +116,19 @@ delete table inet studio_agent
 table inet studio_agent {
   chain out {
     type filter hook output priority 0; policy accept;
-    # replies of the agent's own listener (inbound connections from the Funnel proxy)
-    meta skuid $UID_AGENT oifname "lo" ct state established,related accept
-    # the only loopback destination: the allowlist proxy
-    meta skuid $UID_AGENT ip daddr 127.0.0.1 tcp dport $PROXY_PORT accept
-NFT
-  [ -z "$v4" ] || echo "    meta skuid $UID_AGENT ip daddr { $v4 } tcp dport 5432 accept"
-  [ -z "$v6" ] || echo "    meta skuid $UID_AGENT ip6 daddr { $v6 } tcp dport 5432 accept"
-  cat <<NFT
+    # replies of the agent's and the relay's own listeners (inbound connections on loopback)
+    meta skuid { $UID_AGENT, $UID_RELAY } oifname "lo" ct state established,related accept
+    # the agent: the allowlist proxy and the Neon relay on loopback, nothing else
+    meta skuid $UID_AGENT ip daddr 127.0.0.1 tcp dport { $PROXY_PORT, $RELAY_PORT } accept
     meta skuid $UID_AGENT limit rate 10/minute log prefix "studio-agent-egress-drop "
     meta skuid $UID_AGENT counter drop
+    # the relay: the pinned Neon addresses on 5432, nothing else
+NFT
+  [ -z "$v4" ] || echo "    meta skuid $UID_RELAY ip daddr { $v4 } tcp dport 5432 accept"
+  [ -z "$v6" ] || echo "    meta skuid $UID_RELAY ip6 daddr { $v6 } tcp dport 5432 accept"
+  cat <<NFT
+    meta skuid $UID_RELAY limit rate 10/minute log prefix "studio-pgrelay-egress-drop "
+    meta skuid $UID_RELAY counter drop
   }
 }
 NFT
@@ -147,16 +158,24 @@ chmod 0640 "$newpins"
 changed=1
 if [ -f "$PINS" ] && cmp -s "$PINS" "$newpins"; then changed=0; fi
 
-# nft first so the new addresses are reachable before any agent sees them in the pins file
+# nft first so the new addresses are reachable before the relay sees them
 render_nft | nft -f -
 allow="127.0.0.1/32"
 while read -r a; do allow+=" $a"; done < <(awk 'NF {print $2}' <<<"$pairs" | sort -u)
-systemctl set-property "$SVC.service" IPAddressAllow= "IPAddressAllow=$allow"
+systemctl set-property "$RELAY_SVC.service" IPAddressAllow= "IPAddressAllow=$allow"
 
 mv -f "$newpins" "$PINS"
-if [ "$changed" = 1 ]; then
-  # --no-block: at boot/install we run inside studio-agent-nft.service, which the agent is ordered after
-  systemctl --no-block try-restart "$SVC.service" || true
+"$RELAY_BIN" --hosts-only  # (re)writes the relay's private hosts file in place; it must exist before the relay starts
+if [ "$changed" = 1 ] && systemctl is-active --quiet "$RELAY_SVC.service"; then
+  # --no-block: at boot/install we may run inside studio-agent-nft.service, which the agent is ordered after
+  systemctl --no-block reload "$RELAY_SVC.service" || true
 fi
+# boot-time retry: once Neon resolves, bring up whatever is enabled but not running
+for u in "$RELAY_SVC" "$SVC"; do
+  if systemctl is-enabled --quiet "$u.service" 2>/dev/null && ! systemctl is-active --quiet "$u.service"; then
+    systemctl reset-failed "$u.service" 2>/dev/null || true
+    systemctl --no-block start "$u.service" || true
+  fi
+done
 date +%s >"$STAMP"  # last-success stamp, read by post-session-check.sh
 echo "egress refreshed: $(wc -l <<<"$pairs") neon address(es), pins changed: $changed"

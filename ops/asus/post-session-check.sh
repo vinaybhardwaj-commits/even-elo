@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # L-C3/L-C4: after a session, look for a canary patient string on disk (plain and .gz) and in the journal.
 # The canary is read from stdin (or $STUDIO_CANARY) so it never appears in argv or shell history.
-# Only a hash of each hit path is printed (plus the path itself when it does not contain the canary),
+# /var /tmp /run /opt/studio-agent plus the journal (which includes the volatile one under /run/log/journal);
+# a canary in a file NAME alone is reported too. Only a hash of each hit path is printed (plus the path itself when it does not contain the canary),
 # never the canary and never file contents.
 #
 #   printf '%s' "$CANARY" | sudo ./post-session-check.sh [--dry-run]
@@ -10,7 +11,7 @@
 # missing/stale egress-refresh stamp, unreadable env; nothing worse seen).
 set -uo pipefail
 
-DIRS=(/var /tmp /opt/studio-agent)
+DIRS=(/var /tmp /run /opt/studio-agent)
 DRY=0
 [ "${1:-}" = "--dry-run" ] && DRY=1
 
@@ -18,6 +19,7 @@ if [ "$DRY" = 1 ]; then
   echo "+ read canary from stdin or STUDIO_CANARY (not echoed, not in argv)"
   for d in "${DIRS[@]}"; do
     echo "+ grep -rlaF -D skip -f <canary fd> $d      # plain files"
+    echo "+ find $d -print0 | grep -azF -f <canary fd>   # canary in a file NAME only"
     echo "+ find $d -name '*.gz|*.xz|*.zst' | zgrep/xzgrep/zstdgrep -qaF -f <canary fd>   # compressed rotated logs"
   done
   echo "+ journalctl --no-pager -a | grep -cF -f <canary fd>"
@@ -47,6 +49,10 @@ report_hit() { # $1 = path
   if [[ $1 == *"$canary"* ]]; then echo "HIT path-sha256:$h"; else echo "HIT path-sha256:$h  $1"; fi
   hits=$((hits + 1))
 }
+report_name_hit() { # $1 = path whose NAME contains the canary (content may be clean)
+  echo "HIT (file name contains the canary) path-sha256:$(printf '%s' "$1" | sha256sum | cut -c1-16)"
+  hits=$((hits + 1))
+}
 
 for d in "${DIRS[@]}"; do
   if [ ! -d "$d" ]; then echo "INCONCLUSIVE: $d is not a directory"; inconclusive=1; continue; fi
@@ -58,6 +64,9 @@ for d in "${DIRS[@]}"; do
     echo "INCONCLUSIVE: $(wc -l <"$errfile") read error(s) under $d (first: ${first//"$canary"/<canary>})"
     inconclusive=1
   fi
+  # canary in a file or directory NAME (no content hit needed)
+  while IFS= read -r -d '' f; do report_name_hit "$f"; done \
+    < <(find "$d" -xdev -print0 2>>"$finderr" | grep -azF -f <(printf '%s\n' "$canary"))
   for pair in "gz:zgrep" "xz:xzgrep" "zst:zstdgrep"; do
     ext=${pair%%:*} tool=${pair##*:}
     while IFS= read -r -d '' f; do

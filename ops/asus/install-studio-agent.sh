@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Install / upgrade the Studio agent on the Asus (Ubuntu, tailnet). Spec: OPS-PLAN-M0S2.md O2 (+R2 rulings).
+# Install / upgrade the Studio agent on the Asus (Ubuntu, tailnet). Spec: OPS-PLAN-M0S2.md O2 (+R2..R5 rulings).
 # Idempotent. Prints no secret; secrets move file-to-file or via stdin only. Needs root (NOPASSWD sudo).
 #
 #   sudo ./install-studio-agent.sh --tarball PATH --sha256 HEX --neon-host H [--neon-host H2 ...] [--dry-run [--render-dir DIR]]
 #     tarball = `git archive <commit> studio/apps/agent`, made by gov-orch and copied over ssh (no git credentials here)
 #   ssh t4 'cat KEY.json' | ssh asus 'sudo ./install-studio-agent.sh --receive-gcp-key'   (needs NOPASSWD sudo: no tty)
 #   sudo ./install-studio-agent.sh --rollback        stop the agent, funnel off (keeps env, key, egress rules)
-#   sudo ./install-studio-agent.sh --purge-secrets   stop the agent, shred env and key
+#   sudo ./install-studio-agent.sh --purge-secrets   stop the agent, funnel off, shred env, key and Neon credentials
 set -euo pipefail
 
 SVC=studio-agent
@@ -18,8 +18,16 @@ AGENT_REL=studio/apps/agent
 ETC_DIR=/etc/studio-agent
 ENV_FILE=$ETC_DIR/env
 KEY_FILE=$ETC_DIR/gcp-sa.json
-PROXY_CONF=$ETC_DIR/tinyproxy.conf
-PROXY_ALLOW=$ETC_DIR/tinyproxy.allow
+PROXY_DIR=/etc/studio-proxy
+PROXY_CONF=$PROXY_DIR/squid.conf
+PROXY_HOSTS=$PROXY_DIR/hosts.regex
+PROXY_CERT=$PROXY_DIR/splice-only.pem
+RELAY=studio-pgrelay
+RELAY_DIR=/etc/studio-pgrelay
+NEON_ENV=$RELAY_DIR/neon.env
+LOCAL_ENV=$RELAY_DIR/local.env
+RELAY_BIN=/usr/local/sbin/studio-pgrelay-render
+RELAY_PORT=6432
 EGRESS_CONF=$ETC_DIR/egress.conf
 REFRESH_BIN=/usr/local/sbin/studio-agent-egress-refresh
 GUARD_BIN=/usr/local/sbin/studio-agent-egress-guard
@@ -36,8 +44,9 @@ ENV_DEFAULTS=(
   BEDROCK_MODEL_SONNET=global.anthropic.claude-sonnet-5-5 BEDROCK_MODEL_HAIKU=global.anthropic.claude-haiku-5-5
   VERTEX_LOCATION=asia-northeast1 VERTEX_MODEL= TYPESAFE_API_KEY= JEV_MODEL=jev-latest
 )
+# GOV_RO_DATABASE_URL / STUDIO_DATABASE_URL are NOT operator-filled: the installer points them at the relay (127.0.0.1:6432).
 REQUIRED_VARS=(
-  GOV_RO_DATABASE_URL STUDIO_DATABASE_URL STUDIO_SERVICE_TOKEN STUDIO_ACTOR_SECRET
+  STUDIO_SERVICE_TOKEN STUDIO_ACTOR_SECRET
   AWS_STS_REGIONAL_ENDPOINTS AWS_ROLE_ARN GCP_AUDIENCE BEDROCK_MODEL_SONNET BEDROCK_MODEL_HAIKU TYPESAFE_API_KEY JEV_MODEL
 )
 
@@ -109,10 +118,14 @@ if [ "$MODE" = rollback ]; then
   exit 0
 fi
 if [ "$MODE" = purge ]; then
-  say "purge-secrets: stop the agent, shred env and key"
+  say "purge-secrets: stop the agent, funnel off, shred env, key and Neon credentials"
   run_t systemctl disable --now "$SVC.service"
+  run_t tailscale funnel --https=443 --set-path /agent off
+  run_t systemctl stop "$RELAY.service"
   run_t shred -u "$ENV_FILE"
   run_t shred -u "$KEY_FILE"
+  run_t shred -u "$NEON_ENV"
+  run_t shred -u "$LOCAL_ENV"
   exit 0
 fi
 
@@ -151,12 +164,12 @@ fi
 REL=$RELEASES/${SHA256:0:12}
 
 missing=()
-for c in uv tinyproxy nft systemctl tailscale python3 curl flock; do
+for c in uv squid pgbouncer nft systemctl tailscale python3 curl flock openssl; do
   command -v "$c" >/dev/null || missing+=("$c")
 done
 if [ ${#missing[@]} -gt 0 ]; then
   if [ "$DRY" = 1 ]; then echo "(dry-run: missing prerequisites: ${missing[*]})"
-  else die "missing prerequisites: ${missing[*]} (apt install tinyproxy nftables python3 curl bind9-dnsutils; uv from astral)"; fi
+  else die "missing prerequisites: ${missing[*]} (apt install squid-openssl pgbouncer nftables python3 curl openssl bind9-dnsutils; uv from astral)"; fi
 fi
 
 # ---------------------------------------------------------------- renderers
@@ -164,10 +177,10 @@ render_agent_unit() {
   cat <<EOT
 [Unit]
 Description=Even Studio agent (FastAPI, 127.0.0.1:$PORT)
-Requires=studio-agent-nft.service
+Requires=studio-agent-nft.service studio-pgrelay.service
 BindsTo=studio-proxy.service
 PartOf=studio-agent-nft.service
-After=network-online.target studio-agent-nft.service studio-proxy.service
+After=network-online.target studio-agent-nft.service studio-proxy.service studio-pgrelay.service
 Wants=network-online.target
 
 [Service]
@@ -216,7 +229,8 @@ ProtectKernelLogs=yes
 ProtectControlGroups=yes
 ProtectClock=yes
 ProtectHostname=yes
-# network: second egress layer independent of nftables (Neon IPs are added by the refresh script)
+# network: second egress layer independent of nftables. The agent talks to loopback only (squid :8888, relay :6432);
+# it holds no Neon address and no Neon credential.
 RestrictAddressFamilies=AF_INET AF_INET6
 IPAddressDeny=any
 IPAddressAllow=127.0.0.1/32
@@ -232,21 +246,47 @@ EOT
 render_proxy_unit() {
   cat <<EOT
 [Unit]
-Description=Studio agent egress allowlist proxy (127.0.0.1:$PROXY_PORT, default deny)
+Description=Studio agent egress proxy (squid: CONNECT :443, TLS server-name allowlist, no decryption; 127.0.0.1:$PROXY_PORT)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-User=tinyproxy
-Group=tinyproxy
-SupplementaryGroups=$SVC
-ExecStart=/usr/bin/tinyproxy -d -c $PROXY_CONF
+User=proxy
+Group=proxy
+ExecStart=/usr/sbin/squid -N -s -f $PROXY_CONF
 Restart=on-failure
 RestartSec=5
-NoNewPrivileges=yes
+UMask=0077
+LimitCORE=0
+MemorySwapMax=0
 PrivateTmp=yes
+PrivateDevices=yes
 ProtectSystem=strict
 ProtectHome=yes
+ProcSubset=pid
+ProtectProc=invisible
+RemoveIPC=yes
+RuntimeDirectory=studio-proxy
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+SystemCallErrorNumber=EPERM
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+InaccessiblePaths=-/opt/studio-agent -/etc/studio-agent -/etc/studio-pgrelay
 
 [Install]
 WantedBy=multi-user.target
@@ -255,34 +295,116 @@ EOT
 
 render_proxy_conf() {
   cat <<EOT
-Port $PROXY_PORT
-Listen 127.0.0.1
-Timeout 600
-Syslog On
-LogLevel Notice
-MaxClients 20
-DisableViaHeader Yes
-ConnectPort 443
-Filter "$PROXY_ALLOW"
-FilterDefaultDeny Yes
-FilterExtended On
-FilterURLs On
+# CONNECT to :443 only. ssl_bump peeks at the TLS ClientHello and splices (blind tunnel) only when the server name
+# (SNI) is in the allowlist; everything else is terminated. There is no bump action, so nothing is ever decrypted.
+# The certificate below is a throwaway that Squid insists on when ssl-bump is enabled; no client trusts it and it
+# signs nothing.
+http_port 127.0.0.1:$PROXY_PORT ssl-bump tls-cert=$PROXY_CERT generate-host-certificates=off
+acl allowed_dst dstdom_regex -i "$PROXY_HOSTS"
+acl allowed_sni ssl::server_name_regex -i "$PROXY_HOSTS"
+acl step1 at_step SslBump1
+acl SSL_ports port 443
+acl CONNECT method CONNECT
+http_access deny !CONNECT
+http_access deny !SSL_ports
+http_access allow CONNECT allowed_dst
+http_access deny all
+ssl_bump peek step1
+ssl_bump splice allowed_sni
+ssl_bump terminate all
+cache deny all
+cache_mem 8 MB
+cache_log /dev/null
+pid_filename none
+visible_hostname studio-proxy
+via off
+forwarded_for delete
+client_persistent_connections off
+shutdown_lifetime 3 seconds
+logformat studio %Ss/%03>Hs %rm %>rd:%>rP sni=%ssl::>sni
+access_log syslog:daemon.info studio
 EOT
 }
 
-render_proxy_allow() {
-  # FilterURLs On: tinyproxy matches the whole request target. A CONNECT target is "host:port", so these
-  # patterns accept only CONNECT to :443; any plain-HTTP request ("http://host/...") matches nothing and is refused.
+render_proxy_hosts() {
+  # one anchored regex per destination, used for both the CONNECT target (no reverse DNS, so IP literals never match)
+  # and the TLS server name
   cat <<'EOT'
-^sts\.amazonaws\.com:443$
-^sts\.ap-south-1\.amazonaws\.com:443$
-^bedrock-runtime\.ap-south-1\.amazonaws\.com:443$
-^api\.typesafe\.ai:443$
-^oauth2\.googleapis\.com:443$
-^iamcredentials\.googleapis\.com:443$
-^sts\.googleapis\.com:443$
-^aiplatform\.googleapis\.com:443$
-^[a-z0-9-]+-aiplatform\.googleapis\.com:443$
+^sts\.amazonaws\.com$
+^sts\.ap-south-1\.amazonaws\.com$
+^bedrock-runtime\.ap-south-1\.amazonaws\.com$
+^api\.typesafe\.ai$
+^oauth2\.googleapis\.com$
+^iamcredentials\.googleapis\.com$
+^sts\.googleapis\.com$
+^aiplatform\.googleapis\.com$
+^[a-z0-9-]+-aiplatform\.googleapis\.com$
+EOT
+}
+
+render_relay_unit() {
+  cat <<EOT
+[Unit]
+Description=Studio agent Neon relay (pgbouncer; TLS verify-full to the pinned Neon endpoint; 127.0.0.1:$RELAY_PORT)
+Requires=studio-agent-nft.service
+After=network-online.target studio-agent-nft.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$RELAY
+Group=$RELAY
+RuntimeDirectory=$RELAY
+RuntimeDirectoryMode=0750
+# the real Neon credentials stay in $NEON_ENV; the rendered config lives on tmpfs only
+ExecStartPre=+$RELAY_BIN
+ExecStartPre=+/usr/sbin/nft list table inet studio_agent
+ExecStart=/usr/sbin/pgbouncer /run/$RELAY/pgbouncer.ini
+ExecReload=+$RELAY_BIN
+ExecReload=/bin/kill -HUP \$MAINPID
+Restart=on-failure
+RestartSec=5
+# the relay has no DNS: it sees only the pinned addresses
+BindReadOnlyPaths=/run/studio-agent/relay-hosts:/etc/hosts
+UMask=0077
+LimitCORE=0
+MemorySwapMax=0
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProcSubset=pid
+ProtectProc=invisible
+RemoveIPC=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateUsers=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+SystemCallErrorNumber=EPERM
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+# pgbouncer logs through the native journal protocol (an AF_UNIX socket) when JOURNAL_STREAM is set, which would silently lose
+# every log line here; unset it so it logs to stdout, which systemd already connected to the journal
+UnsetEnvironment=JOURNAL_STREAM
+IPAddressDeny=any
+IPAddressAllow=127.0.0.1/32
+InaccessiblePaths=-/opt/studio-agent -/etc/studio-agent -/etc/studio-pgrelay -/run/systemd/resolve -/run/dbus -/run/nscd -/run/tailscale -/run/avahi-daemon -/var/run/dbus
+
+[Install]
+WantedBy=multi-user.target
 EOT
 }
 
@@ -322,15 +444,20 @@ PY
 say "0. preflight: Funnel capability and :443 handlers"
 preflight_funnel
 
-say "1. system user and directories"
-if ! id "$SVC" >/dev/null 2>&1; then
-  run useradd --system --home-dir "$APP_DIR" --no-create-home --shell /usr/sbin/nologin "$SVC"
-else
-  echo "user $SVC exists"
-fi
+say "1. system users and directories"
+for u in "$SVC:$APP_DIR" "$RELAY:/nonexistent"; do
+  name=${u%%:*} home=${u##*:}
+  if ! id "$name" >/dev/null 2>&1; then
+    run useradd --system --home-dir "$home" --no-create-home --shell /usr/sbin/nologin "$name"
+  else
+    echo "user $name exists"
+  fi
+done
 run install -d -o "$SVC" -g "$SVC" -m 0750 "$APP_DIR"
 run install -d -o root -g root -m 0755 "$RELEASES"
 run install -d -o root -g "$SVC" -m 0750 "$ETC_DIR"
+run install -d -o root -g root -m 0700 "$RELAY_DIR"
+run install -d -o root -g proxy -m 0750 "$PROXY_DIR"
 
 say "1b. remove the old marked Neon block from /etc/hosts (earlier releases edited it; the agent now uses pins)"
 if grep -q '^# BEGIN studio-agent-neon$' /etc/hosts 2>/dev/null; then
@@ -351,35 +478,57 @@ else
 fi
 
 say "2. config, units, egress scripts (rewritten only when their content changed)"
-PROXY_CHANGED=0 NFT_CHANGED=0 AGENT_UNIT_CHANGED=0 UNITS_CHANGED=0
+PROXY_CHANGED=0 NFT_CHANGED=0 AGENT_UNIT_CHANGED=0 RELAY_CHANGED=0 UNITS_CHANGED=0
 note_change() { # $1 = group (proxy|nft|agent|unit-only)
   [ "$WROTE" = 1 ] || return 0
   UNITS_CHANGED=1
-  case $1 in proxy) PROXY_CHANGED=1 ;; nft) NFT_CHANGED=1 ;; agent) AGENT_UNIT_CHANGED=1 ;; esac
+  case $1 in proxy) PROXY_CHANGED=1 ;; nft) NFT_CHANGED=1 ;; agent) AGENT_UNIT_CHANGED=1 ;; relay) RELAY_CHANGED=1 ;; esac
 }
-run_t systemctl disable --now tinyproxy.service
-run systemctl mask tinyproxy.service
-write_file "$PROXY_CONF" 0644 root:root < <(render_proxy_conf); note_change proxy
-write_file "$PROXY_ALLOW" 0644 root:root < <(render_proxy_allow); note_change proxy
+# stock units from the packages would grab ports (squid 3128, pgbouncer 6432) and run with stock configs
+for u in tinyproxy squid pgbouncer; do
+  run_t systemctl disable --now "$u.service"
+  run systemctl mask "$u.service"
+done
+run rm -f "$ETC_DIR/tinyproxy.conf" "$ETC_DIR/tinyproxy.allow"
+# earlier releases put the Neon addresses on the agent unit as a persistent override: the agent unit is now static
+run rm -rf /etc/systemd/system.control/studio-agent.service.d
+if [ ! -s "$PROXY_CERT" ]; then
+  if [ "$DRY" = 1 ]; then echo "+ openssl req -x509 ... > $PROXY_CERT (0640 root:proxy; throwaway splice-only certificate, never trusted, signs nothing)"
+  else
+    umask 077
+    openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj "/CN=studio-proxy-splice-only" \
+      -keyout "$PROXY_CERT.key" -out "$PROXY_CERT.crt" 2>/dev/null
+    cat "$PROXY_CERT.key" "$PROXY_CERT.crt" >"$PROXY_CERT"; rm -f "$PROXY_CERT.key" "$PROXY_CERT.crt"
+    chown root:proxy "$PROXY_CERT"; chmod 0640 "$PROXY_CERT"
+    umask 022
+  fi
+fi
+write_file "$PROXY_CONF" 0640 root:proxy < <(render_proxy_conf); note_change proxy
+write_file "$PROXY_HOSTS" 0640 root:proxy < <(render_proxy_hosts); note_change proxy
 write_file "$UNIT_DIR/studio-proxy.service" 0644 root:root < <(render_proxy_unit); note_change proxy
+write_file "$UNIT_DIR/$RELAY.service" 0644 root:root < <(render_relay_unit); note_change relay
 write_file "$UNIT_DIR/$SVC.service" 0644 root:root < <(render_agent_unit); note_change agent
 write_file "$EGRESS_CONF" 0644 root:root < <(printf 'NEON_HOSTS="%s"\n' "${NEON_HOSTS[*]}"); note_change nft
-for pair in "studio-agent-egress-refresh.sh:$REFRESH_BIN" "studio-agent-egress-guard.sh:$GUARD_BIN"; do
+for pair in "studio-agent-egress-refresh.sh:$REFRESH_BIN" "studio-agent-egress-guard.sh:$GUARD_BIN" "studio-pgrelay-render.sh:$RELAY_BIN"; do
   src=$HERE/${pair%%:*} dst=${pair##*:}
   WROTE=0; if ! cmp -s "$src" "$dst" 2>/dev/null; then WROTE=1; fi
   run install -m 0755 -o root -g root "$src" "$dst"
-  case $dst in "$REFRESH_BIN") note_change nft ;; esac
+  case $dst in "$REFRESH_BIN") note_change nft ;; "$RELAY_BIN") note_change relay ;; esac
 done
 write_file "$UNIT_DIR/studio-agent-nft.service" 0644 root:root < <(cat <<EOT
 [Unit]
-Description=Studio agent egress rules (nftables + IPAddressAllow + Neon pins)
+Description=Studio agent egress rules (nftables + Neon pins + relay hosts)
 After=network-online.target nftables.service
 Wants=network-online.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=$REFRESH_BIN
+# boot-time retry until Neon resolves; the script then starts the relay and the agent
+Restart=on-failure
+RestartSec=15
 
 [Install]
 WantedBy=multi-user.target
@@ -389,10 +538,13 @@ write_file "$UNIT_DIR/studio-agent-egress-refresh.service" 0644 root:root < <(ca
 [Unit]
 Description=Re-resolve Neon and refresh studio-agent egress
 After=network-online.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=oneshot
 ExecStart=$REFRESH_BIN
+Restart=on-failure
+RestartSec=15
 EOT
 ); note_change unit-only
 write_file "$UNIT_DIR/studio-agent-egress-refresh.timer" 0644 root:root < <(cat <<EOT
@@ -445,6 +597,38 @@ else
   done
 fi
 
+say "3b. Neon relay credentials: $NEON_ENV (real Neon URLs, 0600, the only persistent copy) and $LOCAL_ENV (loopback passwords)"
+if [ ! -e "$NEON_ENV" ]; then
+  write_file "$NEON_ENV" 0600 root:root < <(cat <<'EOT'
+# Real Neon connection URLs, filled by hand file-to-file: postgres://user:password@host/dbname?sslmode=require
+# The host must be one of the --neon-host names. The agent never sees these; only the relay (pgbouncer) does.
+GOV_NEON_URL=
+STUDIO_NEON_URL=
+EOT
+)
+else
+  echo "$NEON_ENV exists, left untouched"
+fi
+if [ ! -e "$LOCAL_ENV" ]; then
+  if [ "$DRY" = 1 ]; then echo "+ generate AGENT_GOV_PW / AGENT_STUDIO_PW with openssl rand -hex 24 into $LOCAL_ENV (0600 root)"
+  else
+    ( umask 077; printf 'AGENT_GOV_PW=%s\nAGENT_STUDIO_PW=%s\n' "$(openssl rand -hex 24)" "$(openssl rand -hex 24)" >"$LOCAL_ENV" )
+    chown root:root "$LOCAL_ENV"; chmod 0600 "$LOCAL_ENV"
+  fi
+fi
+# point the agent at the relay: loopback, local passwords, no Neon host or credential in the agent's environment
+if [ "$DRY" = 1 ]; then
+  echo "+ set GOV_RO_DATABASE_URL / STUDIO_DATABASE_URL in $ENV_FILE to postgresql://agent_*:<local pw>@127.0.0.1:$RELAY_PORT/{gov,studio}?sslmode=disable"
+elif [ -r "$ENV_FILE" ] && [ -r "$LOCAL_ENV" ]; then
+  gpw=$(sed -n 's/^AGENT_GOV_PW=//p' "$LOCAL_ENV"); spw=$(sed -n 's/^AGENT_STUDIO_PW=//p' "$LOCAL_ENV")
+  [ -n "$gpw" ] && [ -n "$spw" ] || die "$LOCAL_ENV is incomplete"
+  tmp=$(mktemp "$ENV_FILE.XXXXXX")
+  sed -e "s#^GOV_RO_DATABASE_URL=.*#GOV_RO_DATABASE_URL=postgresql://agent_gov:$gpw@127.0.0.1:$RELAY_PORT/gov?sslmode=disable#" \
+      -e "s#^STUDIO_DATABASE_URL=.*#STUDIO_DATABASE_URL=postgresql://agent_studio:$spw@127.0.0.1:$RELAY_PORT/studio?sslmode=disable#" \
+      "$ENV_FILE" >"$tmp"
+  chmod 0600 "$tmp"; chown "root:$SVC" "$tmp"; mv -f "$tmp" "$ENV_FILE"
+fi
+
 say "4. build release ${SHA256:0:12} as root (uv sync --frozen) into $REL; $CURRENT untouched until it succeeds"
 if [ -f "$REL/.complete" ]; then
   echo "release already built, reusing"
@@ -468,8 +652,8 @@ else
   fi
 fi
 
-say "5. proxy and egress layers (restarted only when their config changed)"
-run_t systemctl reset-failed studio-proxy.service studio-agent-nft.service "$SVC.service"
+say "5. proxy, egress and relay layers (restarted only when their config changed)"
+run_t systemctl reset-failed studio-proxy.service studio-agent-nft.service "$RELAY.service" "$SVC.service"
 [ "$UNITS_CHANGED" = 0 ] || run systemctl daemon-reload
 run systemctl enable studio-proxy.service studio-agent-nft.service studio-agent-egress-refresh.timer studio-agent-egress-guard.timer
 if [ "$PROXY_CHANGED" = 1 ] || ! systemctl is-active --quiet studio-proxy.service 2>/dev/null; then
@@ -494,6 +678,13 @@ else
   echo "env file not readable here (dry-run as non-root, or not created yet): treated as not ready"; ready=0
 fi
 [ -f "$KEY_FILE" ] || { echo "key file missing"; ready=0; }
+if [ -r "$NEON_ENV" ]; then
+  for v in GOV_NEON_URL STUDIO_NEON_URL; do
+    grep -Eq "^$v=.+" "$NEON_ENV" || { echo "$NEON_ENV: $v is empty"; ready=0; }
+  done
+else
+  echo "$NEON_ENV not readable here: treated as not ready"; ready=0
+fi
 
 # health = GET /agent/health answers 401 bad_service_token (the app is up behind its auth middleware),
 # sustained for 30 s with the unit's restart counter unchanged. Returns 0 healthy.
@@ -517,6 +708,13 @@ agent_healthy() {
 }
 
 if [ "$ready" = 1 ]; then
+  # relay first: it renders its config from neon.env on (re)start / reload
+  run systemctl enable "$RELAY.service"
+  if [ "$RELAY_CHANGED" = 1 ] || ! systemctl is-active --quiet "$RELAY.service" 2>/dev/null; then
+    run systemctl restart "$RELAY.service"
+  else
+    run systemctl reload "$RELAY.service"
+  fi
   prev=$(readlink -f "$CURRENT" 2>/dev/null || true)
   if [ "$prev" = "$REL" ] && [ "$AGENT_UNIT_CHANGED" = 0 ] && systemctl is-active --quiet "$SVC.service" 2>/dev/null; then
     echo "release $REL already current and the agent is active; nothing to restart"
@@ -559,19 +757,14 @@ if [ "$DRY" = 1 ]; then
   if [ -x "$HERE/studio-agent-egress-refresh.sh" ]; then
     STUDIO_EGRESS_TEST_IPS="192.0.2.10 2001:db8::10" "$HERE/studio-agent-egress-refresh.sh" --check
   fi
-  if command -v tinyproxy >/dev/null; then
-    sed "s#$ETC_DIR/#$DRYDIR/#g; s#^Port .*#Port 18999#" "$DRYDIR/tinyproxy.conf" >"$DRYDIR/tinyproxy.check.conf"
-    # tinyproxy has no check-only mode: start it on a scratch port; a bad config exits at once
-    tinyproxy -d -c "$DRYDIR/tinyproxy.check.conf" >"$DRYDIR/tinyproxy.check.out" 2>&1 &
-    tp=$!
-    sleep 1
-    if kill -0 "$tp" 2>/dev/null; then
-      kill "$tp"; wait "$tp" 2>/dev/null || true; echo "tinyproxy config parsed ok"
-    else
-      cat "$DRYDIR/tinyproxy.check.out" >&2; die "tinyproxy rejected the rendered config"
-    fi
+  if command -v squid >/dev/null; then
+    openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=dry-run" -keyout "$DRYDIR/dry.key" -out "$DRYDIR/dry.crt" 2>/dev/null
+    cat "$DRYDIR/dry.key" "$DRYDIR/dry.crt" >"$DRYDIR/splice-only.pem"
+    sed "s#$PROXY_DIR/#$DRYDIR/#g" "$DRYDIR/squid.conf" >"$DRYDIR/squid.check.conf"
+    if squid -k parse -f "$DRYDIR/squid.check.conf" >"$DRYDIR/squid.check.out" 2>&1; then echo "squid config parsed ok"
+    else cat "$DRYDIR/squid.check.out" >&2; die "squid rejected the rendered config"; fi
   else
-    echo "(tinyproxy not installed here; config check skipped)"
+    echo "(squid not installed here; config check skipped)"
   fi
 fi
 say "done (post-session check: ops/asus/post-session-check.sh)"
