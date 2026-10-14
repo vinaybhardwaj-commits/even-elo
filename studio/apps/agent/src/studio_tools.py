@@ -131,6 +131,17 @@ SELECT metric, value FROM (
 ) c ORDER BY ord
 """
 
+# The ONLY tables the read tools touch. ops/neon/0001_roles.sql grants SELECT on exactly these (a test
+# asserts the SQL grant list, this tuple, the tools' FROM/JOIN tables and the live probe agree).
+GOVERNANCE_TABLES = (
+    "physicians",
+    "physician_engagements",
+    "hospitals",
+    "gov_signal_snapshots",
+    "gov_interventions",
+    "incidents",
+)
+
 ALL_SQL = {
     "list_physicians": LIST_PHYSICIANS_SQL,
     "physician_profile": PHYSICIAN_PROFILE_SQL,

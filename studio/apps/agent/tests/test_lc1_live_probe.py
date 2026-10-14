@@ -20,6 +20,7 @@ DSN = os.environ.get("GOV_RO_DATABASE_URL", "")
 pytestmark = pytest.mark.skipif(not DSN, reason="GOV_RO_DATABASE_URL not set (live L-C1 probe)")
 
 GOV_TABLES = ("physicians", "physician_engagements", "hospitals", "gov_signal_snapshots", "gov_interventions", "incidents")
+COLUMN_GRANT_ONLY = ("profiles", "profiles_with_roles")  # id/status/is_super_admin and id/must_change_pin only
 WRITES = {
     "insert": "INSERT INTO {t} SELECT * FROM {t} WHERE false",
     "update": "UPDATE {t} SET id = id WHERE false",
@@ -27,20 +28,27 @@ WRITES = {
 }
 DDL = (
     "CREATE TABLE lc1_probe_tbl (x int)",
-    "CREATE TEMP TABLE lc1_probe_tmp (x int)",
     "CREATE SCHEMA lc1_probe_schema",
     "CREATE FUNCTION lc1_probe_fn() RETURNS int LANGUAGE sql AS 'SELECT 1'",
 )
 
 
 def attempt(sql: str) -> str:
-    """'denied' when Postgres refuses on privilege; 'ALLOWED' otherwise. Always rolls back."""
+    """'denied' only when Postgres refuses on PRIVILEGE; 'ALLOWED' otherwise. Always rolls back.
+
+    The read-only flags are switched off first, so a ReadOnlySqlTransaction can never mask a missing
+    privilege: only InsufficientPrivilege counts as denied (a ReadOnlySqlTransaction is a test failure).
+    """
     with psycopg.connect(DSN, autocommit=False, prepare_threshold=None) as conn:
         try:
+            conn.execute("SET transaction_read_only = off")
+            conn.execute("SET default_transaction_read_only = off")
             conn.execute(sql)
             return "ALLOWED"
-        except (psycopg.errors.InsufficientPrivilege, psycopg.errors.ReadOnlySqlTransaction):
+        except psycopg.errors.InsufficientPrivilege:
             return "denied"
+        except psycopg.errors.ReadOnlySqlTransaction:
+            return "READ-ONLY-FLAG-ONLY (privilege missing)"
         finally:
             conn.rollback()
 
@@ -143,7 +151,6 @@ def test_no_write_privilege_on_any_table_or_sequence():
 
 def test_no_create_on_database_or_any_schema():
     assert scalar("SELECT has_database_privilege(current_database(), 'CREATE')") is False
-    assert scalar("SELECT has_database_privilege(current_database(), 'TEMPORARY')") is False
     assert (
         scalar(
             """SELECT count(*) FROM pg_namespace WHERE nspname NOT IN ('pg_catalog', 'information_schema')
@@ -172,3 +179,56 @@ def test_session_read_only_is_on_when_the_studio_connects():
         assert asyncio.run(check()) == "on"
     finally:
         os.environ.pop("GOV_RO_DATABASE_URL", None)
+
+
+def test_temp_privilege_is_not_granted_to_the_role_itself():
+    """CREATE TEMP TABLE only works through PUBLIC's default TEMPORARY on the database (session-local,
+    nothing shared); the role must hold no direct grant of it, and CREATE on the database is false."""
+    direct = scalar(
+        """SELECT count(*) FROM aclexplode((SELECT datacl FROM pg_database WHERE datname = current_database())) a
+           WHERE a.grantee = (SELECT oid FROM pg_roles WHERE rolname = current_user)"""
+    )
+    assert direct == 0
+
+
+def test_role_has_no_memberships():
+    assert scalar("SELECT count(*) FROM pg_auth_members WHERE member = (SELECT oid FROM pg_roles WHERE rolname = current_user)") == 0
+
+
+def _public_tables():
+    with psycopg.connect(DSN, autocommit=False, prepare_threshold=None) as conn:
+        try:
+            return [
+                r[0]
+                for r in conn.execute(
+                    """SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                       WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm', 'f') ORDER BY 1"""
+                ).fetchall()
+            ]
+        finally:
+            conn.rollback()
+
+
+def test_the_catalogue_is_enumerated_and_the_named_examples_exist():
+    tables = _public_tables()
+    for named in ("profile_hospital_roles", "gov_capture_gaps", "incident_replies"):
+        assert named in tables, named
+
+
+def test_every_public_relation_outside_the_grant_list_is_denied():
+    granted = set(GOV_TABLES)
+    checked = 0
+    for rel in _public_tables():
+        if rel in granted:
+            continue
+        # profiles / profiles_with_roles have column grants only, so a whole-row read is denied too.
+        assert attempt(f'SELECT * FROM "{rel}" WHERE false') == "denied", rel
+        checked += 1
+    assert checked >= 3
+
+
+def test_connection_limit_and_timeouts_are_set():
+    assert scalar("SELECT rolconnlimit FROM pg_roles WHERE rolname = current_user") == 5
+    assert scalar("SELECT current_setting('statement_timeout')") == "15s"
+    assert scalar("SELECT current_setting('idle_in_transaction_session_timeout')") == "30s"
+    assert scalar("SELECT current_setting('default_transaction_read_only')") == "on"
