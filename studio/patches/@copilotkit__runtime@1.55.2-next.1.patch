@@ -1,0 +1,180 @@
+diff --git a/dist/graphql/resolvers/copilot.resolver.cjs b/dist/graphql/resolvers/copilot.resolver.cjs
+index afe249fd25ce403b930207b21da5c30cb4f5b779..9e998a52009e0807c5b2a183f1034b680dca9a82 100644
+--- a/dist/graphql/resolvers/copilot.resolver.cjs
++++ b/dist/graphql/resolvers/copilot.resolver.cjs
+@@ -68,7 +68,7 @@ let CopilotResolver = class CopilotResolver {
+ 			requestType: data.metadata.requestType,
+ 			"cloud.api_key_provided": !!ctx.request.headers.get("x-copilotcloud-public-api-key"),
+ 			...ctx.request.headers.get("x-copilotcloud-public-api-key") ? { "cloud.public_api_key": ctx.request.headers.get("x-copilotcloud-public-api-key") } : {},
+-			...ctx._copilotkit.baseUrl ? { "cloud.base_url": ctx._copilotkit.baseUrl } : { "cloud.base_url": "https://api.cloud.copilotkit.ai" }
++			...ctx._copilotkit.baseUrl ? { "cloud.base_url": ctx._copilotkit.baseUrl } : { "cloud.base_url": "https://cloud.invalid" }
+ 		});
+ 		let logger = ctx.logger.child({ component: "CopilotResolver.generateCopilotResponse" });
+ 		logger.debug({ data }, "Generating Copilot response");
+@@ -94,7 +94,7 @@ let CopilotResolver = class CopilotResolver {
+ 			}
+ 			if (process.env.COPILOT_CLOUD_BASE_URL) copilotCloudBaseUrl = process.env.COPILOT_CLOUD_BASE_URL;
+ 			else if (ctx._copilotkit.cloud?.baseUrl) copilotCloudBaseUrl = ctx._copilotkit.cloud?.baseUrl;
+-			else copilotCloudBaseUrl = "https://api.cloud.copilotkit.ai";
++			else copilotCloudBaseUrl = "https://cloud.invalid";
+ 			logger = logger.child({ copilotCloudBaseUrl });
+ 		}
+ 		logger.debug("Setting up subjects");
+diff --git a/dist/graphql/resolvers/copilot.resolver.mjs b/dist/graphql/resolvers/copilot.resolver.mjs
+index 36d0075cb65f5cbde8174170ac59dc4daf20ea50..a8109b83f84fc7a0f1d9e1d7fc7ec430d2eb7b07 100644
+--- a/dist/graphql/resolvers/copilot.resolver.mjs
++++ b/dist/graphql/resolvers/copilot.resolver.mjs
+@@ -67,7 +67,7 @@ let CopilotResolver = class CopilotResolver {
+ 			requestType: data.metadata.requestType,
+ 			"cloud.api_key_provided": !!ctx.request.headers.get("x-copilotcloud-public-api-key"),
+ 			...ctx.request.headers.get("x-copilotcloud-public-api-key") ? { "cloud.public_api_key": ctx.request.headers.get("x-copilotcloud-public-api-key") } : {},
+-			...ctx._copilotkit.baseUrl ? { "cloud.base_url": ctx._copilotkit.baseUrl } : { "cloud.base_url": "https://api.cloud.copilotkit.ai" }
++			...ctx._copilotkit.baseUrl ? { "cloud.base_url": ctx._copilotkit.baseUrl } : { "cloud.base_url": "https://cloud.invalid" }
+ 		});
+ 		let logger = ctx.logger.child({ component: "CopilotResolver.generateCopilotResponse" });
+ 		logger.debug({ data }, "Generating Copilot response");
+@@ -93,7 +93,7 @@ let CopilotResolver = class CopilotResolver {
+ 			}
+ 			if (process.env.COPILOT_CLOUD_BASE_URL) copilotCloudBaseUrl = process.env.COPILOT_CLOUD_BASE_URL;
+ 			else if (ctx._copilotkit.cloud?.baseUrl) copilotCloudBaseUrl = ctx._copilotkit.cloud?.baseUrl;
+-			else copilotCloudBaseUrl = "https://api.cloud.copilotkit.ai";
++			else copilotCloudBaseUrl = "https://cloud.invalid";
+ 			logger = logger.child({ copilotCloudBaseUrl });
+ 		}
+ 		logger.debug("Setting up subjects");
+diff --git a/dist/lib/runtime/copilot-runtime.cjs b/dist/lib/runtime/copilot-runtime.cjs
+index 8b21b7f08064051a72f7c9702b222136b956630d..da29b6841a11dea1c2ea4df76b5dcb97217533c0 100644
+--- a/dist/lib/runtime/copilot-runtime.cjs
++++ b/dist/lib/runtime/copilot-runtime.cjs
+@@ -115,7 +115,7 @@ var CopilotRuntime = class {
+ 			const publicApiKey = request.headers.get("x-copilotcloud-public-api-key");
+ 			const body = await (0, _copilotkit_shared.readBody)(request);
+ 			const forwardedProps = body?.forwardedProps;
+-			const cloudBaseUrl = process.env.COPILOT_CLOUD_BASE_URL || "https://api.cloud.copilotkit.ai";
++			const cloudBaseUrl = process.env.COPILOT_CLOUD_BASE_URL || "https://cloud.invalid";
+ 			require_telemetry_client.default.capture("oss.runtime.copilot_request_created", {
+ 				"cloud.guardrails.enabled": forwardedProps?.cloud?.guardrails !== void 0,
+ 				requestType: forwardedProps?.metadata?.requestType ?? "unknown",
+diff --git a/dist/lib/runtime/copilot-runtime.mjs b/dist/lib/runtime/copilot-runtime.mjs
+index eb5ddf85608d001fcafe9aa1538c185a654568d0..bc6ffc65cc0ae9949c03e47ef56c3c6232d786b9 100644
+--- a/dist/lib/runtime/copilot-runtime.mjs
++++ b/dist/lib/runtime/copilot-runtime.mjs
+@@ -114,7 +114,7 @@ var CopilotRuntime = class {
+ 			const publicApiKey = request.headers.get("x-copilotcloud-public-api-key");
+ 			const body = await readBody(request);
+ 			const forwardedProps = body?.forwardedProps;
+-			const cloudBaseUrl = process.env.COPILOT_CLOUD_BASE_URL || "https://api.cloud.copilotkit.ai";
++			const cloudBaseUrl = process.env.COPILOT_CLOUD_BASE_URL || "https://cloud.invalid";
+ 			telemetryClient.capture("oss.runtime.copilot_request_created", {
+ 				"cloud.guardrails.enabled": forwardedProps?.cloud?.guardrails !== void 0,
+ 				requestType: forwardedProps?.metadata?.requestType ?? "unknown",
+diff --git a/dist/v2/runtime/telemetry/scarf-client.cjs b/dist/v2/runtime/telemetry/scarf-client.cjs
+index a923413a0c48a7c1a60f6193ebc7f4f756bac1a4..178324f79858adbf503b248ff5b6d51ff1eb4b65 100644
+--- a/dist/v2/runtime/telemetry/scarf-client.cjs
++++ b/dist/v2/runtime/telemetry/scarf-client.cjs
+@@ -4,26 +4,10 @@ const require_package$1 = require('../../../package.cjs');
+ 
+ //#region src/v2/runtime/telemetry/scarf-client.ts
+ var import_package = /* @__PURE__ */ require_runtime.__toESM(require_package$1.default);
+-const SCARF_BASE_URL = `https://copilotkit.gateway.scarf.sh/${import_package.version}`;
++const SCARF_BASE_URL = "";
+ var ScarfClient = class {
+ 	constructor() {}
+-	async logEvent(properties) {
+-		try {
+-			const controller = new AbortController();
+-			const timeoutId = setTimeout(() => controller.abort(), 3e3);
+-			const queryParams = new URLSearchParams();
+-			Object.entries(properties).forEach(([key, value]) => {
+-				if (value !== null && value !== void 0) queryParams.append(key, String(value));
+-			});
+-			const url = `${SCARF_BASE_URL}?${queryParams.toString()}`;
+-			const response = await fetch(url, {
+-				method: "GET",
+-				signal: controller.signal
+-			});
+-			clearTimeout(timeoutId);
+-			if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+-		} catch {}
+-	}
++	async logEvent(_properties) {}
+ };
+ var scarf_client_default = new ScarfClient();
+ 
+diff --git a/dist/v2/runtime/telemetry/scarf-client.mjs b/dist/v2/runtime/telemetry/scarf-client.mjs
+index d682cd20fb09020516e525baded3dc49f7265fba..49e884a436d3ae8eb6daeeb5b339fb96d56c485b 100644
+--- a/dist/v2/runtime/telemetry/scarf-client.mjs
++++ b/dist/v2/runtime/telemetry/scarf-client.mjs
+@@ -4,26 +4,10 @@ import { require_package } from "../../../package.mjs";
+ 
+ //#region src/v2/runtime/telemetry/scarf-client.ts
+ var import_package = /* @__PURE__ */ __toESM(require_package());
+-const SCARF_BASE_URL = `https://copilotkit.gateway.scarf.sh/${import_package.version}`;
++const SCARF_BASE_URL = "";
+ var ScarfClient = class {
+ 	constructor() {}
+-	async logEvent(properties) {
+-		try {
+-			const controller = new AbortController();
+-			const timeoutId = setTimeout(() => controller.abort(), 3e3);
+-			const queryParams = new URLSearchParams();
+-			Object.entries(properties).forEach(([key, value]) => {
+-				if (value !== null && value !== void 0) queryParams.append(key, String(value));
+-			});
+-			const url = `${SCARF_BASE_URL}?${queryParams.toString()}`;
+-			const response = await fetch(url, {
+-				method: "GET",
+-				signal: controller.signal
+-			});
+-			clearTimeout(timeoutId);
+-			if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+-		} catch {}
+-	}
++	async logEvent(_properties) {}
+ };
+ var scarf_client_default = new ScarfClient();
+ 
+diff --git a/dist/v2/runtime/telemetry/telemetry-client.cjs b/dist/v2/runtime/telemetry/telemetry-client.cjs
+index f7829ec99a5feb17be2bda1060c3bb15eb4f7089..6d9d3ae35e7277d2183e15e5e2e7dfb16aa0ec95 100644
+--- a/dist/v2/runtime/telemetry/telemetry-client.cjs
++++ b/dist/v2/runtime/telemetry/telemetry-client.cjs
+@@ -7,7 +7,7 @@ let uuid = require("uuid");
+ 
+ //#region src/v2/runtime/telemetry/telemetry-client.ts
+ function isTelemetryDisabled() {
+-	return process.env.COPILOTKIT_TELEMETRY_DISABLED === "true" || process.env.COPILOTKIT_TELEMETRY_DISABLED === "1" || process.env.DO_NOT_TRACK === "true" || process.env.DO_NOT_TRACK === "1";
++	return true;
+ }
+ var TelemetryClient = class {
+ 	constructor({ telemetryDisabled, sampleRate } = {}) {
+@@ -15,7 +15,7 @@ var TelemetryClient = class {
+ 		this.telemetryDisabled = false;
+ 		this.sampleRate = .05;
+ 		this.anonymousId = `anon_${(0, uuid.v4)()}`;
+-		this.telemetryDisabled = telemetryDisabled ?? isTelemetryDisabled();
++		this.telemetryDisabled = true;
+ 		if (this.telemetryDisabled) {
+ 			this.setSampleRate(sampleRate);
+ 			return;
+diff --git a/dist/v2/runtime/telemetry/telemetry-client.mjs b/dist/v2/runtime/telemetry/telemetry-client.mjs
+index 89de61b8da1d4cba19bd3dbaf4d497a3c4281727..47aee86e4b62d8674a9733d0b89b18330e0e68ec 100644
+--- a/dist/v2/runtime/telemetry/telemetry-client.mjs
++++ b/dist/v2/runtime/telemetry/telemetry-client.mjs
+@@ -6,7 +6,7 @@ import { v4 } from "uuid";
+ 
+ //#region src/v2/runtime/telemetry/telemetry-client.ts
+ function isTelemetryDisabled() {
+-	return process.env.COPILOTKIT_TELEMETRY_DISABLED === "true" || process.env.COPILOTKIT_TELEMETRY_DISABLED === "1" || process.env.DO_NOT_TRACK === "true" || process.env.DO_NOT_TRACK === "1";
++	return true;
+ }
+ var TelemetryClient = class {
+ 	constructor({ telemetryDisabled, sampleRate } = {}) {
+@@ -14,7 +14,7 @@ var TelemetryClient = class {
+ 		this.telemetryDisabled = false;
+ 		this.sampleRate = .05;
+ 		this.anonymousId = `anon_${v4()}`;
+-		this.telemetryDisabled = telemetryDisabled ?? isTelemetryDisabled();
++		this.telemetryDisabled = true;
+ 		if (this.telemetryDisabled) {
+ 			this.setSampleRate(sampleRate);
+ 			return;

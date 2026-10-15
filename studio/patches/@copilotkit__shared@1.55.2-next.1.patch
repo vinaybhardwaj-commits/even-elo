@@ -1,0 +1,230 @@
+diff --git a/dist/a2ui-prompts.cjs b/dist/a2ui-prompts.cjs
+index b6872ecc5a74cad67dd496afe402f811be959c1b..ef14a440cc37d1cd58f6c8b3187df632225b80ee 100644
+--- a/dist/a2ui-prompts.cjs
++++ b/dist/a2ui-prompts.cjs
+@@ -88,7 +88,6 @@ Design principles:
+ - For side-by-side comparisons, use a container with structural children
+   (children: { componentId, path }) to repeat a card template per data item.
+ - Include images when relevant (logos, icons, product photos):
+-  - Prefer company logos via Google favicons: https://www.google.com/s2/favicons?domain=example.com&sz=128
+   - Do NOT invent Unsplash photo-IDs — they will 404. Only use real, known URLs.
+ - For buttons: action MUST use this exact nested format:
+     "action": { "event": { "name": "myAction", "context": { "key": "value" } } }
+diff --git a/dist/a2ui-prompts.mjs b/dist/a2ui-prompts.mjs
+index 7b92ba77933b6091096a4ec278e45766c1f0f2f2..d1fd5ce929e264bd46bac8487d6ddaee587abccd 100644
+--- a/dist/a2ui-prompts.mjs
++++ b/dist/a2ui-prompts.mjs
+@@ -87,7 +87,6 @@ Design principles:
+ - For side-by-side comparisons, use a container with structural children
+   (children: { componentId, path }) to repeat a card template per data item.
+ - Include images when relevant (logos, icons, product photos):
+-  - Prefer company logos via Google favicons: https://www.google.com/s2/favicons?domain=example.com&sz=128
+   - Do NOT invent Unsplash photo-IDs — they will 404. Only use real, known URLs.
+ - For buttons: action MUST use this exact nested format:
+     "action": { "event": { "name": "myAction", "context": { "key": "value" } } }
+diff --git a/dist/constants/index.cjs b/dist/constants/index.cjs
+index 09f76c28b328fd751cc24a6c1c51807388603cb8..2684ca8a092788491b8037946b5bdcd3d4ecbc6b 100644
+--- a/dist/constants/index.cjs
++++ b/dist/constants/index.cjs
+@@ -1,6 +1,6 @@
+ 
+ //#region src/constants/index.ts
+-const COPILOT_CLOUD_API_URL = "https://api.cloud.copilotkit.ai";
++const COPILOT_CLOUD_API_URL = "https://cloud.invalid";
+ const COPILOT_CLOUD_VERSION = "v1";
+ const COPILOT_CLOUD_CHAT_URL = `${COPILOT_CLOUD_API_URL}/copilotkit/${COPILOT_CLOUD_VERSION}`;
+ const COPILOT_CLOUD_PUBLIC_API_KEY_HEADER = "X-CopilotCloud-Public-Api-Key";
+diff --git a/dist/constants/index.mjs b/dist/constants/index.mjs
+index 9868d7a730502a2a785b57471e63bcbb3d0d390c..47e7643b30a4cd6a6d6b381f6a30e4f5fedd9463 100644
+--- a/dist/constants/index.mjs
++++ b/dist/constants/index.mjs
+@@ -1,5 +1,5 @@
+ //#region src/constants/index.ts
+-const COPILOT_CLOUD_API_URL = "https://api.cloud.copilotkit.ai";
++const COPILOT_CLOUD_API_URL = "https://cloud.invalid";
+ const COPILOT_CLOUD_VERSION = "v1";
+ const COPILOT_CLOUD_CHAT_URL = `${COPILOT_CLOUD_API_URL}/copilotkit/${COPILOT_CLOUD_VERSION}`;
+ const COPILOT_CLOUD_PUBLIC_API_KEY_HEADER = "X-CopilotCloud-Public-Api-Key";
+diff --git a/dist/index.umd.js b/dist/index.umd.js
+index bb93de6a55b36a50031004ff8fe15f059122c5ae..38b53888bf91444a1b265b26ec54a82e7351d8ec 100644
+--- a/dist/index.umd.js
++++ b/dist/index.umd.js
+@@ -890,7 +890,7 @@ ${getSeeMoreMarkdown(troubleshootingLink)}`;
+ 
+ //#endregion
+ //#region src/constants/index.ts
+-	const COPILOT_CLOUD_API_URL = "https://api.cloud.copilotkit.ai";
++	const COPILOT_CLOUD_API_URL = "https://cloud.invalid";
+ 	const COPILOT_CLOUD_VERSION = "v1";
+ 	const COPILOT_CLOUD_CHAT_URL = `${COPILOT_CLOUD_API_URL}/copilotkit/${COPILOT_CLOUD_VERSION}`;
+ 	const COPILOT_CLOUD_PUBLIC_API_KEY_HEADER = "X-CopilotCloud-Public-Api-Key";
+@@ -915,40 +915,10 @@ ${getSeeMoreMarkdown(troubleshootingLink)}`;
+ 
+ //#endregion
+ //#region src/telemetry/scarf-client.ts
+-	const SCARF_BASE_URL = `https://copilotkit.gateway.scarf.sh/${version}`;
++	const SCARF_BASE_URL = "";
+ 	var ScarfClient = class {
+ 		constructor() {}
+-		async logEvent(properties) {
+-			try {
+-				const controller = new AbortController();
+-				const timeoutId = setTimeout(() => controller.abort(), 3e3);
+-				const queryParams = new URLSearchParams();
+-				Object.entries(properties).forEach(([key, value]) => {
+-					if (value !== null && value !== void 0) queryParams.append(key, String(value));
+-				});
+-				const url = `${SCARF_BASE_URL}?${queryParams.toString()}`;
+-				const response = await fetch(url, {
+-					method: "GET",
+-					signal: controller.signal
+-				});
+-				clearTimeout(timeoutId);
+-				if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+-			} catch (_unused) {}
+-		}
+-	};
+-	var scarf_client_default = new ScarfClient();
+-
+-//#endregion
+-//#region src/telemetry/telemetry-client.ts
+-/**
+-	* Checks if telemetry is disabled via environment variables.
+-	* Users can opt out by setting:
+-	* - COPILOTKIT_TELEMETRY_DISABLED=true or COPILOTKIT_TELEMETRY_DISABLED=1
+-	* - DO_NOT_TRACK=true or DO_NOT_TRACK=1
+-	*/
+-	function isTelemetryDisabled() {
+-		return process.env.COPILOTKIT_TELEMETRY_DISABLED === "true" || process.env.COPILOTKIT_TELEMETRY_DISABLED === "1" || process.env.DO_NOT_TRACK === "true" || process.env.DO_NOT_TRACK === "1";
+-	}
++		async logEvent(_properties) {}
+ 	var TelemetryClient = class {
+ 		constructor({ packageName, packageVersion, telemetryDisabled, telemetryBaseUrl, sampleRate }) {
+ 			this.globalProperties = {};
+@@ -958,7 +928,7 @@ ${getSeeMoreMarkdown(troubleshootingLink)}`;
+ 			this.anonymousId = `anon_${(0, uuid.v4)()}`;
+ 			this.packageName = packageName;
+ 			this.packageVersion = packageVersion;
+-			this.telemetryDisabled = telemetryDisabled || isTelemetryDisabled();
++			this.telemetryDisabled = true;
+ 			if (this.telemetryDisabled) return;
+ 			this.setSampleRate(sampleRate);
+ 			this.segment = new _segment_analytics_node.Analytics({ writeKey: process.env.COPILOTKIT_SEGMENT_WRITE_KEY || "n7XAZtQCGS2v1vvBy3LgBCv2h3Y8whja" });
+@@ -1445,7 +1415,6 @@ Design principles:
+ - For side-by-side comparisons, use a container with structural children
+   (children: { componentId, path }) to repeat a card template per data item.
+ - Include images when relevant (logos, icons, product photos):
+-  - Prefer company logos via Google favicons: https://www.google.com/s2/favicons?domain=example.com&sz=128
+   - Do NOT invent Unsplash photo-IDs — they will 404. Only use real, known URLs.
+ - For buttons: action MUST use this exact nested format:
+     "action": { "event": { "name": "myAction", "context": { "key": "value" } } }
+diff --git a/dist/telemetry/scarf-client.cjs b/dist/telemetry/scarf-client.cjs
+index 8b756d79a6f4c64f53555c09fa4207a150f3b2de..f84fe287b1f429112c0d545e84db903705ff5334 100644
+--- a/dist/telemetry/scarf-client.cjs
++++ b/dist/telemetry/scarf-client.cjs
+@@ -1,26 +1,10 @@
+ const require_package = require('../package.cjs');
+ 
+ //#region src/telemetry/scarf-client.ts
+-const SCARF_BASE_URL = `https://copilotkit.gateway.scarf.sh/${require_package.version}`;
++const SCARF_BASE_URL = "";
+ var ScarfClient = class {
+ 	constructor() {}
+-	async logEvent(properties) {
+-		try {
+-			const controller = new AbortController();
+-			const timeoutId = setTimeout(() => controller.abort(), 3e3);
+-			const queryParams = new URLSearchParams();
+-			Object.entries(properties).forEach(([key, value]) => {
+-				if (value !== null && value !== void 0) queryParams.append(key, String(value));
+-			});
+-			const url = `${SCARF_BASE_URL}?${queryParams.toString()}`;
+-			const response = await fetch(url, {
+-				method: "GET",
+-				signal: controller.signal
+-			});
+-			clearTimeout(timeoutId);
+-			if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+-		} catch {}
+-	}
++	async logEvent(_properties) {}
+ };
+ var scarf_client_default = new ScarfClient();
+ 
+diff --git a/dist/telemetry/scarf-client.mjs b/dist/telemetry/scarf-client.mjs
+index 64f01ea5900483c4af8f3eaae8d27e4ae0c74cc9..95d17d1219cb0f3a5f449781b6749f28e5ae7612 100644
+--- a/dist/telemetry/scarf-client.mjs
++++ b/dist/telemetry/scarf-client.mjs
+@@ -1,26 +1,10 @@
+ import { version } from "../package.mjs";
+ 
+ //#region src/telemetry/scarf-client.ts
+-const SCARF_BASE_URL = `https://copilotkit.gateway.scarf.sh/${version}`;
++const SCARF_BASE_URL = "";
+ var ScarfClient = class {
+ 	constructor() {}
+-	async logEvent(properties) {
+-		try {
+-			const controller = new AbortController();
+-			const timeoutId = setTimeout(() => controller.abort(), 3e3);
+-			const queryParams = new URLSearchParams();
+-			Object.entries(properties).forEach(([key, value]) => {
+-				if (value !== null && value !== void 0) queryParams.append(key, String(value));
+-			});
+-			const url = `${SCARF_BASE_URL}?${queryParams.toString()}`;
+-			const response = await fetch(url, {
+-				method: "GET",
+-				signal: controller.signal
+-			});
+-			clearTimeout(timeoutId);
+-			if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+-		} catch {}
+-	}
++	async logEvent(_properties) {}
+ };
+ var scarf_client_default = new ScarfClient();
+ 
+diff --git a/dist/telemetry/telemetry-client.cjs b/dist/telemetry/telemetry-client.cjs
+index 864ca562f6cad2954831445788485d1c78ec0db1..385731c82da6252bc55f5f6ae726dd1c8206f885 100644
+--- a/dist/telemetry/telemetry-client.cjs
++++ b/dist/telemetry/telemetry-client.cjs
+@@ -12,7 +12,7 @@ let _segment_analytics_node = require("@segment/analytics-node");
+ * - DO_NOT_TRACK=true or DO_NOT_TRACK=1
+ */
+ function isTelemetryDisabled() {
+-	return process.env.COPILOTKIT_TELEMETRY_DISABLED === "true" || process.env.COPILOTKIT_TELEMETRY_DISABLED === "1" || process.env.DO_NOT_TRACK === "true" || process.env.DO_NOT_TRACK === "1";
++	return true;
+ }
+ var TelemetryClient = class {
+ 	constructor({ packageName, packageVersion, telemetryDisabled, telemetryBaseUrl, sampleRate }) {
+@@ -23,7 +23,7 @@ var TelemetryClient = class {
+ 		this.anonymousId = `anon_${(0, uuid.v4)()}`;
+ 		this.packageName = packageName;
+ 		this.packageVersion = packageVersion;
+-		this.telemetryDisabled = telemetryDisabled || isTelemetryDisabled();
++		this.telemetryDisabled = true;
+ 		if (this.telemetryDisabled) return;
+ 		this.setSampleRate(sampleRate);
+ 		this.segment = new _segment_analytics_node.Analytics({ writeKey: process.env.COPILOTKIT_SEGMENT_WRITE_KEY || "n7XAZtQCGS2v1vvBy3LgBCv2h3Y8whja" });
+diff --git a/dist/telemetry/telemetry-client.mjs b/dist/telemetry/telemetry-client.mjs
+index f134b13d48d1a69ab64070f30dcc12f7996834ad..82f2d063a4cebc3657202985afd8e89badcfb160 100644
+--- a/dist/telemetry/telemetry-client.mjs
++++ b/dist/telemetry/telemetry-client.mjs
+@@ -11,7 +11,7 @@ import { Analytics } from "@segment/analytics-node";
+ * - DO_NOT_TRACK=true or DO_NOT_TRACK=1
+ */
+ function isTelemetryDisabled() {
+-	return process.env.COPILOTKIT_TELEMETRY_DISABLED === "true" || process.env.COPILOTKIT_TELEMETRY_DISABLED === "1" || process.env.DO_NOT_TRACK === "true" || process.env.DO_NOT_TRACK === "1";
++	return true;
+ }
+ var TelemetryClient = class {
+ 	constructor({ packageName, packageVersion, telemetryDisabled, telemetryBaseUrl, sampleRate }) {
+@@ -22,7 +22,7 @@ var TelemetryClient = class {
+ 		this.anonymousId = `anon_${v4()}`;
+ 		this.packageName = packageName;
+ 		this.packageVersion = packageVersion;
+-		this.telemetryDisabled = telemetryDisabled || isTelemetryDisabled();
++		this.telemetryDisabled = true;
+ 		if (this.telemetryDisabled) return;
+ 		this.setSampleRate(sampleRate);
+ 		this.segment = new Analytics({ writeKey: process.env.COPILOTKIT_SEGMENT_WRITE_KEY || "n7XAZtQCGS2v1vvBy3LgBCv2h3Y8whja" });

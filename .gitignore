@@ -34,3 +34,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# studio/ keeps its own .gitignore; guard against stray installs/builds
+/studio/node_modules
+/studio/.next

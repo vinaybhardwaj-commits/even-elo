@@ -4,6 +4,8 @@ EHRC Surgical Governance Committee — Visiting Consultant scoring tool. Tracks
 Caseload / Outcomes / Adherence per VC and recomputes the **ELO score** on every
 observation write.
 
+> **Governance Studio** (hardened fork of CopilotKit OpenIntelligentUI) lives in [`studio/`](studio/README.md). It is a separate pnpm workspace with its own gates (`npm run studio:test`, `studio:typecheck`, `studio:build`) and is excluded from the root build, tests, lint and architecture check.
+
 ## Status: v1 SHIPPED 🎉
 
 - **Live:** <https://even-elo.vercel.app/>

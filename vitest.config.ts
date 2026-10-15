@@ -1,9 +1,11 @@
 import path from "node:path";
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
     environment: "node",
+    // studio/ is a separate pnpm workspace with its own gates (npm run studio:test).
+    exclude: [...configDefaults.exclude, "studio/**"],
   },
   resolve: {
     alias: [

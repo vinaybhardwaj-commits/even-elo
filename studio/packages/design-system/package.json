@@ -1,0 +1,30 @@
+{
+  "name": "@repo/design-system",
+  "version": "0.1.0",
+  "description": "Shared OpenIntelligentUI design-system CSS and import map",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "vendor": "node scripts/build-vendor.mjs",
+    "build": "tsc",
+    "lint": "tsc --noEmit",
+    "test": "vitest run",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "20.19.31",
+    "chart.js": "4.5.1",
+    "d3": "7.9.0",
+    "typescript": "5.9.3",
+    "vitest": "4.1.8"
+  }
+}

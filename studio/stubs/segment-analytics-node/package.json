@@ -1,0 +1,9 @@
+{
+  "name": "@segment/analytics-node",
+  "version": "0.0.0-stub",
+  "description": "Inert stub: this fork never sends Segment analytics.",
+  "private": true,
+  "main": "./index.cjs",
+  "module": "./index.mjs",
+  "exports": { ".": { "import": "./index.mjs", "require": "./index.cjs" } }
+}
