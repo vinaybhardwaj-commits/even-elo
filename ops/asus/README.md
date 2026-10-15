@@ -22,8 +22,8 @@ studio-agent (uid studio-agent) --127.0.0.1:8888--> studio-proxy (squid, uid pro
   `credential_process` (`/usr/local/bin/studio-aws-creds`, configured in `/etc/studio-agent/aws-config`) from the broker over the tailnet: credentials with a session policy that
   allows `bedrock:InvokeModel*` on the two pinned model ids only. `BEDROCK_AUTH=default-chain`. **Vertex is off on this host** (`VERTEX_*` is not set; the fallback is disabled).
 - **Neon relay (pgbouncer).** The agent's database URLs point at `127.0.0.1:6432` with local passwords (`/etc/studio-pgrelay/local.env`); the agent holds no Neon host, address
-  or credential. The relay connects to Neon with `server_tls_sslmode = verify-full` against the system CA; pgbouncer sends the Neon hostname as SNI and the password is sent in
-  the Neon `endpoint=<endpoint-id>$<password>` form, so the endpoint is pinned both ways. The real Neon URLs live only in `/etc/studio-pgrelay/neon.env` (0600 root);
+  or credential. The relay connects to Neon with `server_tls_sslmode = verify-full` against the system CA; pgbouncer sends the Neon hostname as SNI, which pins the endpoint;
+  the password is sent plain (Neon rejects the `endpoint=<id>$<password>` form when SNI is present, verified 15 Oct). The real Neon URLs live only in `/etc/studio-pgrelay/neon.env` (0600 root);
   the relay's config is rendered from it into `/run/studio-pgrelay` (tmpfs, 0600) at start/reload. The relay has no DNS: its unit bind-mounts a private hosts file with the pinned
   IPv4/IPv6 addresses over `/etc/hosts`. Pool mode is `session`; the admin console is closed.
 - **nftables.** uid `studio-agent` may reach only `127.0.0.1:8888`, `127.0.0.1:6432` and the broker's `IP:port`; only uid `studio-pgrelay` may reach the pinned Neon IPs, on `:5432`.
@@ -67,6 +67,6 @@ studio-agent (uid studio-agent) --127.0.0.1:8888--> studio-proxy (squid, uid pro
   so it cannot fetch ECH configs from the HTTPS record, and the allowlisted names are not under our control either way. Not closed by this design.
 - **Domain fronting inside an allowed provider** depends on that provider's own blocking (Cloudflare refuses the Host/SNI mismatch for `api.typesafe.ai`; to be re-tested on
   `bedrock-runtime.ap-south-1` by the refuter). That is why no Google name is allowed.
-- Neon's acceptance of the `endpoint=<id>$<password>` password form (also on `-pooler` hosts) and Bedrock's acceptance of the broker's session-policy ARNs are not testable offline;
+- Neon login through the relay (plain password + SNI; verified by psql 15 Oct, recheck on `-pooler` hosts) and Bedrock's acceptance of the broker's session-policy ARNs are not testable offline;
   the container uses PostgreSQL stubs and a policy evaluator. Verify once on the O1 run / the live check.
 - pgbouncer cannot bind a local user to one database, so the agent can open either database with either local password, by design (it holds both).

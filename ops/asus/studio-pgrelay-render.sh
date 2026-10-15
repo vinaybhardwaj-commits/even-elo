@@ -78,7 +78,10 @@ for alias, key, user_key in (("gov", "GOV_NEON_URL", "AGENT_GOV_PW"), ("studio",
     endpoint = host.split(".")[0]
     if endpoint.endswith("-pooler"):
         endpoint = endpoint[: -len("-pooler")]
-    password = f"endpoint={endpoint}${unquote(u.password)}"  # Neon: pin the endpoint without relying on SNI
+    # Plain password: pgbouncer sends SNI (the pinned hosts file keeps the real hostname), and Neon rejects the
+    # endpoint=<id>$<pw> form when SNI is present (password authentication failed). Verified 15 Oct with psql:
+    # prefixed+SNI fails, plain+SNI and prefixed+no-SNI both log in.
+    password = unquote(u.password)
     dbs.append(f"{alias} = host={host} port={port} dbname={unquote(u.path.strip('/'))} "
                f"user={unquote(u.username)} password={q(password)}")
     lp = local.get(user_key, "")
