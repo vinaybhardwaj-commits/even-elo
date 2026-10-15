@@ -32,9 +32,10 @@ class PolicyTests(unittest.TestCase):
 
     def test_shape(self):
         st = self.p["Statement"]
-        self.assertEqual(len(st), 1)
-        self.assertEqual(st[0]["Effect"], "Allow")
-        self.assertEqual(sorted(st[0]["Action"]), sorted(broker.ACTIONS))
+        self.assertEqual(len(st), 2)  # MODELS are global.* profiles: statement two covers the region-less model ARNs
+        for s in st:
+            self.assertEqual(s["Effect"], "Allow")
+            self.assertEqual(sorted(s["Action"]), sorted(broker.ACTIONS))
         self.assertLess(len(json.dumps(self.p, separators=(",", ":"))), 2048)  # STS session policy limit (packed)
 
     def test_invoke_pinned_models_allowed(self):
@@ -80,6 +81,24 @@ class PolicyTests(unittest.TestCase):
             self.assertFalse(broker.policy_allows(self.p, "bedrock:InvokeModel", res, {"aws:RequestedRegion": "us-east-1"}))
             self.assertFalse(broker.policy_allows(self.p, "bedrock:InvokeModel", res, {"aws:RequestedRegion": "eu-west-1"}))
             self.assertFalse(broker.policy_allows(self.p, "bedrock:InvokeModel", res))
+
+    def test_global_profile_regionless_model(self):
+        """Live 15 Oct: AWS checks arn:aws:bedrock:::foundation-model/<m> with aws:RequestedRegion = 'unspecified'."""
+        un = {"aws:RequestedRegion": "unspecified"}
+        for mid in MODELS:
+            res = f"arn:aws:bedrock:::foundation-model/{mid.split('.', 1)[1]}"
+            self.assertTrue(broker.policy_allows(self.p, "bedrock:InvokeModel", res, un), res)
+            self.assertTrue(broker.policy_allows(self.p, "bedrock:InvokeModelWithResponseStream", res, un), res)
+            self.assertFalse(broker.policy_allows(self.p, "bedrock:InvokeModel", res, {"aws:RequestedRegion": "us-east-1"}), res)
+        # 'unspecified' opens nothing else: not the profile, not a regional model, not an unpinned model
+        prof = f"arn:aws:bedrock:ap-south-1:123456789012:inference-profile/{MODELS[0]}"
+        for res in (prof, f"arn:aws:bedrock:ap-south-1::foundation-model/{MODELS[0].split('.', 1)[1]}",
+                    "arn:aws:bedrock:::foundation-model/anthropic.claude-opus-5-5"):
+            self.assertFalse(broker.policy_allows(self.p, "bedrock:InvokeModel", res, un), res)
+
+    def test_no_global_statement_for_plain_models(self):
+        p = broker.session_policy(ROLE, ["anthropic.claude-x"], "ap-south-1")
+        self.assertEqual(len(p["Statement"]), 1)
 
 
 class ConfigTests(unittest.TestCase):

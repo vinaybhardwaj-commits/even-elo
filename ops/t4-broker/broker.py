@@ -104,22 +104,40 @@ def model_resources(role_arn: str, model_ids, region: str):
     return sorted(set(out))
 
 
+def global_model_resources(model_ids):
+    """Region-less foundation-model ARNs for 'global.*' profiles. AWS authorizes the global profile's model against
+    arn:aws:bedrock:::foundation-model/<model> with aws:RequestedRegion = 'unspecified' (live denial 15 Oct showed exactly this
+    ARN), so these get their own statement; they are only reachable through the global profile allowed in statement one."""
+    out = []
+    for mid in model_ids:
+        head, _, rest = mid.partition(".")
+        if head == "global" and rest:
+            out.append(f"arn:aws:bedrock:::foundation-model/{rest}")
+    return sorted(set(out))
+
+
 def session_policy(role_arn: str, model_ids, region: str) -> dict:
-    """aws:RequestedRegion is the region of the API ENDPOINT that receives the call, not where a cross-region inference
-    profile routes the model, so pinning it to ap-south-1 keeps the 'global.*' profile working while stolen credentials
-    cannot call bedrock-runtime in any other region. The foundation-model ARN keeps region '*' because the profile's
-    destination regions are chosen by AWS, not by the caller. (If AWS ever evaluates a destination region as the requested
-    region, widen the condition to the regions the profile routes to; verify on the live account.)"""
-    return {
-        "Version": "2012-10-17",
-        "Statement": [{
-            "Sid": "InvokePinnedModelsOnly",
+    """aws:RequestedRegion is the region of the API ENDPOINT that receives the call, so statement one pins the inference
+    profile (and the regional model ARNs) to ap-south-1: stolen credentials cannot call bedrock-runtime in any other region.
+    For a 'global.*' profile AWS also checks the region-less model ARN with aws:RequestedRegion = 'unspecified'; statement
+    two allows exactly those ARNs and nothing else (no profile, no regional model)."""
+    statements = [{
+        "Sid": "InvokePinnedModelsOnly",
+        "Effect": "Allow",
+        "Action": list(ACTIONS),
+        "Resource": model_resources(role_arn, model_ids, region),
+        "Condition": {"StringEquals": {"aws:RequestedRegion": region}},
+    }]
+    glob = global_model_resources(model_ids)
+    if glob:
+        statements.append({
+            "Sid": "GlobalProfileModelsOnly",
             "Effect": "Allow",
             "Action": list(ACTIONS),
-            "Resource": model_resources(role_arn, model_ids, region),
-            "Condition": {"StringEquals": {"aws:RequestedRegion": region}},
-        }],
-    }
+            "Resource": glob,
+            "Condition": {"StringEquals": {"aws:RequestedRegion": "unspecified"}},
+        })
+    return {"Version": "2012-10-17", "Statement": statements}
 
 
 def policy_allows(policy: dict, action: str, resource: str, context=None) -> bool:

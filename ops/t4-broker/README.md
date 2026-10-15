@@ -11,6 +11,7 @@ broker: GCP SA key -> impersonate SA -> ID token -> STS AssumeRoleWithWebIdentit
 
 - **Session policy** (`broker.session_policy`): `Allow bedrock:InvokeModel` and `bedrock:InvokeModelWithResponseStream` on the inference-profile
   ARN(s) for the pinned model ids in `ap-south-1` and the matching foundation-model ARN(s) (a `global.*` profile routes, so the model ARN has any region).
+  A `global.*` profile also gets a second statement: the region-less `arn:aws:bedrock:::foundation-model/<model>` ARN(s) only, under `aws:RequestedRegion = unspecified`, which is how AWS authorizes a global profile's model (live denial 15 Oct). It allows no profile and no regional ARN.
   Condition `aws:RequestedRegion = ap-south-1`: that key is the region of the API endpoint that receives the call (not where a cross-region inference profile routes the
   model), so the `global.*` profile keeps working while stolen credentials cannot call `bedrock-runtime` in any other region. The foundation-model ARN keeps region `*` because
   AWS, not the caller, picks the profile's destination regions. If AWS ever evaluates a destination region as the requested region, widen the condition to the regions the
