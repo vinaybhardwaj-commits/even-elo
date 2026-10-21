@@ -75,7 +75,7 @@ describe("HTTP read tools", () => {
   });
   afterEach(() => {
     vi.unstubAllGlobals();
-    for (const k of ["INCIDENT_API_BASE", "INCIDENT_API_TOKEN", "GOV_API_BASE", "GOV_API_KEY", "AGENT_URL", "STUDIO_SERVICE_TOKEN", "STUDIO_ACTOR_SECRET"]) delete process.env[k];
+    for (const k of ["INCIDENT_API_BASE", "INCIDENT_API_TOKEN", "GOV_API_BASE", "GOV_API_KEY", "AGENT_URL", "STUDIO_SERVICE_TOKEN", "STUDIO_ACTOR_SECRET", "STUDIO_LIVE_READS"]) delete process.env[k];
   });
 
   const audits = () => calls.filter((c) => c.url.endsWith("/agent/audit")).map((c) => JSON.parse(String(c.init?.body)));
@@ -185,6 +185,38 @@ describe("HTTP read tools", () => {
 
   it("SGC members pass the same gate as even-elo's /api/safety proxy", async () => {
     expect((await runHttpTool("eiris_incidents", {}, { staffId: "s", role: "sgc_member" })).status).toBe(200);
+  });
+
+  it("include_text is super_admin only: sgc_member gets 403 and no upstream call", async () => {
+    const r = await runHttpTool("eiris_incident_detail", { incident_id: "EHRC-INC-2026-0001", include_text: true }, { staffId: "s", role: "sgc_member" });
+    expect(r).toMatchObject({ status: 403, body: { error: "forbidden" } });
+    expect(calls).toHaveLength(0);
+    expect((await runHttpTool("eiris_incident_detail", { incident_id: "EHRC-INC-2026-0001" }, { staffId: "s", role: "sgc_member" })).status).toBe(200);
+  });
+
+  it("the chat action has no include_text parameter and drops it if the model sends it", async () => {
+    const actions = buildHttpToolActions(ACTOR) as unknown as Array<{ handler: (a: Record<string, unknown>) => Promise<unknown>; parameters: Array<{ name: string }> }>;
+    expect(actions[1].parameters.map((p) => p.name)).not.toContain("include_text");
+    const out = SourceTablePayload.parse(await actions[1].handler({ incident_id: "EHRC-INC-2026-0001", include_text: true }));
+    expect(JSON.stringify(out)).not.toContain("SECRET-");
+  });
+
+  it("STUDIO_LIVE_READS=0 is a kill switch: 503 live_reads_off, no upstream read, no audit row", async () => {
+    for (const v of ["0", "false", "off", "no", ""]) {
+      process.env.STUDIO_LIVE_READS = v;
+      expect(await runHttpTool("opd_signals", {}, ACTOR)).toMatchObject({ status: 503, body: { error: "live_reads_off" } });
+    }
+    expect(calls).toHaveLength(0);
+    process.env.STUDIO_LIVE_READS = "1";
+    expect((await runHttpTool("opd_signals", {}, ACTOR)).status).toBe(200);
+    delete process.env.STUDIO_LIVE_READS;
+    expect((await runHttpTool("opd_signals", {}, ACTOR)).status).toBe(200);
+  });
+
+  it("e-IRIS reads forward the actor's role flags", async () => {
+    await runHttpTool("eiris_incidents", { view: "list" }, { staffId: "s", role: "sgc_member" });
+    const h = calls[0].init?.headers as Record<string, string>;
+    expect(h).toMatchObject({ "x-actor-super": "0", "x-actor-sgc": "1" });
   });
 
   it("missing upstream config is a fixed code and is audited as an error", async () => {

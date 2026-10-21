@@ -9,6 +9,9 @@ import { runHttpTool } from "@/lib/http-tools/run";
 // chat route uses. The agent runs the same audited tool (studio_audit row, source line, query hash). There is
 // no database access here. Error bodies carry fixed codes only, never upstream text.
 
+// Upstream reads (10 s each) plus the audit call can exceed the default function time.
+export const maxDuration = 60;
+
 const MAX_BODY_BYTES = 4096;
 const AGENT_TIMEOUT_MS = 20_000;
 const NO_STORE = { "Cache-Control": "no-store" };

@@ -16,6 +16,8 @@ import { incidentRows, toDetailPayload, toIncidentsPayload, toSignalsPayload } f
 
 /** Same predicate as even-elo's /api/safety proxy: super_admin or SGC member. The Studio zone admits super_admin only today. */
 export const SAFETY_ROLES: ReadonlySet<string> = new Set(["super_admin", "sgc_member"]);
+/** Narrative and RCA text (include_text) is super_admin only, as on the incident pages; sgc_member is in SAFETY_ROLES but not here. */
+const TEXT_ROLES: ReadonlySet<string> = new Set(["super_admin"]);
 const UPSTREAM_TIMEOUT_MS = 10_000;
 const AUDIT_TIMEOUT_MS = 8_000;
 
@@ -57,11 +59,17 @@ async function getJson(url: string, headers: Record<string, string>): Promise<Up
 
 const trimBase = (v: string) => v.replace(/\/+$/, "");
 
-function incidentApi() {
+// Same kill switch as the agent's SQL tools (studio_tools.py live_reads_enabled): read on every call, unset = live.
+export function liveReadsEnabled(): boolean {
+  const v = process.env.STUDIO_LIVE_READS;
+  return v === undefined || !["", "0", "false", "off", "no"].includes(v.trim().toLowerCase());
+}
+
+function incidentApi(role: string) {
   const base = process.env.INCIDENT_API_BASE;
   const token = process.env.INCIDENT_API_TOKEN;
   if (!base || !token) return null;
-  return { base: trimBase(base), headers: { Authorization: `Bearer ${token}` } };
+  return { base: trimBase(base), headers: { Authorization: `Bearer ${token}`, "x-actor-super": role === "super_admin" ? "1" : "0", "x-actor-sgc": role === "sgc_member" ? "1" : "0" } };
 }
 
 function cdmssApi() {
@@ -75,8 +83,8 @@ interface Built {
   failure?: { status: number; error: string };
 }
 
-async function buildIncidents(p: { view?: "summary" | "list"; status?: "open" | "closed"; severity?: string; limit?: number }): Promise<Built> {
-  const api = incidentApi();
+async function buildIncidents(role: string, p: { view?: "summary" | "list"; status?: "open" | "closed"; severity?: string; limit?: number }): Promise<Built> {
+  const api = incidentApi(role);
   if (!api) return { payload: null, failure: { status: 503, error: "upstream_not_configured" } };
   const view = p.view ?? "summary";
   const meta = { tool: "eiris_incidents", queryHash: queryHash("eiris_incidents") };
@@ -103,8 +111,8 @@ async function buildIncidents(p: { view?: "summary" | "list"; status?: "open" | 
   };
 }
 
-async function buildDetail(p: { incident_id: string; include_text?: boolean }): Promise<Built> {
-  const api = incidentApi();
+async function buildDetail(role: string, p: { incident_id: string; include_text?: boolean }): Promise<Built> {
+  const api = incidentApi(role);
   if (!api) return { payload: null, failure: { status: 503, error: "upstream_not_configured" } };
   const meta = { tool: "eiris_incident_detail", queryHash: queryHash("eiris_incident_detail") };
   const r = await getJson(`${api.base}/api/office/incidents/${encodeURIComponent(p.incident_id)}`, api.headers);
@@ -172,13 +180,16 @@ export async function runHttpTool(tool: HttpToolName, rawParams: unknown, actor:
   const parsed = HTTP_TOOL_PARAMS[tool].safeParse(rawParams ?? {});
   if (!parsed.success) return fail(422, "bad_params");
   const params = parsed.data as Record<string, unknown>;
+  if (params.include_text === true && !TEXT_ROLES.has(actor.role)) return fail(403, "forbidden");
+  // Kill switch: with STUDIO_LIVE_READS off nothing is read upstream and no row is claimed as live.
+  if (!liveReadsEnabled()) return fail(503, "live_reads_off");
 
   const startedAt = Date.now();
   const built =
     tool === "eiris_incidents"
-      ? await buildIncidents(params)
+      ? await buildIncidents(actor.role, params)
       : tool === "eiris_incident_detail"
-        ? await buildDetail(params as { incident_id: string; include_text?: boolean })
+        ? await buildDetail(actor.role, params as { incident_id: string; include_text?: boolean })
         : await buildSignals(params);
 
   const rows = built.payload?.row_count ?? 0;

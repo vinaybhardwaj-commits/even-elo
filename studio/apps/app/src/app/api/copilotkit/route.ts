@@ -14,6 +14,9 @@ disableTelemetry();
 
 // The middleware (src/proxy.ts) has already authenticated the staff member and overwritten
 // the actor headers read here. Rate limiting is enforced by the agent, per staff id.
+// Upstream reads (10 s each) plus the audit call can exceed the default function time.
+export const maxDuration = 60;
+
 export const POST = async (req: NextRequest) => {
   const staffId = req.headers.get(ACTOR_ID_HEADER);
   const role = req.headers.get(ACTOR_ROLE_HEADER);

@@ -10,8 +10,12 @@ type RuntimeActions = Extract<NonNullable<ConstructorParameters<typeof CopilotRu
 
 type Actor = { staffId: string; role: string };
 
-const run = (tool: Parameters<typeof runHttpTool>[0], actor: Actor) => async (args: Record<string, unknown>) =>
-  (await runHttpTool(tool, args, actor)).body;
+// Free text (include_text) is screen-only: reporter-typed narrative can hold patient identifiers and must not reach
+// the LLM provider. The chat path drops the key whatever the model sends, so the runner always sees it false.
+const run = (tool: Parameters<typeof runHttpTool>[0], actor: Actor) => async (args: Record<string, unknown>) => {
+  const { include_text: _dropped, ...safe } = args ?? {};
+  return (await runHttpTool(tool, safe, actor)).body;
+};
 
 export function buildHttpToolActions(actor: Actor): RuntimeActions {
   const actions = [
@@ -32,10 +36,9 @@ export function buildHttpToolActions(actor: Actor): RuntimeActions {
       name: "eiris_incident_detail",
       description:
         "One e-IRIS incident by id (e.g. EHRC-INC-2026-0001): classification, dates, SLA state, RCA/CAPA structure. " +
-        "No patient or reporter identity. Free text (narrative, root cause, CAPA actions) only with include_text=true. Read-only.",
+        "No patient or reporter identity. No free text (narrative, root cause, CAPA actions); those are on the incident page only. Read-only.",
       parameters: [
         { name: "incident_id", type: "string" as const, description: "Incident id such as EHRC-INC-2026-0001", required: true },
-        { name: "include_text", type: "boolean" as const, description: "also return narrative and RCA text (default false)", required: false },
       ],
       handler: run("eiris_incident_detail", actor),
     },
