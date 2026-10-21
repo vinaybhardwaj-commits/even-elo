@@ -299,16 +299,20 @@ def test_jev_client_without_proxy_env(monkeypatch):
     assert "proxy" not in vr.client_options()
 
 
-def _render_turn_request(tool_content="UI generated", tool_status="success", follow_human=False):
+def _render_turn_request(renders=(("UI generated", "success", {"html": "<div>bars</div>"}),), follow_human=False):
+    """One user turn: a data tool, then one rendering call per (result, status, args), each answered by the browser."""
     from langchain_core.messages import ToolMessage
 
     messages = [
         HumanMessage(content="How many e-IRIS incidents, top categories?", id="h1"),
         AIMessage(content="", tool_calls=[{"name": "eiris_incidents", "args": {}, "id": "c1"}]),
         ToolMessage(content='{"rows": []}', tool_call_id="c1"),
-        AIMessage(content="42 incidents.", tool_calls=[{"name": "generateSandboxedUi", "args": {}, "id": "c2"}]),
-        ToolMessage(content=tool_content, tool_call_id="c2", status=tool_status),
     ]
+    for i, (content, status, args) in enumerate(renders):
+        messages += [
+            AIMessage(content="42 incidents.", tool_calls=[{"name": "generateSandboxedUi", "args": args, "id": f"r{i}"}]),
+            ToolMessage(content=content, tool_call_id=f"r{i}", status=status),
+        ]
     if follow_human:
         messages.append(HumanMessage(content="Now as a pie", id="h2"))
     return ModelRequest(
@@ -320,20 +324,54 @@ def _render_turn_request(tool_content="UI generated", tool_status="success", fol
     )
 
 
-def test_follow_up_after_a_render_withholds_render_tools_and_stops_asking_for_one():
+def _ok(html):
+    return ("UI generated", "success", {"html": html})
+
+
+def _routed(request):
+    result = routed_request(request)
+    return {t["name"] for t in result.tools}, result.system_message.content
+
+
+def test_follow_up_after_a_render_stops_asking_for_one_but_allows_a_distinct_section():
     # Live chat loop: every follow-up run after "UI generated" was told "CRITICAL ... Use generateSandboxedUi" again.
-    result = routed_request(_render_turn_request())
-    names = {t["name"] for t in result.tools}
+    # prompt.py still allows distinct sections or a correction, so the tool stays, without the push to use it.
+    for renders in ([_ok("bars")], [_ok("bars"), _ok("table")]):
+        names, content = _routed(_render_turn_request(renders))
+        assert names == {"generateSandboxedUi", "eiris_incidents"}
+        assert "Use generateSandboxedUi" not in content
+        assert "CRITICAL" not in content
+        assert f"{len(renders)} render(s) already returned" in content
+        assert "distinct requested section or a specific correction" in content
+
+
+def test_third_successful_render_withholds_render_tools():
+    names, content = _routed(_render_turn_request([_ok("bars"), _ok("table"), _ok("trend")]))
     assert names == {"eiris_incidents"}
-    assert "Use generateSandboxedUi" not in result.system_message.content
-    assert "Do not render it again" in result.system_message.content
+    assert "Do not render it again" in content
 
 
-def test_failed_render_may_be_corrected_and_a_new_human_turn_renders_again():
-    for request in (
-        _render_turn_request(tool_content="Error: bad args", tool_status="error"),
-        _render_turn_request(follow_human=True),
-    ):
-        result = routed_request(request)
-        assert "generateSandboxedUi" in {t["name"] for t in result.tools}
-        assert "Use generateSandboxedUi" in result.system_message.content
+def test_a_render_repeating_earlier_args_withholds_render_tools_at_once():
+    names, content = _routed(_render_turn_request([_ok("bars"), _ok("bars")]))
+    assert names == {"eiris_incidents"}
+    assert "repeated an earlier render" in content
+    # Key order in args does not hide a repeat.
+    same = [("UI generated", "success", {"a": 1, "b": 2}), ("UI generated", "success", {"b": 2, "a": 1})]
+    assert _routed(_render_turn_request(same))[0] == {"eiris_incidents"}
+
+
+def test_failed_renders_do_not_count_and_a_corrected_retry_is_not_a_repeat():
+    failed = ("Error: bad args", "error", {"html": "<broken"})
+    names, content = _routed(_render_turn_request([failed, failed, failed]))
+    assert "generateSandboxedUi" in names
+    assert "Use generateSandboxedUi" in content
+    # Two failures then the corrected success: one render, still allowed.
+    names, content = _routed(_render_turn_request([failed, failed, _ok("fixed")]))
+    assert "generateSandboxedUi" in names
+    assert "1 render(s) already returned" in content
+
+
+def test_a_new_human_turn_renders_again():
+    names, content = _routed(_render_turn_request([_ok("a"), _ok("b"), _ok("c")], follow_human=True))
+    assert "generateSandboxedUi" in names
+    assert "CRITICAL" in content and "Use generateSandboxedUi" in content

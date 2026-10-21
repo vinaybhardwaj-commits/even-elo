@@ -171,6 +171,62 @@ describe("copilot fetch guard", () => {
     expect(await res.json()).toEqual(FALLBACK_INFO);
   });
 
+  it("counts only admitted follow-ups: refused runs never bring the stop closer", async () => {
+    const { real, guarded, at } = setup(() => new Response("", { status: 200 }));
+    const run = (lastRole: string, runId: string) =>
+      guarded(URL_, {
+        method: "POST",
+        body: JSON.stringify({ method: "agent/run", params: { agentId: "default" }, body: { threadId: "t1", runId, messages: [{ role: lastRole }] } }),
+      }).then(
+        (r) => r.text(),
+        (e: { code?: string }) => e.code,
+      );
+    await run("user", "r0");
+    // A burst inside one rate window: 5 more admitted, then refusals that must not count as follow-ups.
+    for (let i = 1; i <= 12; i++) await run("tool", `b${i}`);
+    expect(real).toHaveBeenCalledTimes(6);
+    for (let i = 1; i <= MAX_TOOL_FOLLOW_UPS - 5; i++) {
+      at(i * WINDOW_MS);
+      expect(await run("tool", `r${i}`)).not.toContain(TOOL_LOOP_STOP_MESSAGE);
+    }
+    expect(real).toHaveBeenCalledTimes(1 + MAX_TOOL_FOLLOW_UPS);
+    at(100 * WINDOW_MS);
+    expect(await run("tool", "stop")).toContain(TOOL_LOOP_STOP_MESSAGE);
+  });
+
+  it("a connect replay of a stopped thread answers its unanswered tool calls locally and repeats the stop message", async () => {
+    const replay = [
+      { type: "RUN_STARTED", threadId: "t1", runId: "r1" },
+      { type: "TOOL_CALL_START", toolCallId: "answered", toolCallName: "generateSandboxedUi" },
+      { type: "TOOL_CALL_END", toolCallId: "answered" },
+      { type: "MESSAGES_SNAPSHOT", messages: [{ role: "assistant", toolCalls: [{ id: "answered" }] }, { role: "tool", toolCallId: "answered" }] },
+      { type: "TOOL_CALL_START", toolCallId: "dangling", toolCallName: "generateSandboxedUi" },
+      { type: "TOOL_CALL_END", toolCallId: "dangling" },
+      { type: "RUN_FINISHED", threadId: "t1", runId: "r1" },
+    ];
+    const body = replay.map((e) => `data: ${JSON.stringify(e)}\n\n`).join("");
+    const { guarded, at } = setup(() => new Response(body, { status: 200 }));
+    const send = (rpc: string, runId: string, lastRole = "tool") =>
+      guarded(URL_, { method: "POST", body: JSON.stringify({ method: rpc, body: { threadId: "t1", runId, messages: [{ role: lastRole }] } }) });
+    const events = async (res: Response) => (await res.text()).split("\n\n").filter(Boolean).map((f) => JSON.parse(f.slice(5)) as Record<string, string>);
+    await send("agent/run", "r0", "user");
+    // Before any stop, a replay passes through untouched.
+    expect(await events(await send("agent/connect", "c0"))).toEqual(replay);
+    for (let i = 1; i <= MAX_TOOL_FOLLOW_UPS + 1; i++) {
+      at(i * WINDOW_MS);
+      await (await send("agent/run", `r${i}`)).text();
+    }
+    at(100 * WINDOW_MS);
+    const appended = (await events(await send("agent/connect", "c1"))).slice(replay.length);
+    expect(appended.map((e) => e.type)).toEqual(["RUN_STARTED", "TOOL_CALL_RESULT", "TEXT_MESSAGE_START", "TEXT_MESSAGE_CONTENT", "TEXT_MESSAGE_END", "RUN_FINISHED"]);
+    expect(appended[1]).toMatchObject({ toolCallId: "dangling", role: "tool" });
+    expect(appended[3].delta).toBe(TOOL_LOOP_STOP_MESSAGE);
+    // A new user message lifts the stop: replays pass through untouched again.
+    at(200 * WINDOW_MS);
+    await (await send("agent/run", "r20", "user")).text();
+    expect(await events(await send("agent/connect", "c2"))).toEqual(replay);
+  });
+
   it("traces calls per method, with the stacks of repeated calls only", async () => {
     const { guarded, tryRun } = setup(() => new Response("{}", { status: 200 }));
     for (let i = 0; i < 12; i++) await tryRun("info");

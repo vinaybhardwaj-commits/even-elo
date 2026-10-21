@@ -6,8 +6,10 @@
 // - per method, at most WINDOW_LIMIT calls per WINDOW_MS even when every call answers 200.
 // - per thread, at most MAX_TOOL_FOLLOW_UPS agent/run follow-ups in a row (runs whose last message is a tool result,
 //   which CopilotKit issues after every frontend tool, and again when a reconnect replays a tool call whose result never
-//   reached the agent). Only a new user message resets the count. The next follow-up is answered here with a short
-//   assistant message that ends the chain (no request).
+//   reached the agent). Only admitted runs count, and only a new user message resets the count. The next follow-up is
+//   answered here with a short assistant message that ends the chain (no request). The server never saw that follow-up,
+//   so its history still ends in an unanswered tool call: every later agent/connect replay of a stopped thread gets a
+//   local result for each unanswered tool call plus the stop message appended, so a reopen does not re-execute it.
 // A refused call fails fast with code "client_backoff" (no request), so the chat shows its banner instead of looping.
 // Except info: an info call never fails here. A refused or failed info is answered with the last successful info
 // response (waiting for one in flight if needed), or, before any succeeded, with FALLBACK_INFO naming the default agent.
@@ -42,26 +44,89 @@ export class ClientBackoffError extends TypeError {
   }
 }
 
-/** A complete AG-UI run, served locally: one assistant message, then RUN_FINISHED, so no follow-up is issued. */
-function stoppedRun(threadId: string, runId: string): Response {
+const sseFrames = (events: object[]) => events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join("");
+
+/** A complete AG-UI run, served locally: a result for each pending tool call, one assistant message, then RUN_FINISHED,
+ * so no follow-up is issued. */
+function stopEvents(threadId: string, runId: string, pendingToolCalls: Iterable<string> = []): object[] {
   const messageId = `tool-loop-stop-${runId}`;
-  const events = [
+  return [
     { type: "RUN_STARTED", threadId, runId },
+    ...[...pendingToolCalls].map((toolCallId) => ({
+      type: "TOOL_CALL_RESULT",
+      messageId: `tool-loop-stop-${toolCallId}`,
+      toolCallId,
+      role: "tool",
+      content: TOOL_LOOP_STOP_MESSAGE,
+    })),
     { type: "TEXT_MESSAGE_START", messageId, role: "assistant" },
     { type: "TEXT_MESSAGE_CONTENT", messageId, delta: TOOL_LOOP_STOP_MESSAGE },
     { type: "TEXT_MESSAGE_END", messageId },
     { type: "RUN_FINISHED", threadId, runId },
   ];
-  return new Response(events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join(""), {
-    status: 200,
-    headers: { "Content-Type": "text/event-stream" },
+}
+
+function stoppedRun(threadId: string, runId: string): Response {
+  return new Response(sseFrames(stopEvents(threadId, runId)), { status: 200, headers: { "Content-Type": "text/event-stream" } });
+}
+
+type ReplayMessage = { role?: string; toolCallId?: string; toolCalls?: Array<{ id?: string }> };
+type ReplayEvent = { type?: string; toolCallId?: string; messages?: ReplayMessage[] };
+
+/** Passes a connect replay through unchanged, tracking which tool calls it leaves unanswered, then appends the stop run
+ * answering them. A replay that fails mid-stream gets nothing appended. */
+function answerPendingToolCalls(res: Response, threadId: string, runId: string): Response {
+  if (!res.body) return res;
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  const pending = new Set<string>();
+  let buffered = "";
+  const track = (frame: string) => {
+    for (const line of frame.split("\n")) {
+      if (!line.startsWith("data:")) continue;
+      let event: ReplayEvent;
+      try {
+        event = JSON.parse(line.slice(5)) as ReplayEvent;
+      } catch {
+        continue;
+      }
+      if (event.type === "TOOL_CALL_START" && event.toolCallId) pending.add(event.toolCallId);
+      if (event.type === "TOOL_CALL_RESULT" && event.toolCallId) pending.delete(event.toolCallId);
+      if (event.type === "MESSAGES_SNAPSHOT" && Array.isArray(event.messages)) {
+        pending.clear();
+        for (const m of event.messages) for (const c of m.toolCalls ?? []) if (c.id) pending.add(c.id);
+        for (const m of event.messages) if (m.role === "tool" && m.toolCallId) pending.delete(m.toolCallId);
+      }
+    }
+  };
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      const { done, value } = await reader.read();
+      if (done) {
+        track(buffered + decoder.decode());
+        controller.enqueue(encoder.encode(sseFrames(stopEvents(threadId, runId, pending))));
+        controller.close();
+        return;
+      }
+      const frames = (buffered + decoder.decode(value, { stream: true })).split("\n\n");
+      buffered = frames.pop() ?? "";
+      frames.forEach(track);
+      controller.enqueue(value);
+    },
+    cancel(reason) {
+      return reader.cancel(reason);
+    },
   });
+  return new Response(body, { status: res.status, statusText: res.statusText, headers: res.headers });
 }
 
 export function createCopilotFetchGuard(realFetch: typeof fetch, now: Clock = () => Date.now()) {
   const trace: GuardTrace = {};
   const ranThreads = new Set<string>();
   const followUps = new Map<string, number>();
+  // Threads whose tool chain the guard ended, with the runId of the local stop run.
+  const stopped = new Map<string, string>();
   const streaks = new Map<string, Streak>();
   const recent = new Map<string, number[]>();
 
@@ -186,10 +251,10 @@ export function createCopilotFetchGuard(realFetch: typeof fetch, now: Clock = ()
     if (rpc === "agent/connect" && (!threadId || !ranThreads.has(threadId))) {
       return new Response("", { status: 200, headers: { "Content-Type": "text/event-stream" } });
     }
-    if (rpc === "agent/run" && threadId) {
-      const n = lastRole === "tool" ? (followUps.get(threadId) ?? 0) + 1 : 0;
-      followUps.set(threadId, n);
-      if (n > MAX_TOOL_FOLLOW_UPS) return stoppedRun(threadId, runId);
+    const followUp = rpc === "agent/run" && threadId ? (lastRole === "tool" ? (followUps.get(threadId) ?? 0) + 1 : 0) : 0;
+    if (threadId && followUp > MAX_TOOL_FOLLOW_UPS) {
+      stopped.set(threadId, runId);
+      return stoppedRun(threadId, runId);
     }
     if (!admit(rpc)) {
       traced.refused += 1;
@@ -197,7 +262,11 @@ export function createCopilotFetchGuard(realFetch: typeof fetch, now: Clock = ()
       throw new ClientBackoffError(rpc);
     }
     if (rpc === "info") return fetchInfo(input, init);
-    if (rpc === "agent/run" && threadId) ranThreads.add(threadId);
+    if (rpc === "agent/run" && threadId) {
+      ranThreads.add(threadId);
+      followUps.set(threadId, followUp);
+      if (followUp === 0) stopped.delete(threadId);
+    }
 
     let res: Response;
     try {
@@ -211,7 +280,9 @@ export function createCopilotFetchGuard(realFetch: typeof fetch, now: Clock = ()
       return res;
     }
     succeeded(rpc);
-    return watchBody(res, rpc);
+    const stopRunId = rpc === "agent/connect" && threadId ? stopped.get(threadId) : undefined;
+    const watched = watchBody(res, rpc);
+    return stopRunId !== undefined && threadId ? answerPendingToolCalls(watched, threadId, stopRunId) : watched;
   }
   return Object.assign(guardedFetch, { trace });
 }
