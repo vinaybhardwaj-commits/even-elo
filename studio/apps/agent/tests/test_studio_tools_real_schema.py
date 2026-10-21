@@ -18,7 +18,7 @@ from psycopg.conninfo import make_conninfo
 from psycopg.rows import dict_row
 
 from src import studio_audit, studio_tools
-from src.studio_tools import ALL_SQL, GOVERNANCE_TOOLS, ToolError, ToolErrorToResult
+from src.studio_tools import ALL_SQL, GOVERNANCE_TOOLS, VIEW_TOOL_NAMES, ToolError, ToolErrorToResult
 from tests.test_studio_live_staff_sql import MIGRATIONS_TS, migrations
 
 pytestmark = pytest.mark.skipif(not MIGRATIONS_TS.exists(), reason="even-elo repo root not available")
@@ -108,7 +108,9 @@ async def test_every_tool_runs_on_the_real_schema(live):
         "incident_summary": {},
         "overview_counts": {},
     }
-    assert set(calls) == set(ALL_SQL)  # a new tool must be added here, so its SQL meets the real schema
+    # The six studio_ro view tools read views from 0003_studio_views.sql (owner-run psql, preflight refuses a
+    # superuser), covered against real tables by tests/test_studio_views.py. Any other new tool must be added here.
+    assert set(calls) | set(VIEW_TOOL_NAMES) == set(ALL_SQL)
     for name, args in calls.items():
         out = await call(name, args)
         assert out["mode"] == "live" and out["synthetic"] is False, name

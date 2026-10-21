@@ -4,7 +4,7 @@ Same contract as studio_tools.py (typed args, fixed parameterised SQL, staff id 
 studio_audit row per call, STUDIO_LIVE_READS kill switch, source line + query hash), via run_read_tool.
 
 Data: the column-scoped views studio_ro.document_audit_list and studio_ro.document_audit_finding_list
-(ops/neon/0004_docaudits_views.sql), plus physicians for the doctor's name and specialty. The base tables
+(ops/neon/0007_docaudits_views.sql), plus physicians for the doctor's name and specialty. The base tables
 document_audits / document_audit_findings are NOT granted to the read role. Never selected: finding_body,
 doctor_response_comment, evidence_excerpt, citations, patient context, CDMSS sync error text, PDF url, doctor uid,
 the RMO's name. All writes (authoring, release to portal) stay in even-elo's RMO inbox routes; nothing here writes.

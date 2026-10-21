@@ -1,4 +1,4 @@
-"""POST /agent/tools/{name}: the screen door onto the six read tools (M1)."""
+"""POST /agent/tools/{name}: the screen door onto the read tools (M1: the six M0-S2 tools and the six studio_ro view tools)."""
 
 import importlib
 import logging
@@ -84,7 +84,7 @@ def test_staff_id_comes_from_the_token_not_the_body(main, db):
     "name",
     ["plan_visualization", "write_file", "execute", "sql", "..%2fhealth", "overview_counts2", "LIST_PHYSICIANS", "ls", "task", "edit_file"],
 )
-def test_only_the_six_read_tools_are_reachable(main, db, name):
+def test_only_the_read_tools_are_reachable(main, db, name):
     r = TestClient(main.app).post(f"/agent/tools/{name}", json={}, headers=headers())
     assert r.status_code == 404
     assert db[0] == [] and db[1] == []
@@ -103,6 +103,12 @@ def test_only_the_six_read_tools_are_reachable(main, db, name):
         ("overview_counts", {"anything": 1}),
         ("list_physicians", {"filter": {"status": "bogus"}}),
         ("list_physicians", [1, 2]),
+        ("physician_privileges", {}),
+        ("physician_oppe", {"physician_id": "not-a-uuid"}),
+        ("physician_metrics", {"physician_id": PID, "months": 61}),
+        ("physician_qualifications", {"physician_id": PID, "sql": "select 1"}),
+        ("capture_gaps", {"physician_id": PID}),
+        ("feedback_by_physician", {"physician_id": PID, "source": "all"}),
     ],
 )
 def test_param_validation_rejects_before_any_read(main, db, name, body):
@@ -254,3 +260,33 @@ def test_http_audit_staff_id_comes_from_the_token_not_the_body(main, db):
     c = TestClient(main.app)
     c.post("/agent/audit", json=_audit_body(), headers=headers(sub="staff-9"))
     assert db[1][0].staff_id == "staff-9"
+
+
+VIEW_BODIES = {
+    "physician_privileges": {"physician_id": PID},
+    "physician_oppe": {"physician_id": PID, "limit": 10},
+    "physician_metrics": {"physician_id": PID, "months": 6},
+    "physician_qualifications": {"physician_id": PID},
+    "capture_gaps": {},
+    "feedback_by_physician": {"physician_id": PID, "source": "patient", "window_days": 90},
+}
+
+
+@pytest.mark.parametrize("name", sorted(VIEW_BODIES))
+def test_view_tools_are_on_the_allowlist_audited_and_read_only_views(main, db, name):
+    calls, audits = db
+    from src import studio_screen
+    assert name in studio_screen.SCREEN_TOOLS
+    r = TestClient(main.app).post(f"/agent/tools/{name}", json=VIEW_BODIES[name], headers=headers())
+    assert r.status_code == 200 and r.json()["source"]["tool"] == name
+    assert [(a.tool, a.staff_id, a.outcome) for a in audits] == [(name, STAFF, "ok")]
+    assert calls[0][0] == studio_tools.ALL_SQL[name] and "studio_ro." in calls[0][0]
+
+
+@pytest.mark.parametrize("name", sorted(VIEW_BODIES))
+def test_view_tools_serve_synthetic_fixtures_when_live_reads_are_off(main, db, monkeypatch, name):
+    monkeypatch.setenv("STUDIO_LIVE_READS", "0")
+    r = TestClient(main.app).post(f"/agent/tools/{name}", json=VIEW_BODIES[name], headers=headers())
+    body = r.json()
+    assert r.status_code == 200 and body["mode"] == "fixture" and body["synthetic"] is True and body["rows"]
+    assert db[0] == [] and len(db[1]) == 1 and db[1][0].mode == "fixture"

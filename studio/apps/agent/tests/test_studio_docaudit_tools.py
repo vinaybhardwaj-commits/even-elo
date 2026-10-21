@@ -1,7 +1,7 @@
 """Document-audit read tools (M2): unit contract, screen door, fixtures, view SQL, and the REAL even-elo schema.
 
 The real-schema half builds the database from src/lib/migrations.ts, creates the two column-scoped views from
-ops/neon/0004_docaudits_views.sql (the DDL only: the file's preflight demands a non-superuser owner and the
+ops/neon/0007_docaudits_views.sql (the DDL only: the file's preflight demands a non-superuser owner and the
 studio_gov_ro role, which the scratch server does not have), seeds audits with findings and runs every tool."""
 
 import json
@@ -16,7 +16,7 @@ from tests.test_studio_tools_real_schema import real_db  # noqa: F401  (module-s
 
 STAFF = "11111111-1111-4111-8111-111111111111"
 CFG = {"configurable": {studio_tools.STAFF_KEY: STAFF}}
-MIGRATION = Path(__file__).resolve().parents[4] / "ops" / "neon" / "0004_docaudits_views.sql"
+MIGRATION = Path(__file__).resolve().parents[4] / "ops" / "neon" / "0007_docaudits_views.sql"
 SYSTEM_AUTHOR = "CDMSS audit (pending RMO review)"
 AID = "33333333-3333-4333-8333-333333333333"
 
@@ -262,7 +262,9 @@ def test_views_expose_no_free_text_column_and_no_name_regex_hit(live):
     cols = [r["column_name"] for r in live.execute(
         "SELECT table_name || '.' || column_name AS column_name FROM information_schema.columns WHERE table_schema = 'studio_ro'").fetchall()]
     assert cols
-    # the migration's own post-check regex
-    assert not [c for c in cols if re.search(r"(text|note|reason|narrative|email|phone|name|url|payload|packet|file|reply$)", c.split(".")[1])]
+    # the migration's post-check is an explicit allowlist (a renamed note_class/note_date would have slipped past a name regex)
+    from tests.test_lc1_live_probe import DOCAUDIT_VIEW_COLUMNS
+    assert sorted(cols) == sorted(f"{v}.{c}" for v, cs in DOCAUDIT_VIEW_COLUMNS.items() for c in cs)
+    assert all(f"'{c}'" in MIGRATION.read_text() for c in cols)
     for gone in ("finding_body", "doctor_response_comment", "evidence_excerpt", "authored_by_name", "cdmss_pdf_url", "doctor_uid"):
         assert not any(c.endswith("." + gone) for c in cols)

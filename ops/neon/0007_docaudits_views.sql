@@ -1,9 +1,10 @@
 -- Column-scoped READ VIEWS for the Studio read role (studio_gov_ro): Document audits (document_audits and
 -- document_audit_findings). Run ONLY as the database OWNER over the DIRECT url, after 0001_roles.sql:
---   SQL_FILE=ops/neon/0004_docaudits_views.sql ops/neon/run-roles.sh OWNER_URL_FILE
--- (0004 by slice order; it is not 0004_nologin.sql, which run-roles.sh --nologin selects by name).
--- Same design as 0003_studio_views.sql (independent of it: it only touches its own two views, so either
--- order is safe). Idempotent, ONE transaction. NOT RUN by the builder.
+--   SQL_FILE=ops/neon/0007_docaudits_views.sql ops/neon/run-roles.sh OWNER_URL_FILE
+-- (numbered 0007 so it clashes with no other file; run-roles.sh selects 0004_nologin.sql etc. by name).
+-- Same design as 0003_studio_views.sql. Composes with it in EITHER order: each file revokes and grants only on
+-- its own views (0003: its seven; this file: the two below), and each post-check accepts the other's views
+-- (owner + SELECT for studio_gov_ro only). Idempotent, ONE transaction. NOT RUN by the builder.
 --
 -- The role gets USAGE on schema studio_ro and SELECT on the two views, and NOTHING on the base tables.
 -- Views are owner-owned (security_invoker NOT set) and security_barrier.
@@ -22,10 +23,10 @@ DECLARE
 BEGIN
   SELECT * INTO me FROM pg_roles WHERE rolname = current_user;
   IF me.rolsuper THEN
-    RAISE EXCEPTION 'run 0004_docaudits_views.sql as the database owner, not a superuser: refusing';
+    RAISE EXCEPTION 'run 0007_docaudits_views.sql as the database owner, not a superuser: refusing';
   END IF;
   IF me.rolname IN ('studio_gov_ro', 'studio_app') THEN
-    RAISE EXCEPTION 'run 0004_docaudits_views.sql as the database owner, not a Studio role: refusing';
+    RAISE EXCEPTION 'run 0007_docaudits_views.sql as the database owner, not a Studio role: refusing';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'studio_gov_ro') THEN
     RAISE EXCEPTION 'studio_gov_ro does not exist: run 0001_roles.sql first';
@@ -103,13 +104,32 @@ BEGIN
   IF bad IS NOT NULL THEN
     RAISE EXCEPTION 'document-audit view has an unexpected grant (%): rolling back', bad;
   END IF;
-  SELECT string_agg(c.relname || '.' || a.attname, ', ') INTO bad
-  FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace
-  WHERE n.nspname = 'studio_ro' AND c.relname IN ('document_audit_list', 'document_audit_finding_list')
-    AND a.attnum > 0 AND NOT a.attisdropped
-    AND a.attname ~ '(text|note|reason|narrative|email|phone|name|url|payload|packet|file|reply$)';
+  -- Explicit column ALLOWLIST (not a name regex): any column not listed here, or listed and missing, rolls back.
+  SELECT string_agg(coalesce(x.col, e.col), ', ') INTO bad
+  FROM (SELECT c.relname || '.' || a.attname AS col
+        FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'studio_ro' AND c.relname IN ('document_audit_list', 'document_audit_finding_list')
+          AND a.attnum > 0 AND NOT a.attisdropped) x
+  FULL JOIN (SELECT unnest(ARRAY[
+    'document_audit_list.audit_id', 'document_audit_list.external_ref', 'document_audit_list.hospital_code',
+    'document_audit_list.physician_id', 'document_audit_list.doc_type', 'document_audit_list.doc_day',
+    'document_audit_list.ingested_at', 'document_audit_list.last_synced_at', 'document_audit_list.triage_routed_at',
+    'document_audit_list.doc_class', 'document_audit_list.has_pdf', 'document_audit_list.source',
+    'document_audit_list.created_at',
+    'document_audit_finding_list.finding_id', 'document_audit_finding_list.audit_id',
+    'document_audit_finding_list.physician_id', 'document_audit_finding_list.finding_label',
+    'document_audit_finding_list.severity', 'document_audit_finding_list.status',
+    'document_audit_finding_list.author_confirmed', 'document_audit_finding_list.authored_at',
+    'document_audit_finding_list.recurrence_count', 'document_audit_finding_list.portal_visible',
+    'document_audit_finding_list.response_owner', 'document_audit_finding_list.signal_reference',
+    'document_audit_finding_list.signal_type', 'document_audit_finding_list.doc_class',
+    'document_audit_finding_list.cdmss_routed', 'document_audit_finding_list.response_verb',
+    'document_audit_finding_list.responded_at', 'document_audit_finding_list.sync_state',
+    'document_audit_finding_list.sync_attempts', 'document_audit_finding_list.sync_permanent',
+    'document_audit_finding_list.created_at']) AS col) e ON e.col = x.col
+  WHERE x.col IS NULL OR e.col IS NULL;
   IF bad IS NOT NULL THEN
-    RAISE EXCEPTION 'document-audit view exposes a column that looks like free text or contact data (%): rolling back', bad;
+    RAISE EXCEPTION 'document-audit view columns differ from the reviewed allowlist (%): rolling back', bad;
   END IF;
 END
 $$;

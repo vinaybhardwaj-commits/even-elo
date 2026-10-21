@@ -81,6 +81,12 @@ describe("useGenerativeUIExamples registrations", () => {
       "document_audit_detail",
       "document_audit_doctor_rollup",
       "document_audit_headline",
+      "physician_privileges",
+      "physician_oppe",
+      "physician_metrics",
+      "physician_qualifications",
+      "capture_gaps",
+      "feedback_by_physician",
     ]);
     // The demo meeting picker was removed; the HITL pattern lives in a comment.
     expect(captured.useHumanInTheLoop).toEqual([]);

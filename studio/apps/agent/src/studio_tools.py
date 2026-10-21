@@ -12,6 +12,10 @@ Rules (all enforced in code and tests):
 Tables read (from src/lib/migrations.ts of even-elo): physicians, physician_engagements, hospitals,
 gov_signal_snapshots, gov_interventions, incidents. Free-text columns (notes, narratives,
 registration numbers, contact details, doctor names inside signal payloads) are never selected.
+
+M1 adds six tools over the column-scoped VIEWS in schema studio_ro (ops/neon/0003_studio_views.sql):
+physician_privileges, physician_oppe, physician_metrics, physician_qualifications, capture_gaps and
+feedback_by_physician. They read ONLY studio_ro views, never the base tables behind them.
 """
 
 from __future__ import annotations
@@ -136,6 +140,76 @@ SELECT metric, value FROM (
 ) c ORDER BY ord
 """
 
+# ---------------------------------------------------------------------------------------------
+# M1: reads over the studio_ro views (ops/neon/0003_studio_views.sql). Views only, never base tables.
+# ---------------------------------------------------------------------------------------------
+
+PHYSICIAN_PRIVILEGES_SQL = """
+SELECT v.privilege_id::text AS privilege_id, v.hospital_code, v.procedure_or_specialty, v.is_core, v.basis,
+       v.granted_date::text AS granted_date, v.expires_at::text AS expires_at, v.withdrawn_date::text AS withdrawn_date
+FROM studio_ro.physician_privileges v
+WHERE v.physician_id = %s::uuid
+ORDER BY (v.withdrawn_date IS NOT NULL), v.is_core DESC, v.procedure_or_specialty
+LIMIT %s
+"""
+
+PHYSICIAN_OPPE_SQL = """
+SELECT v.review_id::text AS review_id, v.hospital_code, v.period_start::text AS period_start, v.period_end::text AS period_end,
+       v.due_at::date::text AS due_on, v.status, v.completed_at::date::text AS completed_on
+FROM studio_ro.physician_oppe v
+WHERE v.physician_id = %s::uuid
+ORDER BY v.due_at DESC
+LIMIT %s
+"""
+
+PHYSICIAN_METRICS_SQL = """
+SELECT v.hospital_code, v.year, v.month, v.opd_count, v.ipd_admissions, v.ot_cases, v.revenue_inr
+FROM studio_ro.physician_metrics v
+WHERE v.physician_id = %s::uuid
+  AND make_date(v.year, v.month, 1) >= (date_trunc('month', current_date) - make_interval(months => %s::int))::date
+ORDER BY v.year DESC, v.month DESC, v.hospital_code
+LIMIT %s
+"""
+
+PHYSICIAN_QUALIFICATIONS_SQL = """
+SELECT v.qualification_id::text AS qualification_id, v.degree, v.institution_tier, v.year_completed, v.country,
+       v.verified, v.verified_at::date::text AS verified_on
+FROM studio_ro.physician_qualifications v
+WHERE v.physician_id = %s::uuid
+ORDER BY v.year_completed DESC NULLS LAST, v.degree
+LIMIT %s
+"""
+
+CAPTURE_GAPS_SQL = """
+SELECT v.gap_id::text AS gap_id, v.title, v.attr, v.status, v.baseline_mean, v.shipped_at::text AS shipped_on
+FROM studio_ro.capture_gaps v
+ORDER BY v.status, v.title
+LIMIT %s
+"""
+
+# Feedback counts per physician: source/polarity/severity/status only (the view has no narrative or reporter).
+# The view is bucketed by month, so the window starts at the first day of the month that contains today - N days.
+FEEDBACK_BY_PHYSICIAN_SQL = """
+SELECT v.source, v.polarity, v.severity, v.status, sum(v.incidents)::int AS incidents
+FROM studio_ro.physician_feedback v
+WHERE v.physician_id = %s::uuid
+  AND v.month >= date_trunc('month', current_date - %s::int)::date
+  AND (%s::text IS NULL OR v.source = %s::text)
+GROUP BY v.source, v.polarity, v.severity, v.status
+ORDER BY incidents DESC, v.source, v.polarity, v.severity, v.status
+LIMIT %s
+"""
+
+# The ONLY views the M1 tools touch (ops/neon/0003_studio_views.sql grants SELECT on exactly these).
+STUDIO_RO_VIEWS = (
+    "physician_privileges",
+    "physician_oppe",
+    "physician_metrics",
+    "physician_qualifications",
+    "capture_gaps",
+    "physician_feedback",
+)
+
 # The ONLY tables the read tools touch. ops/neon/0001_roles.sql grants SELECT on exactly these (a test
 # asserts the SQL grant list, this tuple, the tools' FROM/JOIN tables and the live probe agree).
 GOVERNANCE_TABLES = (
@@ -154,6 +228,12 @@ ALL_SQL = {
     "interventions": INTERVENTIONS_SQL,
     "incident_summary": INCIDENT_SUMMARY_SQL,
     "overview_counts": OVERVIEW_COUNTS_SQL,
+    "physician_privileges": PHYSICIAN_PRIVILEGES_SQL,
+    "physician_oppe": PHYSICIAN_OPPE_SQL,
+    "physician_metrics": PHYSICIAN_METRICS_SQL,
+    "physician_qualifications": PHYSICIAN_QUALIFICATIONS_SQL,
+    "capture_gaps": CAPTURE_GAPS_SQL,
+    "feedback_by_physician": FEEDBACK_BY_PHYSICIAN_SQL,
 }
 
 _FORBIDDEN = re.compile(
@@ -362,6 +442,28 @@ class NoArgs(BaseModel):
     pass
 
 
+class PhysicianLimitArgs(BaseModel):
+    physician_id: uuid.UUID = Field(description="Physician id (uuid) from list_physicians.")
+    limit: int = Limit
+
+
+class PhysicianMetricsArgs(BaseModel):
+    physician_id: uuid.UUID = Field(description="Physician id (uuid) from list_physicians.")
+    months: int = Field(default=12, ge=1, le=60, description="Look-back in months (1-60).")
+    limit: int = Limit
+
+
+class LimitArgs(BaseModel):
+    limit: int = Limit
+
+
+class FeedbackByPhysicianArgs(BaseModel):
+    physician_id: uuid.UUID = Field(description="Physician id (uuid) from list_physicians.")
+    window_days: int = Field(default=365, ge=1, le=1825, description="Look-back window in days (1-1825).")
+    source: Optional[Literal["patient", "peer", "governance", "external_public"]] = None
+    limit: int = Limit
+
+
 @tool(args_schema=ListPhysiciansArgs)
 async def list_physicians(
     filter: PhysicianFilter = PhysicianFilter(), limit: int = 50, offset: int = 0, config: RunnableConfig = None
@@ -439,5 +541,65 @@ class ToolErrorToResult(AgentMiddleware):
             return ToolMessage(content=str(exc), name=request.tool_call["name"], tool_call_id=request.tool_call["id"], status="error")
 
 
-GOVERNANCE_TOOLS = [list_physicians, physician_profile, signal_snapshots, interventions, incident_summary, overview_counts]
+@tool(args_schema=PhysicianLimitArgs)
+async def physician_privileges(physician_id: uuid.UUID, limit: int = 50, config: RunnableConfig = None) -> str:
+    """One physician's clinical privileges (hospital, procedure or specialty, core or special, basis, grant
+    and expiry dates, withdrawal date). No withdrawal reasons. Read-only."""
+    pid = str(physician_id)
+    return await run_read_tool("physician_privileges", {"physician_id": pid, "limit": limit}, (pid, limit), config, limit)
+
+
+@tool(args_schema=PhysicianLimitArgs)
+async def physician_oppe(physician_id: uuid.UUID, limit: int = 50, config: RunnableConfig = None) -> str:
+    """One physician's OPPE reviews (hospital, period, due date, status, completion date). No reviewer
+    notes or review packets. Read-only."""
+    pid = str(physician_id)
+    return await run_read_tool("physician_oppe", {"physician_id": pid, "limit": limit}, (pid, limit), config, limit)
+
+
+@tool(args_schema=PhysicianMetricsArgs)
+async def physician_metrics(physician_id: uuid.UUID, months: int = 12, limit: int = 50, config: RunnableConfig = None) -> str:
+    """One physician's monthly clinical volumes (OPD count, IPD admissions, OT cases, revenue) by hospital
+    for the last `months` months. No uploaded file names. Read-only."""
+    pid = str(physician_id)
+    return await run_read_tool("physician_metrics", {"physician_id": pid, "months": months, "limit": limit}, (pid, months, limit), config, limit)
+
+
+@tool(args_schema=PhysicianLimitArgs)
+async def physician_qualifications(physician_id: uuid.UUID, limit: int = 50, config: RunnableConfig = None) -> str:
+    """One physician's qualifications (degree, institution tier, year, country, verified or not). No
+    institution names or certificate files. Read-only."""
+    pid = str(physician_id)
+    return await run_read_tool("physician_qualifications", {"physician_id": pid, "limit": limit}, (pid, limit), config, limit)
+
+
+@tool(args_schema=LimitArgs)
+async def capture_gaps(limit: int = 50, config: RunnableConfig = None) -> str:
+    """OPD documentation capture gaps (title, attribute, status, baseline score, shipped date); not per
+    physician; no notes. Read-only."""
+    return await run_read_tool("capture_gaps", {"limit": limit}, (limit,), config, limit)
+
+
+@tool(args_schema=FeedbackByPhysicianArgs)
+async def feedback_by_physician(
+    physician_id: uuid.UUID, window_days: int = 365, source: Optional[str] = None, limit: int = 50, config: RunnableConfig = None
+) -> str:
+    """Feedback counts for ONE physician by source, polarity, severity and status in the last `window_days`.
+    Counts only: no narratives, reporters or patient references. Use source="patient" for patient
+    feedback. Read-only."""
+    pid = str(physician_id)
+    return await run_read_tool(
+        "feedback_by_physician",
+        {"physician_id": pid, "window_days": window_days, "source": source, "limit": limit},
+        (pid, window_days, source, source, limit),
+        config,
+        limit,
+    )
+
+
+VIEW_TOOLS = [physician_privileges, physician_oppe, physician_metrics, physician_qualifications, capture_gaps, feedback_by_physician]
+VIEW_TOOL_NAMES = tuple(t.name for t in VIEW_TOOLS)
+
+
+GOVERNANCE_TOOLS = [list_physicians, physician_profile, signal_snapshots, interventions, incident_summary, overview_counts, *VIEW_TOOLS]
 GOVERNANCE_TOOL_NAMES = [t.name for t in GOVERNANCE_TOOLS]

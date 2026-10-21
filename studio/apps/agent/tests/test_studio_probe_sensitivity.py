@@ -8,14 +8,14 @@ import sys
 
 import pytest
 
-from tests.neon_harness import PROBE, AGENT, cluster, full_flow, keyfile, neon, run_roles  # noqa: F401
+from tests.neon_harness import OPS, PROBE, AGENT, cluster, full_flow, keyfile, neon, run_roles  # noqa: F401
 
 
 
 def run_probe(url):
     r = subprocess.run(
         [sys.executable, "-m", "pytest", str(PROBE), "-q", "-p", "no:cacheprovider", "--tb=no"],
-        cwd=AGENT, env={**os.environ, "GOV_RO_DATABASE_URL": url}, capture_output=True, text=True,
+        cwd=AGENT, env={**os.environ, "GOV_RO_DATABASE_URL": url, "STUDIO_EXPECT_VIEWS": "1"}, capture_output=True, text=True,
     )
     return r.returncode, r.stdout
 
@@ -56,6 +56,8 @@ CASES = {
 def test_probe_catches_each_over_privilege_and_recovers(cluster, neon, keyfile, tmp_path):
     s, r, _, out = full_flow(cluster, neon, tmp_path, keyfile)
     assert s.returncode == 0 and r.returncode == 0
+    assert run_roles(cluster, tmp_path, sql_file=OPS / "0003_studio_views.sql", tag="sens-views")[0].returncode == 0
+    assert run_roles(cluster, tmp_path, sql_file=OPS / "0007_docaudits_views.sql", tag="sens-docaudit")[0].returncode == 0
     assert run_roles(cluster, tmp_path, "--login", tag="sens-login")[0].returncode == 0
     url = out.read_text().strip()
     rc, text = run_probe(url)

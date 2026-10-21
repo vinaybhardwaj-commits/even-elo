@@ -26,7 +26,7 @@ import { isActive } from "../studio-nav";
 import { clearScreenCache } from "@/lib/screens/use-screen-tool";
 
 const PID = "22222222-2222-4222-8222-222222222222";
-const table = (tool: string, columns: string[], rows: Array<Record<string, string | number | null>>) => ({
+const table = (tool: string, columns: string[], rows: Array<Record<string, string | number | boolean | null>>) => ({
   source: { tool, query_hash: "0123456789ab" },
   mode: "live",
   synthetic: false,
@@ -50,6 +50,23 @@ const DATA: Record<string, unknown> = {
     ["physician_id", "full_name", "preferred_name", "primary_specialty", "current_status", "date_joined_network", "registration_council", "registration_expiry", "engagements"],
     [{ physician_id: PID, full_name: "Dr A", preferred_name: null, primary_specialty: "Neurology", current_status: "active", date_joined_network: "2024-01-01", registration_council: "KMC", registration_expiry: "2027-01-01", engagements: "RR consultant active | KH visiting active" }],
   ),
+  physician_privileges: table(
+    "physician_privileges",
+    ["privilege_id", "hospital_code", "procedure_or_specialty", "is_core", "basis", "granted_date", "expires_at", "withdrawn_date"],
+    [{ privilege_id: PID, hospital_code: "RR", procedure_or_specialty: "Sample privilege", is_core: false, basis: "initial", granted_date: "2026-01-05", expires_at: "2027-01-05", withdrawn_date: null }],
+  ),
+  physician_oppe: table("physician_oppe", ["review_id", "hospital_code", "period_start", "period_end", "due_on", "status", "completed_on"], [
+    { review_id: PID, hospital_code: "RR", period_start: "2026-01-01", period_end: "2026-06-30", due_on: "2026-07-15", status: "satisfactory", completed_on: null },
+  ]),
+  physician_metrics: table("physician_metrics", ["hospital_code", "year", "month", "opd_count", "ipd_admissions", "ot_cases", "revenue_inr"], [
+    { hospital_code: "RR", year: 2026, month: 9, opd_count: 111, ipd_admissions: 9, ot_cases: 5, revenue_inr: 210000 },
+  ]),
+  physician_qualifications: table("physician_qualifications", ["qualification_id", "degree", "institution_tier", "year_completed", "country", "verified", "verified_on"], [
+    { qualification_id: PID, degree: "Sample degree", institution_tier: "A", year_completed: 2012, country: "IN", verified: true, verified_on: null },
+  ]),
+  feedback_by_physician: table("feedback_by_physician", ["source", "polarity", "severity", "status", "incidents"], [
+    { source: "patient", polarity: "negative", severity: "high", status: "open", incidents: 2 },
+  ]),
   list_physicians: table("list_physicians", ["physician_id", "full_name", "primary_specialty", "current_status", "date_joined_network", "hospitals"], [
     { physician_id: PID, full_name: "Dr A", primary_specialty: "Neurology", current_status: "active", date_joined_network: "2024-01-01", hospitals: "RR" },
   ]),
@@ -145,7 +162,7 @@ describe("screens", () => {
     await screen.findAllByText("Showing 1–200 of 266");
   });
 
-  it("physician 360: reads three tools for the selected id and exposes it", async () => {
+  it("physician 360: reads the profile, signal, intervention and view tools for the selected id and exposes it", async () => {
     render(<PhysicianScreen id={PID} />);
     await screen.findByText("Neurology");
     expect(screen.getByText("RR consultant active")).toBeInTheDocument();
@@ -155,10 +172,35 @@ describe("screens", () => {
         ["/studio/api/screen/physician_profile", { physician_id: PID }],
         ["/studio/api/screen/signal_snapshots", { physician_id: PID, window_days: 90, limit: 50 }],
         ["/studio/api/screen/interventions", { physician_id: PID, limit: 50 }],
+        ["/studio/api/screen/physician_privileges", { physician_id: PID, limit: 50 }],
+        ["/studio/api/screen/physician_oppe", { physician_id: PID, limit: 50 }],
+        ["/studio/api/screen/physician_metrics", { physician_id: PID, months: 12, limit: 50 }],
+        ["/studio/api/screen/physician_qualifications", { physician_id: PID, limit: 50 }],
+        ["/studio/api/screen/feedback_by_physician", { physician_id: PID, window_days: 365, source: "patient", limit: 50 }],
       ]),
     );
     expect(contexts.at(-1)!.value).toMatchObject({ screen: "physician_360", selected: { physician_id: PID } });
-    expect(screen.getByText(/nothing here is attributed to this physician/)).toBeInTheDocument();
+    const tools = (contexts.at(-1)!.value as { reads: Array<{ tool: string }> }).reads.map((r) => r.tool).sort();
+    expect(tools).toEqual(
+      ["feedback_by_physician", "interventions", "physician_metrics", "physician_oppe", "physician_privileges", "physician_profile", "physician_qualifications", "signal_snapshots"],
+    );
+  });
+
+  it("physician 360: the placeholder is gone and each new section shows its rows and source line", async () => {
+    render(<PhysicianScreen id={PID} />);
+    await screen.findByText("Sample privilege");
+    expect(screen.queryByText(/nothing here is attributed to this physician/)).toBeNull();
+    expect(screen.getByRole("region", { name: "Patient feedback" })).toHaveTextContent("negative");
+    expect(screen.getByRole("region", { name: "Patient feedback" })).toHaveTextContent("feedback_by_physician");
+    expect(screen.getByText("Special")).toBeInTheDocument();
+    expect(screen.getByText("Sample degree")).toBeInTheDocument();
+    expect(screen.getByText("satisfactory")).toBeInTheDocument();
+    expect(screen.getByText("210000")).toBeInTheDocument();
+    for (const name of ["Privileges", "OPPE reviews", "Monthly volumes", "Qualifications", "Patient feedback"]) {
+      expect(screen.getByRole("region", { name })).toBeInTheDocument();
+    }
+    // The feedback table is called "patient feedback", never "incidents".
+    expect(screen.getByRole("region", { name: "Patient feedback" }).textContent ?? "").not.toMatch(/incident/i);
   });
 
   it("physician 360: an invalid id makes no request", async () => {

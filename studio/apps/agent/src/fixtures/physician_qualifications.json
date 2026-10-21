@@ -1,0 +1,33 @@
+{
+  "synthetic": true,
+  "note": "Synthetic sample data for STUDIO_LIVE_READS=0 and tests. Not real physicians.",
+  "columns": [
+    "qualification_id",
+    "degree",
+    "institution_tier",
+    "year_completed",
+    "country",
+    "verified",
+    "verified_on"
+  ],
+  "rows": [
+    {
+      "qualification_id": "00000000-0000-4000-8000-0000000000d1",
+      "degree": "Sample specialist degree",
+      "institution_tier": "A",
+      "year_completed": 2012,
+      "country": "IN",
+      "verified": true,
+      "verified_on": "2026-03-01"
+    },
+    {
+      "qualification_id": "00000000-0000-4000-8000-0000000000d2",
+      "degree": "Sample primary degree",
+      "institution_tier": "B",
+      "year_completed": 2007,
+      "country": "IN",
+      "verified": false,
+      "verified_on": null
+    }
+  ]
+}
