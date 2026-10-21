@@ -28,7 +28,7 @@ for _logger in ("botocore", "boto3", "urllib3", "google.auth", "httpx"):
 from dotenv import load_dotenv
 from contextlib import asynccontextmanager
 
-from ag_ui.core import RunAgentInput
+from ag_ui.core import EventType, RunAgentInput
 from ag_ui.encoder import EventEncoder
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -43,6 +43,7 @@ from src.studio_auth import (
     PostgresNonceStore,
     StudioAuthMiddleware,
 )
+from src.run_errors import classify, run_error_event
 from src.studio_checkpoint import dev_checkpointer, postgres_checkpointer
 from src.studio_db import connect_studio, studio_db_configured
 from src.studio_logging import configure_logging
@@ -136,8 +137,16 @@ async def run_agent(input_data: RunAgentInput, request: Request):
     request_agent.config = {"configurable": {STAFF_KEY: staff_id}}
 
     async def event_generator():
-        async for event in request_agent.run(input_data):
-            yield encoder.encode(event)
+        finished = False
+        try:
+            async for event in request_agent.run(input_data):
+                finished = finished or getattr(event, "type", None) == EventType.RUN_FINISHED
+                yield encoder.encode(event)
+        except Exception as exc:
+            # Fixed code and message only: exception text can embed hostnames or DSN fragments.
+            logging.getLogger(__name__).warning("run failed type=%s code=%s", type(exc).__name__, classify(exc))
+            if not finished:
+                yield encoder.encode(run_error_event(exc))
 
     return StreamingResponse(event_generator(), media_type=encoder.get_content_type())
 

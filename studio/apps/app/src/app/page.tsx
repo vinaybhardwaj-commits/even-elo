@@ -10,6 +10,7 @@ import {
   useCopilotKit,
 } from "@copilotkit/react-core/v2";
 import { useGenerativeUIExamples } from "@/hooks";
+import { decideRunError, describeRunError, type ErrorEventLike } from "@/lib/run-error";
 
 export default function HomePage() {
   useGenerativeUIExamples();
@@ -19,6 +20,8 @@ export default function HomePage() {
   const [error, setError] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
   const retryingRef = useRef(false);
+  // True once the current run delivered RUN_FINISHED; later errors (abort, closed stream) are noise.
+  const runFinishedRef = useRef(false);
   const chatRoot = useRef<HTMLDivElement>(null);
   const latestQuestion = agent.messages.filter((message) => message.role === "user").at(-1)?.id;
 
@@ -45,9 +48,11 @@ export default function HomePage() {
   useEffect(() => {
     const subscription = agent.subscribe({
       onRunInitialized: () => {
+        runFinishedRef.current = false;
         setError(null);
       },
       onRunFinishedEvent: () => {
+        runFinishedRef.current = true;
         setError(null);
       },
     });
@@ -58,6 +63,7 @@ export default function HomePage() {
     if (retryingRef.current || agent.isRunning) return;
     retryingRef.current = true;
     setRetrying(true);
+    runFinishedRef.current = false;
     setError(null);
     try {
       await copilotkit.runAgent({ agent });
@@ -102,11 +108,12 @@ export default function HomePage() {
             autoScroll={false}
             scrollView={ReaderScrollView}
             messageView={{ assistantMessage: { markdownRenderer: AnswerMarkdown } }}
-            onError={() =>
-              setError(
-                "Something interrupted the answer. Try again or send another message.",
-              )
-            }
+            onError={(raw) => {
+              const event = raw as ErrorEventLike;
+              console.warn(describeRunError(event));
+              const decision = decideRunError(event, runFinishedRef.current);
+              if (decision.show) setError(decision.message);
+            }}
             labels={{
               welcomeMessageText: "What would you like to explore?",
               chatInputPlaceholder: "Ask anything…",

@@ -102,3 +102,53 @@ def test_governance_tools_are_registered_and_no_write_tool_exists(main):
     names = {t.name for t in main.TOOLS}
     assert {"list_physicians", "physician_profile", "signal_snapshots", "interventions", "incident_summary", "overview_counts"} <= names
     assert not any(w in n for n in names for w in ("write", "update", "delete", "insert", "create"))
+
+
+class FailingAgent(FakeAgent):
+    def __init__(self, exc):
+        super().__init__()
+        self.exc = exc
+
+    def clone(self):
+        return self
+
+    async def run(self, input_data):
+        raise self.exc
+        yield
+
+
+def _run_error(main, exc):
+    main.app.state.studio_agent = FailingAgent(exc)
+    r = TestClient(main.app).post("/agent", json=BODY, headers=headers())
+    assert r.status_code == 200
+    return r.text
+
+
+def test_database_down_maps_to_data_unavailable_without_exception_text(main):
+    import psycopg
+    import psycopg_pool
+
+    for exc in (
+        psycopg.OperationalError("connection to server at 10.0.0.9 refused password=hunter2"),
+        psycopg_pool.PoolTimeout("couldn't get a connection after 5s"),
+    ):
+        body = _run_error(main, exc)
+        assert "RUN_ERROR" in body and "data_unavailable" in body
+        assert "10.0.0.9" not in body and "hunter2" not in body and "couldn't get" not in body
+
+
+def test_wrapped_database_error_is_still_data_unavailable(main):
+    import psycopg
+
+    try:
+        try:
+            raise psycopg.OperationalError("down")
+        except psycopg.OperationalError as inner:
+            raise RuntimeError("graph failed") from inner
+    except RuntimeError as outer:
+        assert "data_unavailable" in _run_error(main, outer)
+
+
+def test_other_failures_get_a_generic_code(main):
+    body = _run_error(main, ValueError("secret detail"))
+    assert "agent_error" in body and "secret detail" not in body
