@@ -125,4 +125,14 @@ describe("copilot fetch guard", () => {
     await run("user", "r11");
     expect(real).toHaveBeenCalledTimes(2 + MAX_TOOL_FOLLOW_UPS);
   });
+
+  it("traces calls per method, with the stacks of repeated calls only", async () => {
+    const { guarded, tryRun } = setup(() => new Response("{}", { status: 200 }));
+    for (let i = 0; i < 12; i++) await tryRun("info");
+    const { trace } = guarded as unknown as { trace: Record<string, { calls: number; refused: number; stacks: string[] }> };
+    expect(trace.info.calls).toBe(12);
+    expect(trace.info.refused).toBe(2);
+    expect(trace.info.stacks).toHaveLength(3);
+    expect(trace.info.stacks[0]).toContain("info call 2");
+  });
 });

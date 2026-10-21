@@ -79,6 +79,10 @@ vi.mock("next/navigation", () => ({ usePathname: () => "/overview", useRouter: (
 
 import { Providers } from "../providers";
 import { OverviewScreen } from "@/components/screens/overview-screen";
+import { RmoInboxScreen } from "@/components/screens/rmo-inbox-screen";
+import { FeedbackScreen } from "@/components/screens/feedback-screen";
+import { AdminUsersScreen } from "@/components/screens/admin-users-screen";
+import { AdminResignationsScreen } from "@/components/screens/admin-resignations-screen";
 
 const runtimePosts = (rpc?: string) => net.calls.filter((c) => c.url.includes("/studio/api/copilotkit") && c.method === "POST" && (!rpc || c.rpc === rpc));
 const wait = (ms: number) => act(async () => void (await new Promise((r) => setTimeout(r, ms))));
@@ -170,4 +174,25 @@ describe("Studio overview: copilotkit request storm", () => {
     expect(runtimePosts("agent/run").length).toBeLessThanOrEqual(1 + 8);
     expect(screen.getByText(/stopped this answer after 8 automatic tool steps/i)).toBeInTheDocument();
   }, 30000);
+
+  // Live (bef701b): rmo-inbox, feedback, admin/users and admin/resignations each showed 10 runtime POSTs on load.
+  const SCREENS = [
+    ["overview", OverviewScreen],
+    ["rmo-inbox", RmoInboxScreen],
+    ["feedback", FeedbackScreen],
+    ["admin/users", AdminUsersScreen],
+    ["admin/resignations", AdminResignationsScreen],
+  ] as const;
+  it.each(SCREENS.map(([name, Screen], i) => ({ name, Screen, i })))("$name mounts with exactly 1 runtime info and nothing else", async ({ Screen, i }) => {
+    // A fresh rate window per screen, so a refused info cannot hide a repeat.
+    const realNow = Date.now.bind(Date);
+    vi.spyOn(Date, "now").mockImplementation(() => realNow() + 300_000 + i * 11_000);
+    render(
+      <Providers>
+        <Screen />
+      </Providers>,
+    );
+    await wait(1500);
+    expect(runtimePosts().map((c) => c.rpc)).toEqual(["info"]);
+  });
 });
