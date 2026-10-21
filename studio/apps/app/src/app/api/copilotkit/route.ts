@@ -7,6 +7,7 @@ import {
 import { NextRequest } from "next/server";
 import { buildRuntimeOptions } from "@/lib/copilotkit-runtime-options";
 import { buildHttpToolActions } from "@/lib/http-tools/actions";
+import { buildOnboardingActions } from "@/lib/onboarding/actions";
 import { agentHeaders } from "@/lib/zone/actor-token";
 import { ACTOR_ID_HEADER, ACTOR_ROLE_HEADER } from "@/lib/zone/authorize";
 
@@ -34,7 +35,7 @@ export const POST = async (req: NextRequest) => {
     return new Response("Agent not configured", { status: 503 });
   }
 
-  const runtimeOptions = buildRuntimeOptions({ langgraphUrl: agentUrl, headers, actions: buildHttpToolActions({ staffId, role }) });
+  const runtimeOptions = buildRuntimeOptions({ langgraphUrl: agentUrl, headers, actions: [...buildHttpToolActions({ staffId, role }), ...buildOnboardingActions({ staffId, role, session: req.cookies.get("epi_session")?.value ?? null })] });
   const { handleRequest } = copilotRuntimeNextJSAppRouterEndpoint({
     // Next strips basePath before the handler sees the URL, so the endpoint is WITHOUT /studio.
     endpoint: "/api/copilotkit",
