@@ -3,6 +3,7 @@ This is the main entry point for the agent.
 It defines the workflow graph, state, tools, nodes and edges.
 """
 
+import json
 import logging
 import os
 import warnings
@@ -47,6 +48,7 @@ from src.run_errors import classify, run_error_event
 from src.studio_checkpoint import dev_checkpointer, postgres_checkpointer
 from src.studio_db import connect_studio, studio_db_configured
 from src.studio_logging import configure_logging
+from src.studio_screen import MAX_BODY_BYTES, run_screen_tool
 from src.studio_tools import GOVERNANCE_TOOLS, STAFF_KEY
 from src.model import build_model
 from src.visualization_router import JevVisualizationMiddleware
@@ -100,7 +102,7 @@ async def lifespan(app: FastAPI):
         yield
 
 
-# No docs/openapi: the surface is exactly POST /agent and GET /agent/health.
+# No docs/openapi: the surface is POST /agent, GET /agent/health and POST /agent/tools/{name} (screen reads).
 app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 app.state.studio_agent = build_ag_ui_agent(agent)
 
@@ -115,6 +117,23 @@ app.add_middleware(StudioAuthMiddleware, nonce_store=_nonces)
 @app.get("/agent/health")
 def health():
     return {"status": "ok"}
+
+
+@app.post("/agent/tools/{tool_name}")
+async def run_tool(tool_name: str, request: Request):
+    """Direct invocation of ONE governance read tool for the fixed screens (same auth, audit and limits)."""
+    actor = (request.scope.get("state") or {}).get(STATE_KEY)
+    if not actor:  # defence in depth: the middleware always sets this
+        return JSONResponse({"ok": False, "error": "unauthenticated"}, status_code=401)
+    raw = await request.body()
+    if len(raw) > MAX_BODY_BYTES:
+        return JSONResponse({"ok": False, "error": "bad_params"}, status_code=422)
+    try:
+        params = json.loads(raw) if raw.strip() else {}
+    except ValueError:
+        return JSONResponse({"ok": False, "error": "bad_params"}, status_code=422)
+    status, body = await run_screen_tool(tool_name, params, actor["staff_id"])
+    return JSONResponse(body, status_code=status)
 
 
 def scoped_thread_id(staff_id: str, thread_id: str) -> str:

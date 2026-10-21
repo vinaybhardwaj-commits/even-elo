@@ -1,29 +1,9 @@
 "use client";
 
-import { z } from "zod";
-
-// Typed result of the governance read tools (apps/agent/src/studio_tools.py).
-// A payload without `source` (tool + query hash) is REFUSED, never rendered.
-export const GOVERNANCE_TOOL_NAMES = [
-  "list_physicians",
-  "physician_profile",
-  "signal_snapshots",
-  "interventions",
-  "incident_summary",
-  "overview_counts",
-] as const;
-
-const Cell = z.union([z.string(), z.number(), z.boolean(), z.null()]);
-
-export const SourceTablePayload = z.object({
-  source: z.object({ tool: z.string().min(1), query_hash: z.string().regex(/^[0-9a-f]{12}$/) }),
-  mode: z.enum(["live", "fixture"]),
-  synthetic: z.boolean(),
-  columns: z.array(z.string()),
-  rows: z.array(z.record(z.string(), Cell)),
-  row_count: z.number().int().nonnegative(),
-});
-export type SourceTablePayload = z.infer<typeof SourceTablePayload>;
+// Typed result of the governance read tools (apps/agent/src/studio_tools.py). The schema lives in
+// lib/screens/tool-schema.ts (shared with the screen route). A payload without `source` is REFUSED.
+import { GOVERNANCE_TOOL_NAMES, SourceTablePayload } from "@/lib/screens/tool-schema";
+export { GOVERNANCE_TOOL_NAMES, SourceTablePayload };
 
 export function parseSourceTable(raw: unknown): { ok: true; value: SourceTablePayload } | { ok: false; reason: string } {
   let data: unknown = raw;

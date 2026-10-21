@@ -10,6 +10,7 @@ import {
   useCopilotKit,
 } from "@copilotkit/react-core/v2";
 import { useGenerativeUIExamples } from "@/hooks";
+import { StudioNav } from "@/components/screens/studio-nav";
 import { decideRunError, describeRunError, type ErrorEventLike } from "@/lib/run-error";
 
 export default function HomePage() {
@@ -78,6 +79,8 @@ export default function HomePage() {
   };
 
   return (
+    <div className="studio-frame">
+    <StudioNav />
     <div className="chat-app">
       <a className="chat-skip" href="#main-content">
         Skip to chat
@@ -123,6 +126,7 @@ export default function HomePage() {
           />
         </div>
       </main>
+    </div>
     </div>
   );
 }

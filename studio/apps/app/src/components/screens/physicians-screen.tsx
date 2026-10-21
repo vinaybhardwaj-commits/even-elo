@@ -1,0 +1,94 @@
+"use client";
+
+import Link from "next/link";
+import { useMemo, useState } from "react";
+import { useScreenTool } from "@/lib/screens/use-screen-tool";
+import type { ScreenToolParams } from "@/lib/screens/tool-schema";
+import { DataTable, ToolSection } from "./parts";
+import { ScreenFrame } from "./screen-frame";
+import { useScreenContext } from "./screen-context";
+
+type Filters = { status: "" | "active" | "inactive" | "terminated"; name: string; specialty: string; hospital: string };
+const EMPTY: Filters = { status: "", name: "", specialty: "", hospital: "" };
+const PAGE = 200;
+
+export function toParams(f: Filters): ScreenToolParams<"list_physicians"> {
+  const filter: NonNullable<ScreenToolParams<"list_physicians">["filter"]> = {};
+  if (f.status) filter.status = f.status;
+  if (f.name.trim()) filter.name_contains = f.name.trim().slice(0, 80);
+  if (f.specialty.trim()) filter.specialty_contains = f.specialty.trim().slice(0, 80);
+  if (f.hospital.trim()) filter.hospital_code = f.hospital.trim().slice(0, 40);
+  return { filter, limit: PAGE };
+}
+
+export function PhysiciansScreen() {
+  const [draft, setDraft] = useState<Filters>(EMPTY);
+  const [applied, setApplied] = useState<Filters>(EMPTY);
+  const params = useMemo(() => toParams(applied), [applied]);
+  const list = useScreenTool("list_physicians", params);
+
+  useScreenContext("physicians", {}, params.filter ?? {}, [{ tool: "list_physicians", params, state: list }]);
+
+  const set = (k: keyof Filters) => (e: { target: { value: string } }) => setDraft((d) => ({ ...d, [k]: e.target.value }) as Filters);
+
+  return (
+    <ScreenFrame title="Physicians">
+      <form
+        className="scr-filters scr-form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          setApplied(draft);
+        }}
+      >
+        <label>
+          Name
+          <input value={draft.name} onChange={set("name")} maxLength={80} />
+        </label>
+        <label>
+          Specialty
+          <input value={draft.specialty} onChange={set("specialty")} maxLength={80} />
+        </label>
+        <label>
+          Hospital code
+          <input value={draft.hospital} onChange={set("hospital")} maxLength={40} />
+        </label>
+        <label>
+          Status
+          <select value={draft.status} onChange={set("status")}>
+            <option value="">Any</option>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+            <option value="terminated">Terminated</option>
+          </select>
+        </label>
+        <button type="submit">Apply</button>
+        <button
+          type="button"
+          onClick={() => {
+            setDraft(EMPTY);
+            setApplied(EMPTY);
+          }}
+        >
+          Clear
+        </button>
+      </form>
+
+      <ToolSection title="Roster" state={list} retry={list.retry}>
+        {(data) => (
+          <>
+            {data.row_count >= PAGE && <p className="scr-muted">Showing the first {PAGE} matches. Narrow the filters to see others.</p>}
+            <DataTable
+              data={data}
+              columns={["full_name", "primary_specialty", "current_status", "hospitals", "date_joined_network"]}
+              labels={{ full_name: "name", primary_specialty: "specialty", current_status: "status", date_joined_network: "joined" }}
+              renderCell={{
+                full_name: (v, row) => <Link href={`/physicians/${String(row.physician_id)}`}>{v === null ? "–" : String(v)}</Link>,
+              }}
+              empty="No physicians match these filters."
+            />
+          </>
+        )}
+      </ToolSection>
+    </ScreenFrame>
+  );
+}
