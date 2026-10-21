@@ -272,3 +272,28 @@ def test_idless_continuation_has_stable_turn_key():
     assert routing_input(state) is None
     state["messages"].append(HumanMessage(content="table"))
     assert routing_input(state)[0] != turn
+
+
+def test_jev_client_uses_configured_proxy(monkeypatch):
+    import httpx
+    from src import visualization_router as vr
+
+    seen = []
+    real_client = httpx.Client
+
+    def capture(**kwargs):
+        seen.append(kwargs)
+        return real_client(transport=httpx.MockTransport(lambda r: httpx.Response(500)))
+
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:8888")
+    monkeypatch.setattr(vr.httpx, "Client", capture)
+    with pytest.raises(ValueError):
+        vr.route({})
+    assert seen and seen[0]["proxy"] == "http://127.0.0.1:8888" and seen[0]["trust_env"] is False
+
+
+def test_jev_client_without_proxy_env(monkeypatch):
+    from src import visualization_router as vr
+
+    monkeypatch.delenv("HTTPS_PROXY", raising=False)
+    assert "proxy" not in vr.client_options()

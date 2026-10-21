@@ -147,9 +147,19 @@ def parse_response(response):
         ) from exc
 
 
+def client_options():
+    """Explicit proxy, never ambient env: the agent's egress is the local Squid allowlist (HTTPS_PROXY set by the
+    systemd unit); without it, direct DNS/TCP is dropped by nft and every chat fails before the model call."""
+    options = {"timeout": 15, "trust_env": False}
+    proxy = os.environ.get("HTTPS_PROXY", "").strip()
+    if proxy:
+        options["proxy"] = proxy
+    return options
+
+
 def route(context):
     try:
-        with httpx.Client(timeout=15, trust_env=False) as client:
+        with httpx.Client(**client_options()) as client:
             return parse_response(client.post(JEV_URL, **request_options(context)))
     except httpx.HTTPError:
         raise ValueError(
@@ -159,7 +169,7 @@ def route(context):
 
 async def aroute(context):
     try:
-        async with httpx.AsyncClient(timeout=15, trust_env=False) as client:
+        async with httpx.AsyncClient(**client_options()) as client:
             return parse_response(
                 await client.post(JEV_URL, **request_options(context))
             )
