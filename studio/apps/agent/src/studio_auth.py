@@ -5,7 +5,8 @@ A request is served only when ALL of these hold:
   2. X-Studio-Actor is an HS256 JWT signed with env STUDIO_ACTOR_SECRET with aud
      "studio-agent", a role in ALLOWED_ROLES, exp not passed, exp - iat <= 60 s, and
      iat not more than 5 s in the future;
-  3. the staff id is within its token bucket (env STUDIO_RATE_PER_MIN, default 30), checked before
+  3. the staff id is within its token bucket (env STUDIO_RATE_PER_MIN, default 30; screen reads under
+     /agent/tools/ have their own bucket, env STUDIO_SCREEN_RATE_PER_MIN, default 60), checked before
      the jti is consumed so a 429 does not burn the token;
   4. its jti has not been seen (in-memory LRU, then the studio_nonce table, insert-or-fail).
 
@@ -32,6 +33,7 @@ MAX_LIFETIME_S = 60
 IAT_SKEW_S = 5
 ALLOWED_ROLES = frozenset({"super_admin"})  # M0-S2: super_admin only
 HEALTH_PATH = "/agent/health"
+SCREEN_PREFIX = "/agent/tools/"
 STATE_KEY = "studio_actor"
 
 
@@ -127,6 +129,13 @@ def rate_per_minute() -> int:
         return 30
 
 
+def screen_rate_per_minute() -> int:
+    try:
+        return max(1, int(os.environ.get("STUDIO_SCREEN_RATE_PER_MIN", "60")))
+    except ValueError:
+        return 60
+
+
 class Denied(Exception):
     def __init__(self, status: int, code: str):
         super().__init__(code)
@@ -181,12 +190,15 @@ class StudioAuthMiddleware:
         *,
         nonce_store: Optional[NonceStore] = None,
         bucket: Optional[TokenBucket] = None,
+        screen_bucket: Optional[TokenBucket] = None,
         service_token: Callable[[], Optional[str]] = lambda: os.environ.get("STUDIO_SERVICE_TOKEN"),
         actor_secret: Callable[[], Optional[str]] = lambda: os.environ.get("STUDIO_ACTOR_SECRET"),
     ):
         self.app = app
         self.nonce_store = nonce_store or MemoryNonceStore()
         self.bucket = bucket or TokenBucket(rate_per_minute())
+        # Screen reads (burst 60, refill 1/s) never draw from the chat bucket, and chat never from this one.
+        self.screen_bucket = screen_bucket or TokenBucket(screen_rate_per_minute())
         self._service_token = service_token
         self._actor_secret = actor_secret
 
@@ -216,8 +228,11 @@ class StudioAuthMiddleware:
         claims = verify_actor(headers.get("x-studio-actor"), self._actor_secret())
         # Rate limit BEFORE burning the jti: a 429 must not consume the one-time token, so the
         # client can retry the same token after Retry-After if it is still valid.
-        if scope.get("path") != HEALTH_PATH and not self.bucket.allow(claims["sub"]):
-            raise Denied(429, "rate_limited")
+        path = scope.get("path") or ""
+        if path != HEALTH_PATH:
+            bucket = self.screen_bucket if path.startswith(SCREEN_PREFIX) else self.bucket
+            if not bucket.allow(claims["sub"]):
+                raise Denied(429, "rate_limited")
         if not await self.nonce_store.claim(claims["jti"], float(claims["exp"])):
             raise Denied(401, "replay")
         return claims

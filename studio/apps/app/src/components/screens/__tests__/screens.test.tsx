@@ -23,6 +23,7 @@ import { OverviewScreen } from "../overview-screen";
 import { PhysicianScreen } from "../physician-screen";
 import { PhysiciansScreen } from "../physicians-screen";
 import { isActive } from "../studio-nav";
+import { clearScreenCache } from "@/lib/screens/use-screen-tool";
 
 const PID = "22222222-2222-4222-8222-222222222222";
 const table = (tool: string, columns: string[], rows: Array<Record<string, string | number | null>>) => ({
@@ -56,6 +57,7 @@ const DATA: Record<string, unknown> = {
 
 const fetchMock = vi.fn();
 beforeEach(() => {
+  clearScreenCache();
   contexts.length = 0;
   fetchMock.mockReset();
   fetchMock.mockImplementation(async (url: string) => {

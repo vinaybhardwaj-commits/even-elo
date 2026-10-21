@@ -10,6 +10,20 @@ export type ScreenToolState =
 
 export const SCREEN_API = "/studio/api/screen";
 
+// Back-nav and re-mounts reuse a recent successful read instead of spending the agent's screen budget again.
+export const SCREEN_CACHE_TTL_MS = 30_000;
+const screenCache = new Map<string, { at: number; data: SourceTablePayload }>();
+export const clearScreenCache = () => screenCache.clear();
+const cachedRead = (cacheKey: string, now = Date.now()) => {
+  const hit = screenCache.get(cacheKey);
+  if (!hit) return null;
+  if (now - hit.at >= SCREEN_CACHE_TTL_MS) {
+    screenCache.delete(cacheKey);
+    return null;
+  }
+  return hit.data;
+};
+
 const ERROR_TEXT: Record<string, string> = {
   rate_limited: "Too many reads in the last minute. Wait a moment, then retry.",
   agent_unreachable: "The agent is unreachable. Retry in a moment.",
@@ -32,6 +46,12 @@ export function useScreenTool<T extends GovernanceToolName>(
 
   useEffect(() => {
     if (key === null) return;
+    const cacheKey = `${tool}|${key}`;
+    const hit = attempt === 0 ? cachedRead(cacheKey) : null;
+    if (hit) {
+      setSettled({ id: requestId, result: { status: "ok", data: hit } });
+      return;
+    }
     const controller = new AbortController();
     const done = (result: ScreenToolState) => {
       if (!controller.signal.aborted) setSettled({ id: requestId, result });
@@ -51,6 +71,7 @@ export function useScreenTool<T extends GovernanceToolName>(
           return done({ status: "error", code });
         }
         const parsed = SourceTablePayload.safeParse(body);
+        if (parsed.success) screenCache.set(cacheKey, { at: Date.now(), data: parsed.data });
         done(parsed.success ? { status: "ok", data: parsed.data } : { status: "error", code: "bad_payload" });
       } catch {
         done({ status: "error", code: "agent_unreachable" });

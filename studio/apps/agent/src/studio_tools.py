@@ -378,14 +378,14 @@ async def interventions(physician_id: Optional[uuid.UUID] = None, limit: int = 5
 
 @tool(args_schema=IncidentSummaryArgs)
 async def incident_summary(window_days: int = 30, config: RunnableConfig = None) -> str:
-    """Incident counts by status, polarity and severity in the last `window_days`. Counts only: no
+    """Patient feedback counts by status, polarity and severity in the last `window_days`. Counts only: no
     narratives, names or reporters. Read-only."""
     return await run_read_tool("incident_summary", {"window_days": window_days}, (window_days, MAX_LIMIT), config, MAX_LIMIT)
 
 
 @tool(args_schema=NoArgs)
 async def overview_counts(config: RunnableConfig = None) -> str:
-    """Headline governance counts (physicians, hospitals, open engagements and incidents, interventions,
+    """Headline governance counts (physicians, hospitals, open engagements and patient feedback items, interventions,
     snapshot days). Read-only."""
     return await run_read_tool("overview_counts", {}, (), config, None)
 

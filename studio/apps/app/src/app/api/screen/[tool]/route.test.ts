@@ -122,6 +122,27 @@ describe("/studio/api/screen/[tool]", () => {
     expect((await call("overview_counts")).status).toBe(502);
   });
 
+  it("fails closed on a 3xx from the agent and sends nothing onward", async () => {
+    // redirect: "error" makes the real fetch reject; the mock mirrors that when a redirect is not allowed.
+    fetchMock.mockImplementation(async (_url: string, init: RequestInit) => {
+      if (init.redirect === "error") throw new TypeError("redirect mode is set to error");
+      return new Response(null, { status: 302, headers: { location: "https://evil.invalid/steal" } });
+    });
+    const res = await call("overview_counts");
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual({ ok: false, error: "agent_unreachable" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][1].redirect).toBe("error");
+    expect(fetchMock.mock.calls.every(([url]) => !String(url).includes("evil.invalid"))).toBe(true);
+  });
+
+  it("adds a scheme to a bare-host AGENT_URL like the chat route", async () => {
+    process.env.AGENT_URL = "agent.internal:8123/agent";
+    fetchMock.mockResolvedValue(new Response(JSON.stringify(payload("overview_counts")), { status: 200 }));
+    await call("overview_counts");
+    expect(fetchMock.mock.calls[0][0]).toBe("http://agent.internal:8123/agent/tools/overview_counts");
+  });
+
   it("maps upstream failures to fixed codes and leaks no upstream text", async () => {
     fetchMock.mockResolvedValueOnce(
       new Response(JSON.stringify({ ok: false, error: "tool_failed", message: "host=db.internal password=hunter2" }), { status: 502 }),

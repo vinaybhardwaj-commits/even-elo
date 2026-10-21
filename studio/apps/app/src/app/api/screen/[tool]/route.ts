@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { normalizeLanggraphUrl } from "@/lib/copilotkit-runtime-options";
 import { agentHeaders } from "@/lib/zone/actor-token";
 import { ACTOR_ID_HEADER, ACTOR_ROLE_HEADER } from "@/lib/zone/authorize";
 import { SCREEN_TOOL_PARAMS, SourceTablePayload, isGovernanceTool } from "@/lib/screens/tool-schema";
@@ -49,11 +50,13 @@ export const POST = async (req: NextRequest, ctx: { params: Promise<{ tool: stri
 
   let res: Response;
   try {
-    res = await fetch(`${agentUrl.replace(/\/+$/, "")}/tools/${tool}`, {
+    res = await fetch(`${normalizeLanggraphUrl(agentUrl).replace(/\/+$/, "")}/tools/${tool}`, {
       method: "POST",
       headers: { ...headers, "Content-Type": "application/json" },
       body: JSON.stringify(parsed.data),
       cache: "no-store",
+      // Never follow redirects from the agent service (same as the chat route). Fail closed.
+      redirect: "error",
       signal: AbortSignal.timeout(AGENT_TIMEOUT_MS),
     });
   } catch {

@@ -35,6 +35,10 @@ def make_client(**kw):
         seen.append(request.scope["state"]["studio_actor"])
         return {"ok": True}
 
+    @app.post("/agent/tools/{name}")
+    async def screen(name: str):
+        return {"ok": True}
+
     @app.get("/agent/health")
     async def health():
         return {"status": "ok"}
@@ -204,6 +208,32 @@ def test_rate_limit_per_staff_id():
     assert client.post("/agent", headers=h(actor(sub="a"))).status_code == 200
     r = client.post("/agent", headers=h(actor(sub="a")))
     assert r.status_code == 429 and r.headers["retry-after"] == "60"
+
+
+def test_screen_reads_and_chat_have_independent_buckets():
+    clock = [0.0]
+    client, _ = make_client(
+        bucket=TokenBucket(2, clock=lambda: clock[0]),
+        screen_bucket=TokenBucket(4, clock=lambda: clock[0]),
+    )
+    screen = lambda: client.post("/agent/tools/overview_counts", headers=h(actor())).status_code
+    chat = lambda: client.post("/agent", headers=h(actor())).status_code
+    assert [screen() for _ in range(5)] == [200, 200, 200, 200, 429]  # screens exhausted
+    assert [chat() for _ in range(3)] == [200, 200, 429]  # chat had its full budget
+    clock[0] += 15.0  # screen refills 1 (4/min); chat refills 0.5
+    assert screen() == 200 and screen() == 429
+    assert chat() == 429
+
+
+def test_screen_rate_env_default_is_60(monkeypatch):
+    from src.studio_auth import screen_rate_per_minute
+
+    monkeypatch.delenv("STUDIO_SCREEN_RATE_PER_MIN", raising=False)
+    assert screen_rate_per_minute() == 60
+    monkeypatch.setenv("STUDIO_SCREEN_RATE_PER_MIN", "9")
+    assert screen_rate_per_minute() == 9
+    monkeypatch.setenv("STUDIO_SCREEN_RATE_PER_MIN", "x")
+    assert screen_rate_per_minute() == 60
 
 
 def test_rate_limit_env_default_is_30(monkeypatch):
