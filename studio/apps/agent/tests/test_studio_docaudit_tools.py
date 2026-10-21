@@ -67,13 +67,15 @@ def test_every_statement_is_a_parameterised_select(name):
     assert "%s" in sql and not re.search(r"\{|\bf\"", sql)
 
 
-def test_sql_reads_only_the_views_and_physicians_and_no_free_text_column():
+def test_sql_reads_only_the_views_and_physicians():
     joined = " ".join(dat.DOCAUDIT_SQL.values()).lower()
     from_tables = set(re.findall(r"(?:from|join)\s+([a-z_.]+)", joined))
     assert from_tables - {"lateral"} == {"studio_ro.document_audit_list", "studio_ro.document_audit_finding_list", "physicians"}
-    for banned in ("finding_body", "doctor_response_comment", "evidence_excerpt", "citations", "patient_json", "sync_error",
-                   "authored_by_name", "cdmss_pdf_url", "doctor_uid", "document_audits ", "document_audit_findings "):
+    for banned in ("citations", "patient_json", "sync_error", "doctor_uid", "document_audits ", "document_audit_findings "):
         assert banned not in joined, banned
+    detail = dat.DOCAUDIT_SQL["document_audit_detail"].lower()
+    for shown in ("finding_body", "evidence_excerpt", "response_comment", "authored_by_name", "pdf_url"):
+        assert shown in detail, shown
 
 
 def test_placeholders_match_the_bound_params(rec):
@@ -185,8 +187,8 @@ def live(real_db, monkeypatch):  # noqa: F811
         ).fetchone()["id"]
     def f(ref, label, sev, status, author, pid, **kw):
         real_db.execute(
-            "INSERT INTO document_audit_findings (audit_id, finding_label, finding_body, severity, status, authored_by_name, physician_id, doctor_response_verb, doctor_response_comment) "
-            "VALUES (%s, %s, 'SECRET BODY', %s, %s, %s, %s, %s, 'SECRET COMMENT')",
+            "INSERT INTO document_audit_findings (audit_id, finding_label, finding_body, evidence_excerpt, severity, status, authored_by_name, physician_id, doctor_response_verb, doctor_response_comment) "
+            "VALUES (%s, %s, 'BODY TEXT', 'EVIDENCE TEXT', %s, %s, %s, %s, %s, 'DOCTOR COMMENT')",
             (audits[ref], label, sev, status, author, pid, kw.get("verb")),
         )
     f("AUD-1", "L1", "high", "open", "Dr RMO One", pids[0])
@@ -249,13 +251,14 @@ async def test_detail_headline_and_rollup_on_the_real_schema(live):
 
 
 @pytest.mark.anyio
-async def test_no_free_text_or_staff_name_reaches_any_payload(live):
-    blob = ""
-    for name, args in [("list_document_audits", {}), ("document_audit_detail", {"audit_id": pytest.audit_ids["AUD-1"]}),
-                       ("document_audit_doctor_rollup", {}), ("document_audit_headline", {})]:
-        blob += json.dumps(await call(name, args))
-    for secret in ("SECRET BODY", "SECRET COMMENT", "Dr RMO One", "Dr RMO Two", "cdmss.example", SYSTEM_AUTHOR):
-        assert secret not in blob, secret
+async def test_detail_returns_finding_text_evidence_comment_author_and_pdf(live):
+    out = await call("document_audit_detail", {"audit_id": pytest.audit_ids["AUD-1"]})
+    by_label = {r["finding_label"]: r for r in out["rows"]}
+    assert by_label["L1"]["finding_body"] == "BODY TEXT" and by_label["L1"]["evidence_excerpt"] == "EVIDENCE TEXT"
+    assert by_label["L1"]["authored_by_name"] == "Dr RMO One" and by_label["L2"]["response_comment"] == "DOCTOR COMMENT"
+    assert all(r["pdf_url"] == "https://cdmss.example/x.pdf" for r in out["rows"])
+    listing = await call("list_document_audits", {})
+    assert "BODY TEXT" not in json.dumps(listing)  # the list stays a register; text is in the detail
 
 
 def test_views_expose_no_free_text_column_and_no_name_regex_hit(live):
@@ -266,5 +269,5 @@ def test_views_expose_no_free_text_column_and_no_name_regex_hit(live):
     from tests.test_lc1_live_probe import DOCAUDIT_VIEW_COLUMNS
     assert sorted(cols) == sorted(f"{v}.{c}" for v, cs in DOCAUDIT_VIEW_COLUMNS.items() for c in cs)
     assert all(f"'{c}'" in MIGRATION.read_text() for c in cols)
-    for gone in ("finding_body", "doctor_response_comment", "evidence_excerpt", "authored_by_name", "cdmss_pdf_url", "doctor_uid"):
+    for gone in ("citations_json", "patient_json", "cdmss_sync_error", "doctor_uid", "authored_by_profile_id"):
         assert not any(c.endswith("." + gone) for c in cols)

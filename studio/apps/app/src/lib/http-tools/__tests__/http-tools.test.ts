@@ -111,20 +111,24 @@ describe("HTTP read tools", () => {
     expect(p.rows.some((x) => x.scope === "totals" || x.scope === "mm_cases")).toBe(false);
   });
 
-  it("eiris_incident_detail: structure only by default; never patient or reporter identity", async () => {
+  it("eiris_incident_detail: text, patient and reporter fields come through with no flag", async () => {
     const p = SourceTablePayload.parse((await runHttpTool("eiris_incident_detail", { incident_id: "EHRC-INC-2026-0001" }, ACTOR)).body);
     const text = JSON.stringify(p);
-    expect(text).not.toContain("SECRET");
+    for (const shown of ["SECRET-NARRATIVE", "SECRET-ACTION", "SECRET-ROOT", "SECRET-CAPA", "SECRET-REPORTER", "SECRET-CONTACT", "SECRET-PATIENT", "SECRET-UHID"]) expect(text).toContain(shown);
+    expect(text).not.toContain("SECRET-NOTE"); // contributory-factor notes are not on the incident page's detail shape
     expect(p.rows).toContainEqual({ section: "incident", field: "confidentiality", value: "confidential" });
     expect(p.rows).toContainEqual({ section: "rca_1", field: "factor_categories", value: "staffing" });
     expect(p.rows).toContainEqual({ section: "rca_1", field: "root_cause_recorded", value: true });
   });
 
-  it("eiris_incident_detail include_text adds only narrative, action, root cause, CAPA text", async () => {
-    const p = SourceTablePayload.parse((await runHttpTool("eiris_incident_detail", { incident_id: "EHRC-INC-2026-0001", include_text: true }, ACTOR)).body);
-    const text = JSON.stringify(p);
-    for (const ok of ["SECRET-NARRATIVE", "SECRET-ACTION", "SECRET-ROOT", "SECRET-CAPA"]) expect(text).toContain(ok);
-    for (const never of ["SECRET-REPORTER", "SECRET-CONTACT", "SECRET-PATIENT", "SECRET-UHID", "SECRET-NOTE"]) expect(text).not.toContain(never);
+  it("eiris_incident_detail: anonymous reports show no reporter; contact only for confidential", async () => {
+    const base = upstream;
+    upstream = (url) =>
+      url.includes("/api/office/incidents/EHRC-INC-2026-0001") ? json({ ...DETAIL, incident: { ...DETAIL.incident, confidentiality: "anonymous" } }) : base(url);
+    const text = JSON.stringify((await runHttpTool("eiris_incident_detail", { incident_id: "EHRC-INC-2026-0001" }, ACTOR)).body);
+    expect(text).not.toContain("SECRET-REPORTER");
+    expect(text).not.toContain("SECRET-CONTACT");
+    expect(text).toContain("SECRET-PATIENT");
   });
 
   it("eiris_incident_detail: unknown id is 404 not_found and is audited as an error", async () => {
@@ -187,18 +191,23 @@ describe("HTTP read tools", () => {
     expect((await runHttpTool("eiris_incidents", {}, { staffId: "s", role: "sgc_member" })).status).toBe(200);
   });
 
-  it("include_text is super_admin only: sgc_member gets 403 and no upstream call", async () => {
-    const r = await runHttpTool("eiris_incident_detail", { incident_id: "EHRC-INC-2026-0001", include_text: true }, { staffId: "s", role: "sgc_member" });
-    expect(r).toMatchObject({ status: 403, body: { error: "forbidden" } });
+  it("sgc_member gets the same text as super_admin; include_text is no longer a parameter", async () => {
+    for (const role of ["sgc_member", "super_admin"]) {
+      const r = await runHttpTool("eiris_incident_detail", { incident_id: "EHRC-INC-2026-0001" }, { staffId: "s", role });
+      expect(r.status).toBe(200);
+      expect(JSON.stringify(r.body)).toContain("SECRET-NARRATIVE");
+    }
+    calls.length = 0;
+    expect((await runHttpTool("eiris_incident_detail", { incident_id: "EHRC-INC-2026-0001", include_text: true }, ACTOR)).status).toBe(422);
     expect(calls).toHaveLength(0);
-    expect((await runHttpTool("eiris_incident_detail", { incident_id: "EHRC-INC-2026-0001" }, { staffId: "s", role: "sgc_member" })).status).toBe(200);
   });
 
-  it("the chat action has no include_text parameter and drops it if the model sends it", async () => {
-    const actions = buildHttpToolActions(ACTOR) as unknown as Array<{ handler: (a: Record<string, unknown>) => Promise<unknown>; parameters: Array<{ name: string }> }>;
+  it("the chat action returns the same text as the screen and has no include_text parameter", async () => {
+    const actions = buildHttpToolActions(ACTOR) as unknown as Array<{ name: string; handler: (a: Record<string, unknown>) => Promise<unknown>; parameters: Array<{ name: string }> }>;
     expect(actions[1].parameters.map((p) => p.name)).not.toContain("include_text");
-    const out = SourceTablePayload.parse(await actions[1].handler({ incident_id: "EHRC-INC-2026-0001", include_text: true }));
-    expect(JSON.stringify(out)).not.toContain("SECRET-");
+    const out = SourceTablePayload.parse(await actions[1].handler({ incident_id: "EHRC-INC-2026-0001" }));
+    expect(JSON.stringify(out)).toContain("SECRET-NARRATIVE");
+    expect(actions.map((a) => a.name).filter((n) => /rul|write|action|retract|post/i.test(n))).toEqual([]);
   });
 
   it("STUDIO_LIVE_READS=0 is a kill switch: 503 live_reads_off, no upstream read, no audit row", async () => {

@@ -118,7 +118,7 @@ function Loaded({ data, selectedId, onSelect, onChanged }: { data: FeedbackPaylo
         </header>
         <DataTable
           data={data.items}
-          columns={["submitted_at", "physician_name", "hospital_code", "source", "category", "severity", "polarity", "status", "reply_state", "last_reply_at"]}
+          columns={["submitted_at", "physician_name", "hospital_code", "source", "category", "severity", "polarity", "status", "reply_state", "last_reply_at", "submitter_label", "narrative_preview", "retraction_reason"]}
           labels={{ submitted_at: "submitted", physician_name: "physician", reply_state: "replies", last_reply_at: "last reply" }}
           renderCell={{
             submitted_at: (v, row) => (

@@ -124,7 +124,7 @@ export function OnboardingPrescreenScreen({ id }: { id: string }) {
       <ToolSection title="Summary" state={summary} retry={summary.retry}>
         {(data) => <DataTable data={data} columns={["metric", "value"]} empty="Not found." />}
       </ToolSection>
-      <ToolSection title="Observation cases" note="Scores 1–5. Case narrative is not shown here." state={obs} retry={obs.retry}>
+      <ToolSection title="Observation cases" note="Scores 1–5, with the case narrative." state={obs} retry={obs.retry}>
         {(data) => <DataTable data={data} columns={data.columns} empty="No observation cases yet." />}
       </ToolSection>
       <form className="scr-filters scr-form" onSubmit={reviewDecision} aria-label="Record a decision">

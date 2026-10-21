@@ -5,9 +5,9 @@ studio_audit row per call, STUDIO_LIVE_READS kill switch, source line + query ha
 
 Data: the column-scoped views studio_ro.document_audit_list and studio_ro.document_audit_finding_list
 (ops/neon/0007_docaudits_views.sql), plus physicians for the doctor's name and specialty. The base tables
-document_audits / document_audit_findings are NOT granted to the read role. Never selected: finding_body,
-doctor_response_comment, evidence_excerpt, citations, patient context, CDMSS sync error text, PDF url, doctor uid,
-the RMO's name. All writes (authoring, release to portal) stay in even-elo's RMO inbox routes; nothing here writes.
+document_audits / document_audit_findings are NOT granted to the read role. The detail tool returns finding body,
+evidence excerpt, doctor response comment, the RMO author name and the PDF link, as the even-elo page does (V, 21 Oct:
+no doctor or PHI gating). Never selected: citations, patient context, CDMSS sync error text, doctor uid. All writes (authoring, release to portal) stay in even-elo's RMO inbox routes; nothing here writes.
 """
 
 from __future__ import annotations
@@ -53,10 +53,11 @@ LIMIT %s OFFSET %s
 DOCUMENT_AUDIT_DETAIL_SQL = """
 SELECT a.audit_id::text AS audit_id, a.external_ref, a.hospital_code, a.physician_id::text AS physician_id,
        p.full_name, p.primary_specialty, a.doc_type, a.doc_day::text AS doc_day,
-       a.ingested_at::date::text AS ingested_on, a.has_pdf, a.triage_routed_at::date::text AS routed_on,
-       f.finding_id::text AS finding_id, f.finding_label, f.severity, f.status, f.author_confirmed,
+       a.ingested_at::date::text AS ingested_on, a.has_pdf, a.pdf_url, a.triage_routed_at::date::text AS routed_on,
+       f.finding_id::text AS finding_id, f.finding_label, f.finding_body, f.evidence_excerpt, f.severity, f.status,
+       f.authored_by_name, f.author_confirmed,
        f.authored_at::date::text AS authored_on, f.recurrence_count, f.portal_visible, f.response_owner,
-       f.signal_reference, f.response_verb, f.responded_at::date::text AS responded_on, f.sync_state
+       f.signal_reference, f.response_verb, f.response_comment, f.responded_at::date::text AS responded_on, f.sync_state
 FROM studio_ro.document_audit_list a
 JOIN physicians p ON p.id = a.physician_id
 LEFT JOIN studio_ro.document_audit_finding_list f ON f.audit_id = a.audit_id
@@ -161,7 +162,7 @@ class HeadlineArgs(BaseModel):
 async def list_document_audits(filter: DocAuditFilter = DocAuditFilter(), limit: int = 50, offset: int = 0, config: RunnableConfig = None) -> str:  # noqa: A002
     """Document audits (progress / OT / discharge note audits ingested from CDMSS), newest first: doctor, hospital,
     document type and date, finding counts and top severity. Filters: hospital, doctor id, doc type, finding severity,
-    finding status, doctor name. No finding text. Read-only, up to 200 per page; use `offset` and the result's `total`.
+    finding status, doctor name. Finding text is in document_audit_detail. Read-only, up to 200 per page; use `offset` and the result's `total`.
     The result is a table with a `source`; present it with the table component, do not retype it."""
     f = filter if isinstance(filter, DocAuditFilter) else DocAuditFilter.model_validate(filter)
     pid = str(f.physician_id) if f.physician_id else None
@@ -173,8 +174,8 @@ async def list_document_audits(filter: DocAuditFilter = DocAuditFilter(), limit:
 
 @tool(args_schema=DocumentAuditIdArgs)
 async def document_audit_detail(audit_id: uuid.UUID, config: RunnableConfig = None) -> str:
-    """One document audit with its findings (label, severity, status, whether an RMO confirmed authorship, portal
-    release, doctor response verb and date, CDMSS sync state). No finding body, doctor comment or evidence text. Read-only."""
+    """One document audit with its findings (label, body, evidence excerpt, severity, status, RMO author and whether
+    authorship is confirmed, portal release, doctor response verb, comment and date, CDMSS sync state) and the PDF link. Read-only."""
     aid = str(audit_id)
     return await _run("document_audit_detail", {"audit_id": aid}, (aid, MAX_LIMIT), config, MAX_LIMIT)
 

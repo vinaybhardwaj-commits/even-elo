@@ -127,11 +127,11 @@ export function PhysicianScreen({ id }: { id: string }) {
             )}
           </ToolSection>
 
-          <ToolSection title="Interventions" note="Recorded interventions; no free-text notes." state={interventions} retry={interventions.retry}>
+          <ToolSection title="Interventions" note="Recorded interventions, with notes." state={interventions} retry={interventions.retry}>
             {(data) => (
               <DataTable
                 data={data}
-                columns={["done_on", "signal_label", "kind", "action", "cdmss_sync_state"]}
+                columns={["done_on", "signal_label", "kind", "action", "note", "cdmss_sync_state"]}
                 labels={{ done_on: "date", signal_label: "signal", cdmss_sync_state: "sync" }}
                 empty="No interventions recorded for this physician."
               />
@@ -140,14 +140,14 @@ export function PhysicianScreen({ id }: { id: string }) {
 
           <ToolSection
             title="Privileges"
-            note="Clinical privileges by hospital; no withdrawal reasons."
+            note="Clinical privileges by hospital, with withdrawal reasons."
             state={privileges}
             retry={privileges.retry}
           >
             {(data) => (
               <DataTable
                 data={data}
-                columns={["hospital_code", "procedure_or_specialty", "is_core", "basis", "granted_date", "expires_at", "withdrawn_date"]}
+                columns={["hospital_code", "procedure_or_specialty", "is_core", "basis", "granted_date", "expires_at", "withdrawn_date", "withdrawn_reason"]}
                 labels={{ hospital_code: "hospital", procedure_or_specialty: "procedure or specialty", is_core: "core", granted_date: "granted", expires_at: "expires", withdrawn_date: "withdrawn" }}
                 renderCell={{ is_core: (v) => (v === true ? "Core" : v === false ? "Special" : "–") }}
                 empty="No privileges recorded for this physician."
@@ -155,11 +155,11 @@ export function PhysicianScreen({ id }: { id: string }) {
             )}
           </ToolSection>
 
-          <ToolSection title="OPPE reviews" note="Review periods, due dates and status; no reviewer notes or packets." state={oppe} retry={oppe.retry}>
+          <ToolSection title="OPPE reviews" note="Review periods, due dates, status and decision notes." state={oppe} retry={oppe.retry}>
             {(data) => (
               <DataTable
                 data={data}
-                columns={["hospital_code", "period_start", "period_end", "due_on", "status", "completed_on"]}
+                columns={["hospital_code", "period_start", "period_end", "due_on", "status", "completed_on", "decision_notes"]}
                 labels={{ hospital_code: "hospital", period_start: "period start", period_end: "period end", due_on: "due", completed_on: "completed" }}
                 empty="No OPPE reviews recorded for this physician."
               />
@@ -179,14 +179,14 @@ export function PhysicianScreen({ id }: { id: string }) {
 
           <ToolSection
             title="Qualifications"
-            note="Degree, institution tier, year and verification; no institution names or certificates."
+            note="Degree, institution and tier, year and verification."
             state={qualifications}
             retry={qualifications.retry}
           >
             {(data) => (
               <DataTable
                 data={data}
-                columns={["degree", "institution_tier", "year_completed", "country", "verified", "verified_on"]}
+                columns={["degree", "institution", "institution_tier", "year_completed", "country", "verified", "verified_on"]}
                 labels={{ institution_tier: "tier", year_completed: "year", verified_on: "verified on" }}
                 renderCell={{ verified: (v) => (v === true ? "Yes" : v === false ? "No" : "–") }}
                 empty="No qualifications recorded for this physician."

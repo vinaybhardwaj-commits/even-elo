@@ -28,7 +28,7 @@ const SECTION_TITLE = (s: string) => (s === "thread" ? "Thread" : s === "respons
 export function AuditFindingScreen({ reference }: { reference: string }) {
   const valid = AUDIT_REF_RE.test(reference);
   // Doctor comment, ruling note and finding rationale are shown on this screen only (super_admin; the chat never gets them).
-  const params = useMemo(() => (valid ? { reference, include_text: true } : null), [valid, reference]);
+  const params = useMemo(() => (valid ? { reference } : null), [valid, reference]);
   const detail = useScreenTool("audit_finding_detail", params);
 
   useScreenContext("audit_finding", { reference: valid ? reference : "(invalid reference)" }, {}, [{ tool: "audit_finding_detail", params, state: detail }]);
@@ -47,7 +47,7 @@ export function AuditFindingScreen({ reference }: { reference: string }) {
       )}
       {valid && (
         <>
-          <ToolSection title="Finding" note="Read from CDMSS. Free text is shown here only; nothing on this page is sent to the assistant." state={detail} retry={detail.retry}>
+          <ToolSection title="Finding" note="Read from CDMSS, with doctor comments, ruling notes and rationale as on the audit page." state={detail} retry={detail.retry}>
             {(data) => {
               const sections = groupSections(data.rows);
               const events = sections.filter(([s]) => s.startsWith("event_"));

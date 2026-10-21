@@ -33,7 +33,6 @@ export function IncidentsScreen() {
   const [status, setStatus] = useState<"" | "open" | "closed">("");
   const [severity, setSeverity] = useState<string>("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [withText, setWithText] = useState(false);
 
   const summaryParams = useMemo<HttpToolParams<"eiris_incidents">>(() => ({ view: "summary" }), []);
   const listParams = useMemo<HttpToolParams<"eiris_incidents">>(
@@ -41,14 +40,14 @@ export function IncidentsScreen() {
     [status, severity],
   );
   const detailParams = useMemo<HttpToolParams<"eiris_incident_detail"> | null>(
-    () => (selectedId && INCIDENT_ID_RE.test(selectedId) ? { incident_id: selectedId, ...(withText ? { include_text: true } : {}) } : null),
-    [selectedId, withText],
+    () => (selectedId && INCIDENT_ID_RE.test(selectedId) ? { incident_id: selectedId } : null),
+    [selectedId],
   );
   const summary = useHttpTool("eiris_incidents", summaryParams);
   const list = useHttpTool("eiris_incidents", listParams);
   const detail = useHttpTool("eiris_incident_detail", detailParams);
 
-  // Ids and filters only. `include_text` is deliberately not reported to the panel.
+  // Ids and filters only are reported to the panel.
   useScreenContext(
     "incidents",
     selectedId ? { incident_id: selectedId } : {},
@@ -107,7 +106,7 @@ export function IncidentsScreen() {
             labels={{ id: "incident", has_rca: "RCA", sla_state: "SLA" }}
             renderCell={{
               id: (v) => (
-                <button type="button" aria-pressed={v === selectedId} onClick={() => { setSelectedId(String(v)); setWithText(false); }}>
+                <button type="button" aria-pressed={v === selectedId} onClick={() => { setSelectedId(String(v)); }}>
                   {String(v)}
                 </button>
               ),
@@ -118,17 +117,9 @@ export function IncidentsScreen() {
       </ToolSection>
 
       {selectedId && (
-        <ToolSection title={`Incident ${selectedId}`} note="Classification, dates, SLA and RCA / CAPA structure. No patient or reporter identity." state={detail} retry={detail.retry}>
+        <ToolSection title={`Incident ${selectedId}`} note="Classification, dates, SLA, patient and reporter details, narrative, and RCA / CAPA, as on the incident page." state={detail} retry={detail.retry}>
           {(data) => <DataTable data={data} columns={["section", "field", "value"]} empty="No detail." />}
         </ToolSection>
-      )}
-      {selectedId && (
-        <p className="scr-muted">
-          {withText ? "Free text shown (super_admin only). It is not sent to the side panel." : "Free text (narrative, root cause, CAPA actions) is hidden."}{" "}
-          <button type="button" onClick={() => setWithText((v) => !v)}>
-            {withText ? "Hide free text" : "Show free text"}
-          </button>
-        </p>
       )}
       {selectedId && detail.status === "error" && DETAIL_ERRORS[detail.code] && (
         <p className="scr-error" role="alert">

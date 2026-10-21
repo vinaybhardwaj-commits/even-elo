@@ -8,7 +8,7 @@ import { AdminSubnav, asScreenState } from "./admin-parts";
 import { ScreenFrame } from "./screen-frame";
 import { useScreenContext } from "./screen-context";
 
-// Audit log: the read part of even-elo /api/audit (the `audit_log` table). Before/after JSON is not loaded.
+// Audit log: the read part of even-elo /api/audit (the `audit_log` table). Before/after JSON is shown.
 // This is the app's change log, not the Studio's own studio_audit read log.
 const PAGE = 100;
 type Filters = { action: string; entity_type: string; actor: string };
@@ -35,7 +35,7 @@ export function AdminAuditScreen() {
   return (
     <ScreenFrame title="Audit log">
       <AdminSubnav current="/admin/audit" />
-      <p className="scr-muted">Changes recorded by the governance app, newest first. Before and after values are on the old page only.</p>
+      <p className="scr-muted">Changes recorded by the governance app, newest first. Before and after values are shown.</p>
       <form
         className="scr-filters scr-form"
         aria-label="Audit filters"
@@ -72,7 +72,7 @@ export function AdminAuditScreen() {
       <ToolSection title="Entries" state={asScreenState(list)} retry={list.retry}>
         {(data) => (
           <>
-            <DataTable data={data} columns={["at", "actor_position", "action", "entity_type", "entity_id"]} labels={{ at: "when", actor_position: "actor" }} empty="No entries match." />
+            <DataTable data={data} columns={["at", "actor_position", "action", "entity_type", "entity_id", "before_json", "after_json"]} labels={{ at: "when", actor_position: "actor", before_json: "before", after_json: "after" }} empty="No entries match." />
             <nav className="scr-pager" aria-label="Audit pages">
               <span className="scr-muted">
                 Showing {data.row_count === 0 ? 0 : offset + 1}–{offset + data.row_count}

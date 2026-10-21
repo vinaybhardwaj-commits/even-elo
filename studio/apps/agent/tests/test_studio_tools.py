@@ -393,8 +393,12 @@ async def test_missing_fixture_is_an_error_not_live_data(db, monkeypatch):
     assert calls == []
 
 
-def test_selected_columns_exclude_free_text_and_contact_details():
+def test_selected_columns_exclude_credentials_files_and_staff_ids_but_show_notes():
     joined = " ".join(ALL_SQL.values()).lower()
-    for banned in ("narrative", "ruling_note", "note,", ".notes", "email", "phone", "registration_number", "password", "reporter_name", "evidence_urls", "payload,", "reply_text", "decision_notes", "withdrawn_reason", "packet_jsonb", "file_data", "source_file", "patient_ref"):
+    # Governance sees what the source pages show (V, 21 Oct): notes, reasons and institutions are selected.
+    for banned in ("email", "phone", "registration_number", "password", "packet_jsonb", "file_data", "source_file", "actor_email", "granted_by", "reviewer_id"):
         assert banned not in joined, banned
+    for shown in ("i.note", "v.withdrawn_reason", "v.decision_notes", "v.institution", "v.source_doc"):
+        assert shown in joined, shown
+    assert "select *" not in joined and ".*" not in joined
     assert "select *" not in joined and ".*" not in joined

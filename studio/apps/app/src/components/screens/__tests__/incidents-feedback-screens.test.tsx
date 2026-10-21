@@ -24,11 +24,9 @@ const tbl = (tool: string, columns: string[], rows: Cells[]) => ({ source: { too
 
 const fetchMock = vi.fn();
 let feedbackEnabled = false;
-let textStatus = 200;
 beforeEach(() => {
   contexts.length = 0;
   feedbackEnabled = false;
-  textStatus = 200;
   fetchMock.mockReset();
   fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
     const u = String(url);
@@ -44,8 +42,7 @@ beforeEach(() => {
       );
     }
     if (u.endsWith("/screen/eiris_incident_detail")) {
-      if (body.include_text && textStatus !== 200) return new Response(JSON.stringify({ ok: false, error: "forbidden" }), { status: textStatus });
-      return new Response(JSON.stringify(tbl("eiris_incident_detail", ["section", "field", "value"], [{ section: "incident", field: "type", value: "Fall" }, ...(body.include_text ? [{ section: "text", field: "narrative", value: "SHOWN-TEXT" }] : [])])), { status: 200 });
+      return new Response(JSON.stringify(tbl("eiris_incident_detail", ["section", "field", "value"], [{ section: "incident", field: "type", value: "Fall" }, { section: "text", field: "narrative", value: "SHOWN-TEXT" }])), { status: 200 });
     }
     if (u.endsWith("/feedback/list")) {
       return new Response(
@@ -83,21 +80,13 @@ describe("IncidentsScreen (e-IRIS)", () => {
     expect(ctx).not.toContain("include_text");
   });
 
-  it("free text is off until asked for; a refusal (non super_admin) is explained and can be turned off", async () => {
+  it("shows the narrative with no toggle and no include_text; the context still carries ids and filters only", async () => {
     render(<IncidentsScreen />);
     fireEvent.click(await screen.findByRole("button", { name: IID }));
-    await screen.findByText("Incident EHRC-INC-2026-0001");
-    expect(screen.queryByText("SHOWN-TEXT")).not.toBeInTheDocument();
-    expect(fetchMock.mock.calls.some(([, i]) => i?.body && JSON.parse(String(i.body)).include_text)).toBe(false);
-    fireEvent.click(screen.getByRole("button", { name: "Show free text" }));
     expect(await screen.findByText("SHOWN-TEXT")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /free text/i })).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([, i]) => i?.body && "include_text" in JSON.parse(String(i.body)))).toBe(false);
     expect(JSON.stringify(contexts.at(-1)!.value)).not.toContain("SHOWN-TEXT");
-    textStatus = 403;
-    fireEvent.click(screen.getByRole("button", { name: "Hide free text" }));
-    await screen.findByText("Incident EHRC-INC-2026-0001");
-    fireEvent.click(screen.getByRole("button", { name: "Show free text" }));
-    expect(await screen.findByText("Narrative and RCA text is for super_admin only.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Hide free text" })).toBeInTheDocument();
   });
 });
 

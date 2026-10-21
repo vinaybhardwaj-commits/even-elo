@@ -8,7 +8,7 @@ import { AdminSubnav, ConfirmCard, asScreenState } from "./admin-parts";
 import { ScreenFrame } from "./screen-frame";
 import { useScreenContext } from "./screen-context";
 
-// Resignation requests: the read part of even-elo /admin/resignations. The reason text a physician wrote is not loaded.
+// Resignation requests: the read part of even-elo /admin/resignations. The reason text a physician wrote is shown.
 const str = (v: unknown) => (v === null || v === undefined ? "–" : String(v));
 
 export function AdminResignationsScreen() {
@@ -22,12 +22,12 @@ export function AdminResignationsScreen() {
   return (
     <ScreenFrame title="Resignation requests">
       <AdminSubnav current="/admin/resignations" />
-      <p className="scr-muted">Requests from physicians, pending first. The reason text is on the old admin page only.</p>
+      <p className="scr-muted">Requests from physicians, pending first, with the reason each wrote.</p>
       <ToolSection title="Requests" state={asScreenState(list)} retry={list.retry}>
         {(data) => (
           <DataTable
             data={data}
-            columns={["requested_at", "physician_name", "hospital_code", "intended_last_date", "status"]}
+            columns={["requested_at", "physician_name", "hospital_code", "intended_last_date", "status", "reason"]}
             labels={{ requested_at: "requested", physician_name: "physician", hospital_code: "hospital", intended_last_date: "intended last day" }}
             renderCell={{
               requested_at: (v, row) => (

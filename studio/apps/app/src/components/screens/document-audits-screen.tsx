@@ -175,7 +175,7 @@ export function DocumentAuditsScreen() {
             />
             <Pager offset={offset} rowCount={data.row_count} total={data.total} onPage={setOffset} />
             <p className="scr-muted">
-              Finding text, evidence and doctor comments are not read here. <Link href="/physicians">Physicians</Link> links to each doctor&apos;s 360.
+              Open an audit for finding text, evidence, doctor comments and the PDF. <Link href="/physicians">Physicians</Link> links to each doctor&apos;s 360.
             </p>
           </>
         )}

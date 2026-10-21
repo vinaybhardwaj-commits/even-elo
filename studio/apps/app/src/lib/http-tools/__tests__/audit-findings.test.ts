@@ -74,17 +74,14 @@ describe("audit findings tools", () => {
     expect(calls.find((c) => c.url.includes("doctor_uid=D1"))?.url).toContain("window=7");
   });
 
-  it("detail: header, evidence and timeline; free text only with include_text", async () => {
-    const plain = SourceTablePayload.parse((await runHttpTool("audit_finding_detail", { reference: "EHRC-AUD-2026-0001" }, ACTOR)).body);
-    expect(JSON.stringify(plain)).not.toContain("SECRET");
-    const f = (section: string, field: string) => plain.rows.find((r) => r.section === section && r.field === field)?.value;
-    expect(f("thread", "status")).toBe("escalated");
-    expect(f("evidence_1", "verdict")).toBe("fail");
-    expect(f("evidence_1", "citations")).toBe("Guideline 7");
-    expect(f("event_01", "event")).toBe("routed");
-    expect(f("event_02", "actor")).toBe("doctor");
-    const full = SourceTablePayload.parse((await runHttpTool("audit_finding_detail", { reference: "EHRC-AUD-2026-0001", include_text: true }, ACTOR)).body);
+  it("detail: header, evidence, timeline and free text, with no flag", async () => {
+    const full = SourceTablePayload.parse((await runHttpTool("audit_finding_detail", { reference: "EHRC-AUD-2026-0001" }, ACTOR)).body);
     const g = (section: string, field: string) => full.rows.find((r) => r.section === section && r.field === field)?.value;
+    expect(g("thread", "status")).toBe("escalated");
+    expect(g("evidence_1", "verdict")).toBe("fail");
+    expect(g("evidence_1", "citations")).toBe("Guideline 7");
+    expect(g("event_01", "event")).toBe("routed");
+    expect(g("event_02", "actor")).toBe("doctor");
     expect(g("evidence_1", "rationale")).toBe("SECRET-RATIONALE");
     expect(g("response", "comment")).toBe("SECRET-COMMENT");
     expect(g("ruling", "note")).toBe("SECRET-RULING");
@@ -100,29 +97,35 @@ describe("audit findings tools", () => {
   });
 
   it("GET only, CDMSS key header, audit row is metadata only", async () => {
-    await runHttpTool("audit_finding_detail", { reference: "EHRC-AUD-2026-0001", include_text: true }, ACTOR);
+    await runHttpTool("audit_finding_detail", { reference: "EHRC-AUD-2026-0001" }, ACTOR);
     expect(up().every((c) => c.init?.method === "GET")).toBe(true);
     expect((up()[0].init?.headers as Record<string, string>)["x-api-key"]).toBe("gov-key");
     const a = JSON.parse(String(calls.find((c) => c.url.endsWith("/agent/audit"))!.init?.body));
-    expect(a).toMatchObject({ tool: "audit_finding_detail", params: { reference: "EHRC-AUD-2026-0001", include_text: true }, outcome: "ok" });
+    expect(a).toMatchObject({ tool: "audit_finding_detail", params: { reference: "EHRC-AUD-2026-0001" }, outcome: "ok" });
     expect(JSON.stringify(a)).not.toContain("SECRET");
   });
 
-  it("role gate, include_text super_admin only, strict params", async () => {
+  it("role gate (SGC or super_admin, same text for both), strict params", async () => {
     calls.length = 0;
     expect((await runHttpTool("audit_findings", {}, { staffId: "s", role: "doctor" })).status).toBe(403);
-    expect((await runHttpTool("audit_finding_detail", { reference: "EHRC-AUD-2026-0001", include_text: true }, { staffId: "s", role: "sgc_member" })).status).toBe(403);
+    expect((await runHttpTool("audit_finding_detail", { reference: "EHRC-AUD-2026-0001" }, { staffId: "s", role: "doctor" })).status).toBe(403);
+    calls.length = 0;
+    const sgc = await runHttpTool("audit_finding_detail", { reference: "EHRC-AUD-2026-0001" }, { staffId: "s", role: "sgc_member" });
+    expect(sgc.status).toBe(200);
+    expect(JSON.stringify(sgc.body)).toContain("SECRET-RULING");
+    expect((await runHttpTool("audit_finding_detail", { reference: "EHRC-AUD-2026-0001", include_text: true }, ACTOR)).status).toBe(422);
+    calls.length = 0;
     expect((await runHttpTool("audit_findings", { sql: "x" }, ACTOR)).status).toBe(422);
     expect((await runHttpTool("audit_findings", { hospital: "ehrc" }, ACTOR)).status).toBe(422);
     expect(calls).toHaveLength(0);
   });
 
-  it("chat actions: no include_text, key dropped, no write action exists", async () => {
+  it("chat actions: same text as the screen, no include_text, no write action exists", async () => {
     const actions = buildHttpToolActions(ACTOR) as unknown as Array<{ name: string; handler: (a: Record<string, unknown>) => Promise<unknown>; parameters: Array<{ name: string }> }>;
     const detail = actions.find((a) => a.name === "audit_finding_detail")!;
     expect(detail.parameters.map((p) => p.name)).toEqual(["reference"]);
-    const out = SourceTablePayload.parse(await detail.handler({ reference: "EHRC-AUD-2026-0001", include_text: true }));
-    expect(JSON.stringify(out)).not.toContain("SECRET");
+    const out = SourceTablePayload.parse(await detail.handler({ reference: "EHRC-AUD-2026-0001" }));
+    expect(JSON.stringify(out)).toContain("SECRET-COMMENT");
     expect(actions.map((a) => a.name).filter((n) => /rul|write|action/.test(n))).toEqual([]);
   });
 });

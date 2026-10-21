@@ -84,7 +84,7 @@ question needs data none of the tools return, say which tool is missing instead 
 ## Audit findings (CDMSS)
 
 audit_findings and audit_finding_detail read CDMSS audit threads (the Audit findings screen). They
-are read-only and return no comments or ruling notes. You cannot record, change or suggest-and-apply
+are read-only and return the rows the source pages show, including comments and ruling notes. You may read and quote row content when answering. You cannot record, change or suggest-and-apply
 a ruling: rulings are made only by the person, with the confirm card on the thread screen.
 
 The Incidents screen is the e-IRIS safety register ("e-IRIS incidents"); the Patient feedback screen is

@@ -25,8 +25,7 @@ export async function callToolRoute(
   args: Record<string, unknown> | undefined,
   fetchImpl: typeof fetch = fetch,
 ): Promise<string> {
-  // Free text (include_text) is screen-only: it can hold patient identifiers and must not reach the model.
-  const { include_text: _dropped, ...safe } = args ?? {};
+  const safe = args ?? {};
   let res: Response;
   try {
     res = await fetchImpl(`${base}/${tool}`, {
@@ -51,22 +50,21 @@ export async function callToolRoute(
 export const HTTP_TOOL_DESCRIPTIONS: Record<HttpToolName, string> = {
   eiris_incidents:
     "e-IRIS incident register (safety/M&M). view=summary: open and closed counts by severity plus all-time totals and M&M case counts. " +
-    "view=list: incidents with id, status, dates, severity, RCA flag. Read-only. No narratives. Present the result as a table with its source.",
+    "view=list: incidents with id, status, dates, severity, RCA flag. Read-only. Present the result as a table with its source.",
   eiris_incident_detail:
-    "One e-IRIS incident by id (e.g. EHRC-INC-2026-0001): classification, dates, SLA state, RCA/CAPA structure. " +
-    "No patient or reporter identity. No free text (narrative, root cause, CAPA actions); those are on the incident page only. Read-only.",
+    "One e-IRIS incident by id (e.g. EHRC-INC-2026-0001): classification, dates, SLA state, patient and reporter details, narrative, immediate action, RCA root cause and CAPA actions. Read-only.",
   opd_signals:
     "CDMSS OPD governance signals routed per doctor: thread counts (open, overdue, disagreed, awaiting ruling, awaiting doctor) and latest routed date. " +
-    "Counts only, no comments. Read-only.",
+    "Counts only. Read-only.",
   audit_findings:
     "CDMSS audit findings routed to doctors: one row per thread with reference, hospital, doctor, finding, status, importance, doctor response verb, ruling action, overdue flag. " +
-    "view=attention (default) shows overdue, disagreed and awaiting-ruling threads. No comments or notes. Read-only. Present the result as a table with its source.",
+    "view=attention (default) shows overdue, disagreed and awaiting-ruling threads. Read-only. Present the result as a table with its source.",
   audit_finding_detail:
-    "One CDMSS audit thread by reference (e.g. EHRC-AUD-2026-0042): header, doctor response verb, ruling action, evidence instances and timeline. " +
-    "No free text (doctor comment, ruling note, rationale). Read-only. This tool cannot record a ruling.",
+    "One CDMSS audit thread by reference (e.g. EHRC-AUD-2026-0042): header, doctor response verb, ruling action, evidence instances, timeline, doctor comment, ruling note and rationale. " +
+    "Read-only. This tool cannot record a ruling.",
 };
 
-// What the model may send. include_text is not offered; callHttpTool drops it anyway.
+// What the model may send.
 export const HTTP_TOOL_CLIENT_PARAMS = {
   eiris_incidents: z.object({
     view: z.enum(["summary", "list"]).optional().describe("summary (default) or list"),

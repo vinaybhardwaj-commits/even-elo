@@ -10,11 +10,9 @@ type RuntimeActions = Extract<NonNullable<ConstructorParameters<typeof CopilotRu
 
 type Actor = { staffId: string; role: string };
 
-// Free text (include_text) is screen-only: reporter-typed narrative can hold patient identifiers and must not reach
-// the LLM provider. The chat path drops the key whatever the model sends, so the runner always sees it false.
+// The chat gets the same rows as the screen, free text and identifiers included (V, 21 Oct: no doctor or PHI gating).
 const run = (tool: Parameters<typeof runHttpTool>[0], actor: Actor) => async (args: Record<string, unknown>) => {
-  const { include_text: _dropped, ...safe } = args ?? {};
-  return (await runHttpTool(tool, safe, actor)).body;
+  return (await runHttpTool(tool, args ?? {}, actor)).body;
 };
 
 export function buildHttpToolActions(actor: Actor): RuntimeActions {
@@ -23,7 +21,7 @@ export function buildHttpToolActions(actor: Actor): RuntimeActions {
       name: "eiris_incidents",
       description:
         "e-IRIS incident register (safety/M&M). view=summary: open and closed counts by severity plus all-time totals and M&M case counts. " +
-        "view=list: incidents with id, status, dates, severity, RCA flag. Read-only. No narratives. Present the result as a table with its source.",
+        "view=list: incidents with id, status, dates, severity, RCA flag. Read-only. Present the result as a table with its source.",
       parameters: [
         { name: "view", type: "string" as const, description: "summary (default) or list", required: false, enum: ["summary", "list"] },
         { name: "status", type: "string" as const, description: "open or closed", required: false, enum: ["open", "closed"] },
@@ -35,8 +33,7 @@ export function buildHttpToolActions(actor: Actor): RuntimeActions {
     {
       name: "eiris_incident_detail",
       description:
-        "One e-IRIS incident by id (e.g. EHRC-INC-2026-0001): classification, dates, SLA state, RCA/CAPA structure. " +
-        "No patient or reporter identity. No free text (narrative, root cause, CAPA actions); those are on the incident page only. Read-only.",
+        "One e-IRIS incident by id (e.g. EHRC-INC-2026-0001): classification, dates, SLA state, patient and reporter details, narrative, immediate action, RCA root cause and CAPA actions. Read-only.",
       parameters: [
         { name: "incident_id", type: "string" as const, description: "Incident id such as EHRC-INC-2026-0001", required: true },
       ],
@@ -46,7 +43,7 @@ export function buildHttpToolActions(actor: Actor): RuntimeActions {
       name: "opd_signals",
       description:
         "CDMSS OPD governance signals routed per doctor: thread counts (open, overdue, disagreed, awaiting ruling, awaiting doctor) and latest routed date. " +
-        "Counts only, no comments. Read-only.",
+        "Counts only. Read-only.",
       parameters: [
         { name: "doctor_uid", type: "string" as const, description: "CDMSS doctor uid, to narrow to one doctor", required: false },
         { name: "window_days", type: "number" as const, description: "look-back window, 1-365 (default 30)", required: false },
@@ -58,7 +55,7 @@ export function buildHttpToolActions(actor: Actor): RuntimeActions {
       name: "audit_findings",
       description:
         "CDMSS audit findings routed to doctors: one row per thread with reference, hospital, doctor, finding, status, importance, doctor response verb, ruling action, overdue flag. " +
-        "view=attention (default) shows overdue, disagreed and awaiting-ruling threads. Filter by doctor_uid, hospital code (reference prefix) and status. No comments or notes. Read-only. Present the result as a table with its source.",
+        "view=attention (default) shows overdue, disagreed and awaiting-ruling threads. Filter by doctor_uid, hospital code (reference prefix) and status. Read-only. Present the result as a table with its source.",
       parameters: [
         { name: "view", type: "string" as const, description: "attention (default), overdue, disagreed, awaiting_ruling, awaiting_doctor or all", required: false, enum: ["attention", "overdue", "disagreed", "awaiting_ruling", "awaiting_doctor", "all"] },
         { name: "status", type: "string" as const, description: "thread status", required: false, enum: ["routed", "responded", "escalated", "ruled", "closed"] },
@@ -72,8 +69,8 @@ export function buildHttpToolActions(actor: Actor): RuntimeActions {
     {
       name: "audit_finding_detail",
       description:
-        "One CDMSS audit thread by reference (e.g. EHRC-AUD-2026-0042): header, doctor response verb, ruling action, evidence instances (audit id, verdict, note date, citation titles) and timeline (event, time, actor class). " +
-        "No free text (doctor comment, ruling note, rationale); those are on the screen only. Read-only. This tool cannot record a ruling.",
+        "One CDMSS audit thread by reference (e.g. EHRC-AUD-2026-0042): header, doctor response verb, ruling action, evidence instances (audit id, verdict, note date, citation titles) and timeline (event, time, actor class), plus doctor comment, ruling note and actor, and rationale. " +
+        "Read-only. This tool cannot record a ruling.",
       parameters: [{ name: "reference", type: "string" as const, description: "Thread reference such as EHRC-AUD-2026-0042", required: true }],
       handler: run("audit_finding_detail", actor),
     },

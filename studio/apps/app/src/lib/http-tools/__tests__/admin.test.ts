@@ -56,7 +56,7 @@ describe("admin", () => {
     expect(audits()).toEqual([{ tool: "admin_users", params: { status: "active" }, row_count: 1, duration_ms: expect.any(Number), outcome: "ok" }]);
   });
 
-  it("roles, resignations and audit hit only their own routes and drop reason text and before/after JSON", async () => {
+  it("roles, resignations and audit hit only their own routes and show reason text and before/after JSON but never credentials", async () => {
     up = (url) =>
       url.includes("/roles") ? json({ ok: true, roles: [{ role: "hr", hospital_code: "RR", hospital_id: "x", granted_at: "2026-02-01" }] })
       : url.includes("/resignations") ? json({ ok: true, rows: [{ id: RID, physician_name: "Dr A", reason: "SECRET-REASON", status: "pending", hospital_code: "RR", intended_last_date: "2026-12-01", requested_at: "2026-10-01" }] })
@@ -66,7 +66,8 @@ describe("admin", () => {
     const c = await runAdmin("audit", { action: "grant_role", limit: 20 }, ACTOR);
     for (const r of [a, b, c]) expect(r.status).toBe(200);
     const text = JSON.stringify([a.body, b.body, c.body]);
-    for (const s of ["SECRET-REASON", "SECRET-BEFORE", "SECRET-AFTER", "hospital_id"]) expect(text).not.toContain(s);
+    for (const s of ["SECRET-REASON", "SECRET-BEFORE", "SECRET-AFTER"]) expect(text).toContain(s);
+    expect(text).not.toContain("hospital_id");
     expect((b.body as AdminPayload).table.rows[0].request_id).toBe(RID);
     expect(upstream().map((u) => u.url)).toEqual([
       `https://elo.invalid/api/admin/profiles/${PID}/roles`,

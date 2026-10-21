@@ -33,7 +33,8 @@ Each file is run as the owner over the DIRECT url (`SQL_FILE=ops/neon/<file> ops
 2. `0003_login.sql`, `0004_nologin.sql`, `0005_terminate.sql`, `0006_sessions.sql`: helper SQL run by name by `run-roles.sh` (`--login`, `--nologin`, session termination and count); never run by hand.
 3. `0003_studio_views.sql`: M1 views. APPLIED LIVE already. Two files share the number 0003; `--login` selects `0003_login.sql` by name, so there is no clash.
 4. `studio/apps/agent/migrations/0001_studio.sql`: Studio state tables, applied with `apply_migration.py` (see the studio_app note above).
-5. `0007_docaudits_views.sql`: NEW, owner must apply (section below). Needed by the Document audits screen. No other slice in gov/rel1 adds a migration.
+5. `0007_docaudits_views.sql`: NEW, owner must apply (section below). Needed by the Document audits screen. Not yet applied live; the file was edited in place for the ungate ruling (adds `finding_body`, `evidence_excerpt`, `response_comment`, `authored_by_name`, `pdf_url`).
+6. `0008_ungate_views.sql`: NEW, owner must apply AFTER 0003 and 0007 (section below). Appends the free-text columns to five 0003 views. The Studio tools that read those columns fail until it is applied, so apply it before the matching deploy.
 
 ### Column-scoped views (M1): `0003_studio_views.sql`
 Physician 360, OPD governance and Patient feedback read **views** in schema `studio_ro`, never the base tables behind them (`privileges`, `oppe_reviews`, `clinical_metrics_monthly`, `qualifications`, `gov_capture_gaps`, `incident_replies`). Run it as the owner over the DIRECT url, after step 1 (the role must exist), before the probe:
@@ -50,6 +51,14 @@ SQL_FILE=ops/neon/0007_docaudits_views.sql ops/neon/run-roles.sh "$XDG_RUNTIME_D
 STUDIO_EXPECT_VIEWS=1 GOV_RO_DATABASE_URL="$(<"$XDG_RUNTIME_DIR/gov-ro-url")" uv run --directory studio/apps/agent pytest tests/test_lc1_live_probe.py -q
 ```
 The post-check compares the views' columns with an explicit allowlist in the file (a renamed column cannot slip past a name regex). The probe with `STUDIO_EXPECT_VIEWS=1` expects BOTH files to be installed (nine views) and that the two base tables stay denied.
+
+### Ungate columns (21 Oct ruling): `0008_ungate_views.sql`
+V's ruling: governance has no doctor or PHI gating. This file appends columns AT THE END of five existing views with `CREATE OR REPLACE VIEW` (owner, `security_barrier` and the grant to `studio_gov_ro` are kept): `physician_privileges.withdrawn_reason`, `physician_oppe.decision_notes`, `physician_qualifications.institution`, `capture_gaps.note` and `source_doc`, `incident_reply_status.reply_text`. Run it after 0003 (it refuses if `studio_ro` is missing), idempotent, one transaction:
+```bash
+SQL_FILE=ops/neon/0008_ungate_views.sql ops/neon/run-roles.sh "$XDG_RUNTIME_DIR/owner-url"
+STUDIO_EXPECT_VIEWS=1 GOV_RO_DATABASE_URL="$(<"$XDG_RUNTIME_DIR/gov-ro-url")" uv run --directory studio/apps/agent pytest tests/test_lc1_live_probe.py -q
+```
+Re-running 0003 drops and recreates those five views WITHOUT the appended columns: run 0008 again afterwards. The role still has nothing on any base table. The `interventions` note and the incidents text need no migration: `gov_interventions` and `incidents` are granted table-wide in 0001. The probe now expects the 0008 columns, so run it only after all three view files.
 
 Then move the DSN into the even-studio Vercel project and the Asus agent env (never even-elo), and destroy the files. To rotate later, follow **Rotation** below: do NOT just repeat steps 2 and 3.
 

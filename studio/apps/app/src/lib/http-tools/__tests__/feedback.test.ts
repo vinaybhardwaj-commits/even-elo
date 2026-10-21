@@ -41,7 +41,7 @@ describe("feedback", () => {
   const audits = () => calls.filter((c) => c.url.endsWith("/audit")).map((c) => JSON.parse(String(c.init?.body)));
   const upstream = () => calls.filter((c) => !c.url.endsWith("/audit"));
 
-  it("lists with the session forwarded; typed tables with source lines; no narrative, submitter or email; one audit row", async () => {
+  it("lists with the session forwarded; typed tables with source lines; narrative, submitter label and retraction reason shown, never the email; one audit row", async () => {
     const r = await runFeedback("list", { status: "open", severity: "high", limit: 50 }, ACTOR);
     expect(r.status).toBe(200);
     const p = FeedbackPayload.parse(r.body);
@@ -50,7 +50,8 @@ describe("feedback", () => {
     expect(p.items.rows[1].reply_state).toBe("retracted");
     expect(p.counts.rows[0]).toEqual({ status: "open", severity: "high", feedback: 4 });
     const text = JSON.stringify(p);
-    for (const s of ["SECRET-NARRATIVE", "SECRET-SUBMITTER", "SECRET-EMAIL", "SECRET-REASON"]) expect(text).not.toContain(s);
+    for (const s of ["SECRET-NARRATIVE", "SECRET-SUBMITTER", "SECRET-REASON"]) expect(text).toContain(s);
+    expect(text).not.toContain("SECRET-EMAIL");
     expect(p.write_enabled).toBe(false);
     expect(upstream()[0].url).toBe("https://elo.invalid/api/incidents?status=open&severity=high&limit=50");
     expect((upstream()[0].init?.headers as Record<string, string>).Cookie).toBe("epi_session=tok");
