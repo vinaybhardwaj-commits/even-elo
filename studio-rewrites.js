@@ -21,35 +21,53 @@ function studioRewrites(origin) {
   ];
 }
 
-// Root pages that moved into the Studio (M1 ruling E). 307 (not permanent) and only when STUDIO_ORIGIN is valid,
-// so unsetting the env, or removing this list from next.config.js, rolls the redirects back. Redirects run before
-// middleware, so the doctors host (doctors.*) is excluded here and keeps its own lock.
-function studioRedirects(origin) {
-  if (!studioBase(origin)) return [];
-  const notDoctorsHost = [{ type: "host", value: "doctors\\..*" }];
-  const map = [
-    ["/overview", "/studio/overview"],
-    ["/physicians", "/studio/physicians"],
-    ["/physicians/:id", "/studio/physicians/:id"],
-    ["/audit-findings", "/studio/audit-findings"],
-    ["/audit-findings/:reference", "/studio/audit-findings/:reference"],
-    ["/document-audits", "/studio/document-audits"],
-    ["/document-audits/:id", "/studio/document-audits/:id"],
-    ["/rmo-inbox", "/studio/rmo-inbox"],
-    ["/incidents", "/studio/incidents"],
-    ["/safety", "/studio/incidents"],
-    ["/mm", "/studio/surgical"],
-    ["/surgical-governance", "/studio/surgical"],
-    ["/surgical-governance/vc/:id", "/studio/surgical/vcs/:id"],
-    ["/onboarding", "/studio/onboarding"],
-    ["/onboarding/:id", "/studio/onboarding/:id"],
-    ["/admin/users", "/studio/admin/users"],
-    ["/admin/resignations", "/studio/admin/resignations"],
-  ];
-  // Only exact pages listed above move. Sub-pages without a Studio equivalent (e.g. /incidents/new, /mm/cases/:id,
-  // /surgical-governance/input|admin|capture-queue|ot-sheets, /admin, /admin/pending, /admin/metrics, /admin/users/:id,
-  // /audit-findings/mapping), /api/* and /portal stay on the old app. Query strings are preserved by Next.
-  return map.map(([source, destination]) => ({ source, destination, permanent: false, missing: notDoctorsHost }));
+// Root pages that moved into the Studio (M1 ruling E). The Studio zone admits only super_admin today, so these are
+// NOT next.config redirects: src/middleware.ts calls studioRedirectPath() after the staff JWT is verified and
+// redirects (307) only super_admins, and only when STUDIO_ORIGIN is valid and the host is not doctors.*. Everyone
+// else keeps the old page. Unsetting the env rolls everything back.
+const STUDIO_REDIRECTS = [
+  ["/overview", "/studio/overview"],
+  ["/physicians", "/studio/physicians"],
+  ["/physicians/:id", "/studio/physicians/:id"],
+  ["/audit-findings", "/studio/audit-findings"],
+  ["/audit-findings/:reference", "/studio/audit-findings/:reference"],
+  ["/document-audits", "/studio/document-audits"],
+  ["/document-audits/:id", "/studio/document-audits/:id"],
+  ["/rmo-inbox", "/studio/rmo-inbox"],
+  ["/incidents", "/studio/incidents"],
+  ["/safety", "/studio/incidents"],
+  ["/mm", "/studio/surgical"],
+  ["/surgical-governance", "/studio/surgical"],
+  ["/surgical-governance/vc/:id", "/studio/surgical/vcs/:id"],
+  ["/onboarding", "/studio/onboarding"],
+  ["/onboarding/:id", "/studio/onboarding/:id"],
+  ["/admin/users", "/studio/admin/users"],
+  ["/admin/resignations", "/studio/admin/resignations"],
+];
+// A single :param segment matches any value except these literal sibling pages that have no Studio equivalent.
+const STUDIO_REDIRECT_EXCLUDED = ["/audit-findings/mapping"];
+
+// Returns the Studio path for an old pathname, or null (no env, doctors host, excluded or unmapped page).
+// Only whole-path matches count; /incidents/new, /mm/cases/x, /api/* etc. never match. Query is the caller's to keep.
+function studioRedirectPath(origin, pathname, host) {
+  if (!studioBase(origin)) return null;
+  if (/^doctors\./i.test(host || "")) return null;
+  const path = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
+  if (STUDIO_REDIRECT_EXCLUDED.includes(path)) return null;
+  const segs = path.split("/");
+  for (const [source, destination] of STUDIO_REDIRECTS) {
+    const pat = source.split("/");
+    if (pat.length !== segs.length) continue;
+    const params = {};
+    const ok = pat.every((p, i) => {
+      if (!p.startsWith(":")) return p === segs[i];
+      if (!segs[i]) return false;
+      params[p.slice(1)] = segs[i];
+      return true;
+    });
+    if (ok) return destination.replace(/:(\w+)/g, (_, k) => params[k]);
+  }
+  return null;
 }
 
-module.exports = { studioRewrites, studioRedirects };
+module.exports = { studioRewrites, studioRedirectPath, STUDIO_REDIRECTS, STUDIO_REDIRECT_EXCLUDED };

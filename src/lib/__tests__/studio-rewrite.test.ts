@@ -2,13 +2,15 @@ import { existsSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { NextRequest } from "next/server";
-import { describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { signStaffJwt } from "@/lib/jwt";
 import { middleware } from "@/middleware";
 
 const require_ = createRequire(import.meta.url);
-const { studioRewrites, studioRedirects } = require_("../../../studio-rewrites.js") as {
+const { studioRewrites, studioRedirectPath, STUDIO_REDIRECTS } = require_("../../../studio-rewrites.js") as {
   studioRewrites: (o?: string) => Array<{ source: string; destination: string }>;
-  studioRedirects: (o?: string) => Array<{ source: string; destination: string; permanent: boolean; missing: Array<{ type: string; value: string }> }>;
+  studioRedirectPath: (o: string | undefined, pathname: string, host?: string) => string | null;
+  STUDIO_REDIRECTS: Array<[string, string]>;
 };
 const nextConfig = require_("../../../next.config.js") as { rewrites: () => Promise<unknown>; redirects: () => Promise<Array<{ source: string; destination: string; permanent: boolean }>> };
 
@@ -39,44 +41,132 @@ describe("STUDIO_ORIGIN rewrite", () => {
   });
 });
 
-describe("STUDIO_ORIGIN redirects (root pages moved into the Studio)", () => {
-  it("are empty when unset or invalid (rollback = remove the env)", () => {
+const ORIGIN = "https://studio.internal.example";
+const MAPPING: Array<[string, string]> = [
+  ["/overview", "/studio/overview"],
+  ["/physicians", "/studio/physicians"],
+  ["/physicians/p1", "/studio/physicians/p1"],
+  ["/audit-findings", "/studio/audit-findings"],
+  ["/audit-findings/AF-1", "/studio/audit-findings/AF-1"],
+  ["/document-audits", "/studio/document-audits"],
+  ["/document-audits/d1", "/studio/document-audits/d1"],
+  ["/rmo-inbox", "/studio/rmo-inbox"],
+  ["/incidents", "/studio/incidents"],
+  ["/safety", "/studio/incidents"],
+  ["/mm", "/studio/surgical"],
+  ["/surgical-governance", "/studio/surgical"],
+  ["/surgical-governance/vc/v1", "/studio/surgical/vcs/v1"],
+  ["/onboarding", "/studio/onboarding"],
+  ["/onboarding/o1", "/studio/onboarding/o1"],
+  ["/onboarding/new", "/studio/onboarding/new"],
+  ["/admin/users", "/studio/admin/users"],
+  ["/admin/resignations", "/studio/admin/resignations"],
+];
+const UNMAPPED = ["/admin", "/admin/pending", "/admin/metrics", "/admin/users/u1", "/audit-findings/mapping", "/incidents/new", "/incidents/i1",
+  "/incidents/physician/p1", "/safety/report", "/safety/notifications", "/safety/incidents/i1", "/safety/incidents/i1/rca", "/mm/new", "/mm/cases/c1",
+  "/surgical-governance/admin", "/surgical-governance/capture-queue", "/surgical-governance/ot-sheets", "/surgical-governance/input/cases",
+  "/api/admin/users", "/api/audit-findings/AF-1", "/api/admin/migrate", "/portal", "/portal/login", "/auth/login", "/api/auth/logout", "/home"];
+
+async function jwt(superAdmin: boolean) {
+  return signStaffJwt({ profileId: "p", email: "x@example.test", status: "active", is_super_admin: superAdmin, is_sgc_member: true }, "1h");
+}
+async function hit(path: string, token: string | null, opts: { host?: string; method?: string } = {}) {
+  const host = opts.host ?? "governance.evenos.app";
+  const headers: Record<string, string> = { host };
+  if (token) headers.cookie = `epi_session=${token}`;
+  return middleware(new NextRequest(`https://${host}${path}`, { method: opts.method ?? "GET", headers }));
+}
+
+describe("Studio redirects (role-conditional, in middleware)", () => {
+  const prev = { o: process.env.STUDIO_ORIGIN, s: process.env.STAFF_JWT_SECRET, l: process.env.JWT_LEGACY_ACCEPT_UNTIL };
+  beforeAll(() => {
+    process.env.STAFF_JWT_SECRET = "staff-test-secret-0123456789abcdef";
+    delete process.env.JWT_LEGACY_ACCEPT_UNTIL;
+  });
+  afterEach(() => { delete process.env.STUDIO_ORIGIN; });
+  afterAll(() => {
+    for (const [k, v] of [["STUDIO_ORIGIN", prev.o], ["STAFF_JWT_SECRET", prev.s], ["JWT_LEGACY_ACCEPT_UNTIL", prev.l]] as const) {
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
+  });
+
+  it("next.config.js no longer carries Studio redirects (only surgical-elo), with or without the env", async () => {
+    for (const v of [undefined, ORIGIN]) {
+      if (v) process.env.STUDIO_ORIGIN = v; else delete process.env.STUDIO_ORIGIN;
+      expect((await nextConfig.redirects()).map((r) => r.source)).toEqual(["/surgical-elo", "/surgical-elo/:path*"]);
+    }
+  });
+
+  it("super_admin gets a 307 to the Studio route for every mapped page, query preserved", async () => {
+    process.env.STUDIO_ORIGIN = ORIGIN;
+    const t = await jwt(true);
+    for (const [from, to] of MAPPING) {
+      const r = await hit(`${from}?a=1&b=x%20y`, t);
+      expect(r.status, from).toBe(307);
+      const loc = new URL(r.headers.get("location")!);
+      expect(loc.pathname + loc.search, from).toBe(`${to}?a=1&b=x%20y`);
+      expect(loc.host, from).toBe("governance.evenos.app");
+    }
+  });
+
+  it("non-super_admin never redirects to the Studio on any mapped path", async () => {
+    process.env.STUDIO_ORIGIN = ORIGIN;
+    const t = await jwt(false);
+    for (const [from] of MAPPING) {
+      const r = await hit(from, t);
+      expect(r.headers.get("location") ?? "", from).not.toContain("/studio");
+    }
+    // pages the old app still serves to them pass straight through
+    for (const p of ["/overview", "/physicians", "/physicians/p1", "/audit-findings", "/rmo-inbox", "/incidents", "/safety", "/onboarding"]) {
+      const r = await hit(p, t);
+      expect(r.status, p).toBe(200);
+      expect(r.headers.get("location")).toBeNull();
+    }
+  });
+
+  it("no env or invalid env = no redirect, even for super_admin", async () => {
+    const t = await jwt(true);
     for (const v of [undefined, "", "not a url", "ftp://x.example", "https://x.example/other"]) {
-      expect(studioRedirects(v), String(v)).toEqual([]);
+      if (v === undefined) delete process.env.STUDIO_ORIGIN; else process.env.STUDIO_ORIGIN = v;
+      for (const [from] of MAPPING) {
+        const r = await hit(from, t);
+        expect((r.headers.get("location") ?? "").includes("/studio"), `${v} ${from}`).toBe(false);
+      }
     }
   });
-  const MAPPING: Array<[string, string]> = [
-    ["/overview", "/studio/overview"],
-    ["/physicians", "/studio/physicians"],
-    ["/physicians/:id", "/studio/physicians/:id"],
-    ["/audit-findings", "/studio/audit-findings"],
-    ["/audit-findings/:reference", "/studio/audit-findings/:reference"],
-    ["/document-audits", "/studio/document-audits"],
-    ["/document-audits/:id", "/studio/document-audits/:id"],
-    ["/rmo-inbox", "/studio/rmo-inbox"],
-    ["/incidents", "/studio/incidents"],
-    ["/safety", "/studio/incidents"],
-    ["/mm", "/studio/surgical"],
-    ["/surgical-governance", "/studio/surgical"],
-    ["/surgical-governance/vc/:id", "/studio/surgical/vcs/:id"],
-    ["/onboarding", "/studio/onboarding"],
-    ["/onboarding/:id", "/studio/onboarding/:id"],
-    ["/admin/users", "/studio/admin/users"],
-    ["/admin/resignations", "/studio/admin/resignations"],
-  ];
-  it("send exactly the mapped pages to /studio with a 307, never on the doctors host", () => {
-    const rules = studioRedirects("https://studio.internal.example");
-    expect(rules.map((r) => [r.source, r.destination, r.permanent])).toEqual(MAPPING.map(([s, d]) => [s, d, false]));
-    for (const r of rules) {
-      const re = new RegExp(`^${r.missing[0].value}$`);
-      expect(r.missing[0].type).toBe("host");
-      expect(re.test("doctors.evenos.app")).toBe(true);
-      expect(re.test("governance.evenos.app")).toBe(false);
+
+  it("unmapped pages, api, portal and login never redirect to the Studio (super_admin, env set), incl. /audit-findings/mapping", async () => {
+    process.env.STUDIO_ORIGIN = ORIGIN;
+    const t = await jwt(true);
+    for (const p of UNMAPPED) {
+      const r = await hit(p, t);
+      expect(r.headers.get("location") ?? "", p).not.toContain("/studio");
     }
+    const r = await hit("/audit-findings/mapping", t);
+    expect(r.status).toBe(200);
   });
+
+  it("only GET/HEAD navigations redirect; the doctors host and unauthenticated requests never do", async () => {
+    process.env.STUDIO_ORIGIN = ORIGIN;
+    const t = await jwt(true);
+    expect((await hit("/overview", t, { method: "POST" })).status).toBe(200);
+    expect((await hit("/overview", t, { method: "HEAD" })).status).toBe(307);
+    const d = await hit("/overview", t, { host: "doctors.evenos.app" });
+    expect(d.status).toBe(404);
+    const anon = await hit("/overview", null);
+    expect(new URL(anon.headers.get("location")!).pathname).toBe("/auth/login");
+  });
+
+  it("studioRedirectPath handles trailing slash, doctors host and the exclusion directly", () => {
+    expect(studioRedirectPath(ORIGIN, "/overview/", "governance.evenos.app")).toBe("/studio/overview");
+    expect(studioRedirectPath(ORIGIN, "/overview", "doctors.evenos.app")).toBeNull();
+    expect(studioRedirectPath(ORIGIN, "/audit-findings/mapping", "x")).toBeNull();
+    expect(studioRedirectPath(undefined, "/overview", "x")).toBeNull();
+  });
+
   it("every Studio destination is an existing Studio screen route", () => {
     const root = join(__dirname, "../../../studio/apps/app/src/app/(screens)");
-    for (const [, dest] of MAPPING) {
+    for (const [, dest] of STUDIO_REDIRECTS) {
       const segs = dest.replace(/^\/studio\//, "").split("/").map((x) => (x.startsWith(":") ? "*" : x));
       let dir = root;
       for (const seg of segs) {
@@ -86,31 +176,6 @@ describe("STUDIO_ORIGIN redirects (root pages moved into the Studio)", () => {
         dir = join(dir, hit!);
       }
       expect(existsSync(join(dir, "page.tsx")), dest).toBe(true);
-    }
-  });
-  it("does not redirect admin ops, write/detail pages without a Studio equivalent, api, portal, login", () => {
-    const sources = new Set(studioRedirects("https://studio.internal.example").map((r) => r.source));
-    const unmapped = ["/admin", "/admin/pending", "/admin/metrics", "/admin/users/:id", "/audit-findings/mapping", "/incidents/new", "/incidents/:id",
-      "/incidents/physician/:id", "/safety/report", "/safety/notifications", "/safety/incidents/:id", "/mm/new", "/mm/cases/:id",
-      "/surgical-governance/admin", "/surgical-governance/capture-queue", "/surgical-governance/ot-sheets", "/surgical-governance/input/cases",
-      "/api/:path*", "/portal", "/portal/:path*", "/login", "/logout", "/admin/migrate", "/admin/seed", "/admin/wipe"];
-    for (const u of unmapped) expect(sources.has(u), u).toBe(false);
-    for (const r of studioRedirects("https://studio.internal.example")) {
-      expect(r.source.startsWith("/api") || r.source.startsWith("/portal") || r.source.includes("login")).toBe(false);
-    }
-  });
-  it("next.config.js keeps the surgical-elo redirects and adds the studio ones only with the env", async () => {
-    const prev = process.env.STUDIO_ORIGIN;
-    try {
-      delete process.env.STUDIO_ORIGIN;
-      const base = await nextConfig.redirects();
-      expect(base.map((r) => r.source)).toEqual(["/surgical-elo", "/surgical-elo/:path*"]);
-      process.env.STUDIO_ORIGIN = "https://studio.internal.example";
-      const withEnv = await nextConfig.redirects();
-      expect(withEnv.map((r) => r.source)).toEqual([...base.map((r) => r.source), ...MAPPING.map(([s]) => s)]);
-    } finally {
-      if (prev === undefined) delete process.env.STUDIO_ORIGIN;
-      else process.env.STUDIO_ORIGIN = prev;
     }
   });
 });

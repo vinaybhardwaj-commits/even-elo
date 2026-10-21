@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { verifyStaffJwt, verifyPortalJwt } from "@/lib/jwt";
 import { isPublicCaptureApi, isPublicCapturePage, isUploadCaptureHost } from "@/lib/capture/access";
 import { checkCronAuth } from "@/lib/cron-auth";
+import { studioRedirectPath } from "../studio-rewrites";
 import { isAllowedOnDoctorsHost, isDoctorsHost } from "@/lib/host-lock";
 
 const COOKIE_NAME = "epi_session";
@@ -194,6 +195,16 @@ export async function middleware(request: NextRequest) {
         return NextResponse.json({ ok: false, error: "PIN change required" }, { status: 403 });
       }
       return NextResponse.redirect(new URL("/auth/change-pin", request.url));
+    }
+
+    // Pages that moved into the Studio: super_admin only (the Studio zone admits nobody else), page navigations only.
+    if (payload.is_super_admin === true && (request.method === "GET" || request.method === "HEAD")) {
+      const to = studioRedirectPath(process.env.STUDIO_ORIGIN, pathname, host);
+      if (to) {
+        const url = request.nextUrl.clone();
+        url.pathname = to;
+        return NextResponse.redirect(url, 307);
+      }
     }
 
     // /surgical-governance gated to super_admin only (Users PRD #18 — ELO super_admin-only)
