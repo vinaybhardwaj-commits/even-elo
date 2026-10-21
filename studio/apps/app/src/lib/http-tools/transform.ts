@@ -1,0 +1,242 @@
+// Pure shaping of upstream bodies into the SourceTablePayload tables the screens and the chat render.
+// No env, no I/O. Upstream bodies are untrusted: every field is read defensively, unknown fields are dropped.
+//
+// Fields that are NEVER emitted, whatever the upstream sends: patient name / UHID / age (phi_*), reporter
+// name and contact, attachment links, doctor response comments, ruling notes. Free text the source page
+// shows a super_admin (narrative, immediate action, root cause, CAPA actions) is emitted only when the
+// caller sets include_text on eiris_incident_detail.
+
+import type { SourceTablePayload } from "@/lib/screens/tool-schema";
+
+type Cell = string | number | boolean | null;
+type Row = Record<string, Cell>;
+type Obj = Record<string, unknown>;
+
+const obj = (v: unknown): Obj | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Obj) : null);
+const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
+const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v : null);
+const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+
+export interface PayloadMeta {
+  tool: string;
+  queryHash: string;
+}
+
+export function makePayload(meta: PayloadMeta, columns: string[], rows: Row[]): SourceTablePayload {
+  return {
+    source: { tool: meta.tool, query_hash: meta.queryHash },
+    mode: "live",
+    synthetic: false,
+    columns,
+    rows,
+    row_count: rows.length,
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
+// eiris_incidents
+// ---------------------------------------------------------------------------------------------
+
+/** INFERRED: the upstream has no single "closed" flag in the shapes we have seen. Closed = a closed_at, an
+ *  sla_state of "closed", or a status of closed/resolved. */
+export function isClosedIncident(r: Obj): boolean {
+  if (str(r.closed_at)) return true;
+  if (r.sla_state === "closed") return true;
+  const s = str(r.status)?.toLowerCase();
+  return s === "closed" || s === "resolved";
+}
+
+const sevOf = (r: Obj): string => str(r.severity) ?? "unrated";
+
+export interface IncidentsInput {
+  incidents: unknown;
+  stats: unknown | null;
+  mm: unknown | null;
+  view: "summary" | "list";
+  status?: "open" | "closed";
+  severity?: string;
+  limit: number;
+}
+
+const SUMMARY_COLUMNS = ["scope", "key", "open", "closed", "total"];
+const LIST_COLUMNS = [
+  "id", "reported_at", "severity", "state", "status", "near_miss", "type", "department", "unit_code",
+  "rca_count", "has_rca", "sla_state", "due_at",
+];
+
+export function incidentRows(body: unknown): Obj[] {
+  return arr(obj(body)?.incidents).map(obj).filter((r): r is Obj => r !== null);
+}
+
+export function toIncidentsPayload(meta: PayloadMeta, input: IncidentsInput): SourceTablePayload {
+  const all = incidentRows(input.incidents);
+  const sevFilter = input.severity?.toLowerCase();
+  const rows = all.filter((r) => {
+    if (sevFilter && sevOf(r).toLowerCase() !== sevFilter) return false;
+    if (input.status === "open" && isClosedIncident(r)) return false;
+    if (input.status === "closed" && !isClosedIncident(r)) return false;
+    return true;
+  });
+
+  if (input.view === "list") {
+    const out: Row[] = rows.slice(0, input.limit).map((r) => ({
+      id: str(r.id),
+      reported_at: str(r.reported_at),
+      severity: sevOf(r),
+      state: isClosedIncident(r) ? "closed" : "open",
+      status: str(r.status),
+      near_miss: r.near_miss === true,
+      type: str(r.type_name),
+      department: str(r.dept_name),
+      unit_code: str(r.unit_code),
+      rca_count: num(r.rca_count) ?? 0,
+      has_rca: (num(r.rca_count) ?? 0) > 0,
+      sla_state: str(r.sla_state),
+      due_at: str(r.due_at),
+    }));
+    return makePayload(meta, LIST_COLUMNS, out);
+  }
+
+  const bySev = new Map<string, { open: number; closed: number }>();
+  for (const r of rows) {
+    const k = sevOf(r);
+    const c = bySev.get(k) ?? { open: 0, closed: 0 };
+    if (isClosedIncident(r)) c.closed += 1;
+    else c.open += 1;
+    bySev.set(k, c);
+  }
+  const out: Row[] = [...bySev.entries()]
+    .sort((a, b) => b[1].open + b[1].closed - (a[1].open + a[1].closed) || a[0].localeCompare(b[0]))
+    .map(([k, c]) => ({ scope: "severity", key: k, open: c.open, closed: c.closed, total: c.open + c.closed }));
+  // Rows above come from the newest incidents the upstream list returns (it caps the list); the totals below
+  // are the upstream's own all-time counts.
+  const totals = obj(obj(input.stats)?.totals);
+  for (const key of ["total", "open", "near_miss", "high_sev", "with_rca", "overdue", "due_soon"]) {
+    const v = num(totals?.[key]);
+    if (v !== null) out.push({ scope: "totals", key, open: null, closed: null, total: v });
+  }
+  const mm = obj(obj(input.mm)?.totals);
+  for (const key of ["open", "in_review", "gaps_open"]) {
+    const v = num(mm?.[key]);
+    if (v !== null) out.push({ scope: "mm_cases", key, open: null, closed: null, total: v });
+  }
+  return makePayload(meta, SUMMARY_COLUMNS, out);
+}
+
+// ---------------------------------------------------------------------------------------------
+// eiris_incident_detail
+// ---------------------------------------------------------------------------------------------
+
+const DETAIL_COLUMNS = ["section", "field", "value"];
+
+export function toDetailPayload(meta: PayloadMeta, body: unknown, includeText: boolean): SourceTablePayload | null {
+  const inc = obj(obj(body)?.incident);
+  if (!inc) return null;
+  const rows: Row[] = [];
+  const add = (section: string, field: string, value: Cell | undefined) => {
+    if (value !== null && value !== undefined && value !== "") rows.push({ section, field, value });
+  };
+  add("incident", "id", str(inc.id));
+  add("incident", "severity", sevOf(inc));
+  add("incident", "status", str(inc.status));
+  add("incident", "state", isClosedIncident(inc) ? "closed" : "open");
+  add("incident", "near_miss", inc.near_miss === true);
+  add("incident", "type", str(inc.type_name));
+  add("incident", "department", str(inc.dept_name));
+  add("incident", "location", str(inc.location_name));
+  add("incident", "unit_code", str(inc.unit_code));
+  add("incident", "impact_domain", str(inc.impact_domain));
+  add("incident", "reporter_role", str(inc.role_name));
+  add("incident", "source", str(inc.source));
+  // The class only ("named" / "confidential" / "anonymous"); the reporter's name and contact are never emitted.
+  add("incident", "confidentiality", str(inc.confidentiality));
+  add("incident", "occurred_at", str(inc.occurred_at));
+  add("incident", "reported_at", str(inc.reported_at));
+  add("incident", "due_at", str(inc.due_at));
+  add("incident", "closed_at", str(inc.closed_at));
+  add("incident", "sla_state", str(inc.sla_state));
+  if (includeText) {
+    add("text", "narrative", str(inc.narrative));
+    add("text", "immediate_action", str(inc.immediate_action));
+  }
+  const rcas = arr(obj(body)?.rcas).map(obj).filter((r): r is Obj => r !== null);
+  add("rca", "rca_count", rcas.length);
+  rcas.forEach((r, i) => {
+    const n = `rca_${i + 1}`;
+    const factors = arr(obj(r.contributory_factors)?.factors).map(obj).filter((f): f is Obj => f !== null);
+    const capas = arr(r.capas).map(obj).filter((c): c is Obj => c !== null);
+    add(n, "root_cause_recorded", str(r.root_cause) !== null);
+    add(n, "factor_categories", [...new Set(factors.map((f) => str(f.category)).filter(Boolean))].join(", ") || null);
+    add(n, "capa_count", capas.length);
+    add(n, "capa_control_levels", [...new Set(capas.map((c) => str(c.control_level)).filter(Boolean))].join(", ") || null);
+    add(n, "state", r.effectiveness_verified ? "verified effective" : r.closed_at ? "closed" : "open");
+    if (includeText) {
+      add(n, "root_cause", str(r.root_cause));
+      capas.forEach((c, k) => add(n, `capa_${k + 1}`, [str(c.kind), str(c.action)].filter(Boolean).join(": ") || null));
+    }
+  });
+  return makePayload(meta, DETAIL_COLUMNS, rows);
+}
+
+// ---------------------------------------------------------------------------------------------
+// opd_signals
+// ---------------------------------------------------------------------------------------------
+
+const SIGNAL_COLUMNS = [
+  "doctor_uid", "doctor", "threads", "open", "overdue", "disagreed", "awaiting_ruling", "awaiting_doctor",
+  "ruled", "closed", "latest_routed_at",
+];
+
+/** Per-doctor summary of CDMSS routed audit threads (roster-audits). Counts and dates only. */
+export function toSignalsPayload(meta: PayloadMeta, body: unknown, limit: number): SourceTablePayload {
+  const out: Array<Row & { _attn: number }> = [];
+  for (const d of arr(obj(body)?.doctors)) {
+    const doc = obj(d);
+    const uid = str(doc?.doctor_uid);
+    if (!doc || !uid) continue;
+    const seen = new Set<string>();
+    let threads = 0, open = 0, overdue = 0, disagreed = 0, awaitingRuling = 0, awaitingDoctor = 0, ruled = 0, closed = 0;
+    let latest: string | null = null;
+    for (const s of arr(doc.signals)) {
+      const sig = obj(s);
+      const ref = str(sig?.reference);
+      if (!sig || !ref || seen.has(ref)) continue;
+      seen.add(ref);
+      threads += 1;
+      const status = str(sig.status) ?? "routed";
+      const isOpen = status !== "ruled" && status !== "closed";
+      const resp = obj(sig.response);
+      const verb = resp?.verb ?? resp?.verdict;
+      if (isOpen) open += 1;
+      if (status === "ruled") ruled += 1;
+      if (status === "closed") closed += 1;
+      if (isOpen && sig.overdue === true) overdue += 1;
+      if (isOpen && verb === "disagree") disagreed += 1;
+      if (status === "escalated") awaitingRuling += 1;
+      if (status === "routed" && (str(sig.response_required) ?? "none") !== "none") awaitingDoctor += 1;
+      const at = str(sig.routed_at);
+      if (at && (!latest || at > latest)) latest = at;
+    }
+    out.push({
+      doctor_uid: uid,
+      doctor: str(doc.name),
+      threads,
+      open,
+      overdue,
+      disagreed,
+      awaiting_ruling: awaitingRuling,
+      awaiting_doctor: awaitingDoctor,
+      ruled,
+      closed,
+      latest_routed_at: latest,
+      _attn: overdue + disagreed + awaitingRuling,
+    });
+  }
+  out.sort((a, b) => b._attn - a._attn || Number(b.open) - Number(a.open) || String(a.doctor).localeCompare(String(b.doctor)));
+  const rows = out.slice(0, limit).map((r) => {
+    const copy: Row = { ...r };
+    delete copy._attn;
+    return copy;
+  });
+  return makePayload(meta, SIGNAL_COLUMNS, rows);
+}

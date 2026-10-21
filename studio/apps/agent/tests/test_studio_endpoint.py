@@ -52,7 +52,7 @@ class FakeAgent:
 
 def test_surface_is_only_agent_routes_and_no_docs(main):
     paths = {r.path for r in main.app.routes}
-    assert paths == {"/agent", "/agent/health", "/agent/tools/{tool_name}"}
+    assert paths == {"/agent", "/agent/health", "/agent/tools/{tool_name}", "/agent/audit"}
     c = TestClient(main.app)
     for p in ("/docs", "/openapi.json", "/redoc", "/health", "/"):
         assert c.get(p).status_code == 401  # auth runs before routing, even for unknown paths

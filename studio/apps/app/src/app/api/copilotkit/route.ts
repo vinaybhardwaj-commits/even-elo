@@ -6,6 +6,7 @@ import {
 } from "@copilotkit/runtime";
 import { NextRequest } from "next/server";
 import { buildRuntimeOptions } from "@/lib/copilotkit-runtime-options";
+import { buildHttpToolActions } from "@/lib/http-tools/actions";
 import { agentHeaders } from "@/lib/zone/actor-token";
 import { ACTOR_ID_HEADER, ACTOR_ROLE_HEADER } from "@/lib/zone/authorize";
 
@@ -13,6 +14,9 @@ disableTelemetry();
 
 // The middleware (src/proxy.ts) has already authenticated the staff member and overwritten
 // the actor headers read here. Rate limiting is enforced by the agent, per staff id.
+// Upstream reads (10 s each) plus the audit call can exceed the default function time.
+export const maxDuration = 60;
+
 export const POST = async (req: NextRequest) => {
   const staffId = req.headers.get(ACTOR_ID_HEADER);
   const role = req.headers.get(ACTOR_ROLE_HEADER);
@@ -30,7 +34,7 @@ export const POST = async (req: NextRequest) => {
     return new Response("Agent not configured", { status: 503 });
   }
 
-  const runtimeOptions = buildRuntimeOptions({ langgraphUrl: agentUrl, headers });
+  const runtimeOptions = buildRuntimeOptions({ langgraphUrl: agentUrl, headers, actions: buildHttpToolActions({ staffId, role }) });
   const { handleRequest } = copilotRuntimeNextJSAppRouterEndpoint({
     // Next strips basePath before the handler sees the URL, so the endpoint is WITHOUT /studio.
     endpoint: "/api/copilotkit",

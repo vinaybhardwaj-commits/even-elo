@@ -163,4 +163,30 @@ describe("/studio/api/screen/[tool]", () => {
     expect(limited.status).toBe(429);
     expect(limited.headers.get("retry-after")).toBe("60");
   });
+
+  describe("HTTP read tools", () => {
+    it.each(["eiris_incidents", "eiris_incident_detail", "opd_signals"])("%s is served by this app, not forwarded to the agent tools door", async (tool) => {
+      delete process.env.INCIDENT_API_BASE;
+      delete process.env.GOV_API_KEY;
+      fetchMock.mockImplementation(async (url: string) => new Response(JSON.stringify({ ok: true }), { status: url.endsWith("/audit") ? 200 : 500 }));
+      const body = tool === "eiris_incident_detail" ? { incident_id: "EHRC-INC-2026-0001" } : {};
+      const res = await call(tool, body);
+      expect(res.status).toBe(503);
+      expect(await res.json()).toEqual({ ok: false, error: "upstream_not_configured" });
+      expect(fetchMock.mock.calls.every(([u]) => !String(u).includes("/tools/"))).toBe(true);
+    });
+
+    it("401 without actor headers; 422 on bad params; nothing leaves the app", async () => {
+      expect((await call("opd_signals", {}, {})).status).toBe(401);
+      expect((await call("eiris_incident_detail", { incident_id: "bad" })).status).toBe(422);
+      expect((await call("opd_signals", "{not json")).status).toBe(422);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("403 for a non-SGC role", async () => {
+      const res = await call("eiris_incidents", {}, { "studio-internal-staff-id": "s", "studio-internal-staff-role": "doctor" });
+      expect(res.status).toBe(403);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
 });

@@ -64,3 +64,43 @@ export type ScreenToolParams<T extends GovernanceToolName> = z.input<(typeof SCR
 export function isUuid(value: string): boolean {
   return uuid.safeParse(value).success;
 }
+
+// ---- HTTP read tools (M1-http) ---------------------------------------------------------------------
+// These three reach data that is NOT in the governance database (the e-IRIS incident API and the CDMSS
+// governance API). They run in this app, server side (the agent has no egress to either host), behind the
+// same /api/screen/<tool> door, and return the same SourceTablePayload. Handlers: lib/http-tools/.
+
+export const HTTP_TOOL_NAMES = ["eiris_incidents", "eiris_incident_detail", "opd_signals"] as const;
+export type HttpToolName = (typeof HTTP_TOOL_NAMES)[number];
+
+export function isHttpTool(name: string): name is HttpToolName {
+  return (HTTP_TOOL_NAMES as readonly string[]).includes(name);
+}
+
+/** e-IRIS incident id, as even-elo validates it (src/app/api/mcp/route.ts): four letters, INC, year, serial. */
+export const INCIDENT_ID_RE = /^[A-Z]{4}-INC-\d{4}-\d{1,6}$/;
+/** CDMSS doctor uid is opaque; keep it to a safe token alphabet. */
+export const DOCTOR_UID_RE = /^[A-Za-z0-9_.:-]{1,80}$/;
+
+export const HTTP_TOOL_PARAMS = {
+  eiris_incidents: z
+    .object({
+      view: z.enum(["summary", "list"]).optional(),
+      status: z.enum(["open", "closed"]).optional(),
+      severity: z.string().max(40).optional(),
+      limit: limit.optional(),
+    })
+    .strict(),
+  eiris_incident_detail: z
+    .object({
+      incident_id: z.string().regex(INCIDENT_ID_RE),
+      // Free text (narrative, immediate action, root cause, CAPA actions) is off unless asked for.
+      include_text: z.boolean().optional(),
+    })
+    .strict(),
+  opd_signals: z
+    .object({ doctor_uid: z.string().regex(DOCTOR_UID_RE).optional(), window_days: windowDays.optional(), limit: limit.optional() })
+    .strict(),
+} as const satisfies Record<HttpToolName, z.ZodTypeAny>;
+
+export type HttpToolParams<T extends HttpToolName> = z.input<(typeof HTTP_TOOL_PARAMS)[T]>;
