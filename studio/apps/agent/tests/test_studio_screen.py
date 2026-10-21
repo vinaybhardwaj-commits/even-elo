@@ -323,3 +323,21 @@ def test_rmo_tools_are_auditable_and_unknown_names_are_not(monkeypatch, tool):
     assert asyncio.run(studio_screen.record_http_audit(body, STAFF)) == (200, {"ok": True})
     assert rows[0].tool == tool and rows[0].staff_id == STAFF
     assert asyncio.run(studio_screen.record_http_audit({**body, "tool": "rmo_delete"}, STAFF))[0] == 422
+
+
+@pytest.mark.parametrize("tool", ["patient_feedback", "feedback_retract"])
+def test_feedback_tools_are_auditable_and_unknown_names_are_not(monkeypatch, tool):
+    import asyncio
+
+    from src import studio_screen
+
+    rows = []
+
+    async def fake_audit(row):
+        rows.append(row)
+
+    monkeypatch.setattr(studio_audit, "audit_sink", fake_audit)
+    body = {"tool": tool, "params": {"feedback_id": PID}, "row_count": 1, "duration_ms": 5, "outcome": "ok"}
+    assert asyncio.run(studio_screen.record_http_audit(body, STAFF)) == (200, {"ok": True})
+    assert rows[0].tool == tool and rows[0].staff_id == STAFF
+    assert asyncio.run(studio_screen.record_http_audit({**body, "tool": "feedback_delete"}, STAFF))[0] == 422

@@ -75,6 +75,8 @@ async def run_screen_tool(tool_name: str, params: dict, staff_id: str) -> tuple[
 # ---------------------------------------------------------------------------------------------
 
 HTTP_TOOL_NAMES = frozenset({"eiris_incidents", "eiris_incident_detail", "opd_signals", "audit_findings", "audit_finding_detail", "rmo_inbox", "rmo_author", "rmo_release"})
+# M3: patient feedback (governance incidents table) read and retract, audited by the Studio server like the tools above.
+HTTP_TOOL_NAMES = HTTP_TOOL_NAMES | frozenset({"patient_feedback", "feedback_retract"})
 MAX_AUDIT_BODY_BYTES = 4096
 _MAX_ROWS = 100_000
 _MAX_MS = 600_000

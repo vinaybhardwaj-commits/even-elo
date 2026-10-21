@@ -10,6 +10,8 @@ export const NAV_ITEMS = [
   { href: "/audit-findings", label: "Audit findings" },
   { href: "/document-audits", label: "Document audits" },
   { href: "/rmo-inbox", label: "RMO inbox" },
+  { href: "/incidents", label: "e-IRIS incidents" },
+  { href: "/feedback", label: "Patient feedback" },
   { href: "/", label: "Chat" },
 ] as const;
 
