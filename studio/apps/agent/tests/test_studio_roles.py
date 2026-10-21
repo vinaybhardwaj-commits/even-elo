@@ -176,13 +176,15 @@ def test_login_refuses_a_missing_role_missing_grants_and_membership(cluster, tmp
 
 
 def _probe(url, file=PROBE, var="GOV_RO_DATABASE_URL"):
-    return subprocess.run([sys.executable, "-m", "pytest", str(file), "-q", "-p", "no:cacheprovider"], cwd=AGENT, env={**os.environ, var: url}, capture_output=True, text=True)
+    return subprocess.run([sys.executable, "-m", "pytest", str(file), "-q", "-p", "no:cacheprovider"], cwd=AGENT, env={**os.environ, var: url, "STUDIO_EXPECT_VIEWS": "1"}, capture_output=True, text=True)
 
 
 def test_full_flow_gov_ro_setup_reset_login_probe_and_no_secret_anywhere(cluster, neon, keyfile, tmp_path):
     mark = cluster.log_mark()
     s, r, nr, out = full_flow(cluster, neon, tmp_path, keyfile)
     assert s.returncode == 0 and r.returncode == 0, (s.stderr, r.stderr)
+    v, _ = run_roles(cluster, tmp_path, sql_file=OPS / "0003_studio_views.sql", tag="views")  # runbook step 4: views before the probe
+    assert v.returncode == 0, v.stderr
     pw = neon.issued["studio_gov_ro"]
     assert role_row(cluster, "studio_gov_ro")[0] is False  # still NOLOGIN after the reset
     l, _ = run_roles(cluster, tmp_path, "--login", tag="login")

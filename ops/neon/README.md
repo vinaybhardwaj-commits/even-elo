@@ -24,8 +24,8 @@ ops/neon/neon-role.sh reset-password "$XDG_RUNTIME_DIR/neon-api-key" "$P" "$B" s
 # 3. enable LOGIN: memberships re-checked first (the API may add neon_superuser on reset), grants verified
 ops/neon/run-roles.sh --login "$XDG_RUNTIME_DIR/owner-url"
 
-# 4. probe once with the new DSN
-GOV_RO_DATABASE_URL="$(<"$XDG_RUNTIME_DIR/gov-ro-url")" uv run --directory studio/apps/agent pytest tests/test_lc1_live_probe.py -q
+# 4. install the views (section below), THEN probe once with the new DSN (STUDIO_EXPECT_VIEWS=1; without the views the probe skips 22 checks)
+STUDIO_EXPECT_VIEWS=1 GOV_RO_DATABASE_URL="$(<"$XDG_RUNTIME_DIR/gov-ro-url")" uv run --directory studio/apps/agent pytest tests/test_lc1_live_probe.py -q
 ```
 ### Column-scoped views (M1): `0003_studio_views.sql`
 Physician 360, OPD governance and Patient feedback read **views** in schema `studio_ro`, never the base tables behind them (`privileges`, `oppe_reviews`, `clinical_metrics_monthly`, `qualifications`, `gov_capture_gaps`, `incident_replies`). Run it as the owner over the DIRECT url, after step 1 (the role must exist), before the probe:

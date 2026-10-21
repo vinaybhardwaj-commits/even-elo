@@ -189,7 +189,7 @@ export function PhysicianScreen({ id }: { id: string }) {
 
           <ToolSection
             title="Patient feedback"
-            note="Counts for this physician, last 12 months, by polarity, severity and status. No comments, reporters or patient references."
+            note="Counts for this physician, last 12 months (whole calendar months, so the oldest month may be partial), by polarity, severity and status. No comments, reporters or patient references."
             state={feedback}
             retry={feedback.retry}
           >

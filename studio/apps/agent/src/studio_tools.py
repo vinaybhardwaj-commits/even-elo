@@ -184,6 +184,7 @@ LIMIT %s
 """
 
 # Feedback counts per physician: source/polarity/severity/status only (the view has no narrative or reporter).
+# The view is bucketed by month, so the window starts at the first day of the month that contains today - N days.
 FEEDBACK_BY_PHYSICIAN_SQL = """
 SELECT v.source, v.polarity, v.severity, v.status, sum(v.incidents)::int AS incidents
 FROM studio_ro.physician_feedback v

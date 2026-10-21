@@ -42,7 +42,7 @@ def test_migration_file_shape():
     sql = code(SQL_VIEWS)
     assert not re.search(r"\bPASSWORD\b|(?<!NO)\bLOGIN\b|CREATE ROLE|ALTER ROLE", sql, re.I)
     assert sql.count("security_barrier = true") == len(VIEW_COLUMNS) == len(re.findall(r"CREATE VIEW studio_ro\.", sql))
-    views_sql = sql[sql.index("CREATE VIEW"):sql.index("REVOKE ALL ON ALL TABLES")]
+    views_sql = sql[sql.index("CREATE VIEW"):sql.index("GRANT USAGE ON SCHEMA studio_ro")]
     assert "security_invoker" not in sql and "SELECT *" not in views_sql and ".*" not in views_sql
     # Every GRANT is to studio_gov_ro and only USAGE on studio_ro / SELECT on studio_ro views.
     grants = re.findall(r"GRANT (.*?) TO studio_gov_ro;", sql, re.S)
@@ -133,7 +133,7 @@ def test_role_selects_each_view_with_exactly_the_reviewed_columns(world, view):
     with ro(url) as c:
         cur = c.execute(f"SELECT * FROM studio_ro.{view}")
         assert tuple(d.name for d in cur.description) == VIEW_COLUMNS[view]
-        assert cur.fetchall() or view in ("incident_reply_status",) or True
+        assert cur.fetchall() or view == "incident_reply_status"  # every other view has seeded rows
 
 
 @pytest.mark.parametrize("table", VIEW_BASE_TABLES)
@@ -304,3 +304,15 @@ def test_tool_end_to_end_through_the_real_driver_path(world, monkeypatch):
     out = json.loads(asyncio.run(tool.ainvoke({"physician_id": i["p1"]}, config=CFG)))
     assert out["mode"] == "live" and out["row_count"] == 3 and "SECRET" not in json.dumps(out)
     assert [(a.tool, a.row_count, a.outcome) for a in audits] == [("feedback_by_physician", 3, "ok")]
+
+
+def test_default_privileges_to_another_role_do_not_survive_the_migration(cluster, tmp_path):
+    r, _ = run_roles(cluster, tmp_path, tag="roles-dp")
+    assert r.returncode == 0, r.stderr
+    cluster.su_exec("CREATE ROLE other_reader NOLOGIN; ALTER DEFAULT PRIVILEGES FOR ROLE neondb_owner GRANT SELECT ON TABLES TO other_reader", db="neondb")
+    v, _ = run_roles(cluster, tmp_path, sql_file=SQL_VIEWS, tag="views-dp")
+    assert v.returncode == 0, v.stderr
+    with psycopg.connect(cluster.owner_url, autocommit=True) as c:
+        n = c.execute("SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace, aclexplode(c.relacl) a "
+                      "WHERE n.nspname = 'studio_ro' AND a.grantee = 'other_reader'::regrole").fetchone()[0]
+    assert n == 0

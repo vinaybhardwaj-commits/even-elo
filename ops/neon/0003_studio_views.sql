@@ -99,8 +99,25 @@ FROM public.incidents i
 GROUP BY i.target_physician_id, i.source, i.polarity, COALESCE(i.severity, 'n/a'), i.status, date_trunc('month', i.submitted_at)::date;
 
 -- Grants: nothing on the views for anyone but the Studio read role; no grant on any base table.
-REVOKE ALL ON ALL TABLES IN SCHEMA studio_ro FROM PUBLIC;
-REVOKE ALL ON ALL TABLES IN SCHEMA studio_ro FROM studio_gov_ro;
+-- Revoke from EVERY grantee other than the owner (default privileges may have granted to other roles).
+DO $$
+DECLARE
+  g record;
+BEGIN
+  FOR g IN
+    SELECT DISTINCT c.oid::regclass AS rel, a.grantee
+    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace,
+         LATERAL aclexplode(c.relacl) a
+    WHERE n.nspname = 'studio_ro' AND c.relkind = 'v' AND a.grantee <> c.relowner
+  LOOP
+    IF g.grantee = 0 THEN
+      EXECUTE format('REVOKE ALL ON %s FROM PUBLIC', g.rel);
+    ELSE
+      EXECUTE format('REVOKE ALL ON %s FROM %I', g.rel, pg_get_userbyid(g.grantee));
+    END IF;
+  END LOOP;
+END
+$$;
 GRANT USAGE ON SCHEMA studio_ro TO studio_gov_ro;
 GRANT SELECT ON studio_ro.physician_privileges, studio_ro.physician_oppe, studio_ro.physician_metrics,
   studio_ro.physician_qualifications, studio_ro.capture_gaps, studio_ro.incident_reply_status,
@@ -121,6 +138,14 @@ BEGIN
       RAISE EXCEPTION 'studio_gov_ro can read base table %: rolling back', t;
     END IF;
   END LOOP;
+  -- Exact ACLs: every studio_ro view is held by the owner and, for SELECT only, by studio_gov_ro.
+  SELECT string_agg(c.relname || ' -> ' || coalesce(pg_get_userbyid(NULLIF(a.grantee, 0)), 'PUBLIC'), ', ') INTO bad
+  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace, LATERAL aclexplode(c.relacl) a
+  WHERE n.nspname = 'studio_ro' AND c.relkind = 'v' AND a.grantee <> c.relowner
+    AND NOT (pg_get_userbyid(a.grantee) = 'studio_gov_ro' AND a.privilege_type = 'SELECT');
+  IF bad IS NOT NULL THEN
+    RAISE EXCEPTION 'studio_ro view has an unexpected grant (%): rolling back', bad;
+  END IF;
   SELECT string_agg(c.relname || '.' || a.attname, ', ') INTO bad
   FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace
   WHERE n.nspname = 'studio_ro' AND a.attnum > 0 AND NOT a.attisdropped
