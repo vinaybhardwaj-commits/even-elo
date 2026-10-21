@@ -193,7 +193,7 @@ async def test_params_are_bound_not_interpolated(db):
     await call("list_physicians", {"filter": {"name_contains": evil, "hospital_code": evil}, "limit": 10})
     sql, params = calls[0]
     assert evil not in sql and "DROP TABLE" not in sql
-    assert like_pattern(evil) in params and evil in params and params[-1] == 10
+    assert like_pattern(evil) in params and evil in params and params[-2:] == (10, 0)
 
 
 def test_like_pattern_escapes_wildcards():
@@ -242,7 +242,7 @@ async def test_each_tool_runs_with_its_parameters(db):
     assert by_tool["signal_snapshots"][0] == (PID, 14, PID, 50)
     assert by_tool["signal_snapshots"][1] == (None, 30, None, 50)
     assert by_tool["incident_summary"] == [(90, 200)]
-    assert max(len(p) for p in by_tool["list_physicians"]) == 9
+    assert max(len(p) for p in by_tool["list_physicians"]) == 10
 
 
 @pytest.mark.anyio

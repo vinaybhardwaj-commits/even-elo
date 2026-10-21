@@ -220,7 +220,7 @@ CREATE TABLE hospitals (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), code text
 CREATE TABLE physicians (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), full_name text NOT NULL, preferred_name text, primary_specialty text,
   registration_council text, registration_expiry date, date_joined_network date, current_status text NOT NULL DEFAULT 'active', cdmss_doctor_uid text);
 CREATE TABLE physician_engagements (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), physician_id uuid NOT NULL REFERENCES physicians(id),
-  hospital_id uuid NOT NULL REFERENCES hospitals(id), engagement_type text NOT NULL, status text NOT NULL DEFAULT 'active');
+  hospital_id uuid NOT NULL REFERENCES hospitals(id), category text NOT NULL, status text NOT NULL DEFAULT 'active');
 CREATE TABLE incidents (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), submitted_at timestamptz NOT NULL DEFAULT now(), status text NOT NULL DEFAULT 'open',
   polarity text NOT NULL DEFAULT 'negative', severity text);
 CREATE TABLE gov_signal_snapshots (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), source text NOT NULL DEFAULT 'cdmss_opd', day date NOT NULL, period text NOT NULL DEFAULT 'day', payload jsonb NOT NULL);
@@ -238,7 +238,7 @@ def test_read_tool_sql_runs_against_the_real_schema_shape(pg_uri):
         c.execute(SCHEMA)
         h = c.execute("INSERT INTO hospitals (code, name) VALUES ('H1','Hosp') RETURNING id").fetchone()[0]
         c.execute("INSERT INTO physicians (id, full_name, primary_specialty, cdmss_doctor_uid) VALUES (%s, 'Dr 50%% Sample', 'Cardiology', 'uid-1')", (pid,))
-        c.execute("INSERT INTO physician_engagements (physician_id, hospital_id, engagement_type) VALUES (%s, %s, 'employed')", (pid, h))
+        c.execute("INSERT INTO physician_engagements (physician_id, hospital_id, category) VALUES (%s, %s, 'active')", (pid, h))
         c.execute("INSERT INTO incidents (severity) VALUES ('low'), ('high')")
         c.execute(
             "INSERT INTO gov_signal_snapshots (day, payload) VALUES (current_date, %s::jsonb)",
@@ -247,7 +247,7 @@ def test_read_tool_sql_runs_against_the_real_schema_shape(pg_uri):
         c.execute("INSERT INTO gov_interventions (signal_key, kind, physician_id) VALUES ('k','huddle_briefing', %s)", (pid,))
         like = studio_tools.like_pattern
         cases = {
-            "list_physicians": (None, None, like("cardio"), like("cardio"), like("50%"), like("50%"), "H1", "H1", 10),
+            "list_physicians": (None, None, like("cardio"), like("cardio"), like("50%"), like("50%"), "H1", "H1", 10, 0),
             "physician_profile": (pid,),
             "signal_snapshots": (pid, 7, pid, 50),
             "interventions": (pid, pid, 50),

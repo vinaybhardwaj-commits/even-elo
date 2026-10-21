@@ -72,6 +72,9 @@ export function StatTile({ label, value, data }: { label: string; value: number 
   );
 }
 
+/** next.config basePath: a hard navigation needs it spelled out (next/link adds it by itself). */
+export const BASE_PATH = "/studio";
+
 const titleCase = (column: string) => column.replace(/_/g, " ");
 
 export function DataTable({
@@ -79,12 +82,15 @@ export function DataTable({
   columns,
   labels,
   renderCell,
+  rowHref,
   empty = "No rows.",
 }: {
   data: SourceTablePayload;
   columns?: string[];
   labels?: Record<string, string>;
   renderCell?: Partial<Record<string, (value: string | number | boolean | null, row: SourceTablePayload["rows"][number]) => ReactNode>>;
+  /** Whole-row click target: a basePath-relative path, or null for a row that goes nowhere. */
+  rowHref?: (row: SourceTablePayload["rows"][number]) => string | null;
   empty?: string;
 }) {
   const cols = columns ?? data.columns;
@@ -103,7 +109,16 @@ export function DataTable({
           </thead>
           <tbody>
             {data.rows.map((row, i) => (
-              <tr key={i}>
+              <tr
+                key={i}
+                className={rowHref?.(row) ? "scr-row-link" : undefined}
+                onClick={(e) => {
+                  const href = rowHref?.(row);
+                  // A click on the row's own link keeps the link's behaviour (new tab, copy, etc.).
+                  // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- deliberate full page load
+                  if (href && !(e.target as Element).closest("a")) window.location.assign(`${BASE_PATH}${href}`);
+                }}
+              >
                 {cols.map((c) => {
                   const v = row[c] ?? null;
                   const custom = renderCell?.[c];

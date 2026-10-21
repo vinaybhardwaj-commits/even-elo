@@ -87,3 +87,6 @@
   .studio-nav ul { display: flex; }
   .scr-main { padding: 12px 14px 40px; }
 }
+.scr-row-link { cursor: pointer; }
+.scr-row-link:hover { background: var(--surface-tertiary); }
+.scr-pager { display: flex; gap: 8px; align-items: center; margin: 8px 0; }

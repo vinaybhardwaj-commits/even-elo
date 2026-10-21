@@ -28,6 +28,8 @@ import uuid
 from pathlib import Path
 from typing import Any, Literal, Optional
 
+from langchain.agents.middleware import AgentMiddleware
+from langchain_core.messages import ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
@@ -42,6 +44,7 @@ STAFF_KEY = "studio_staff_id"
 # Inside src/ so the kill switch works in a deploy image that ships no tests/ directory.
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures"
 MAX_LIMIT = 200
+MAX_OFFSET = 100_000
 
 # ---------------------------------------------------------------------------------------------
 # SQL. Placeholders are psycopg %s. LIKE patterns are escaped by like_pattern().
@@ -50,7 +53,8 @@ MAX_LIMIT = 200
 LIST_PHYSICIANS_SQL = """
 SELECT p.id::text AS physician_id, p.full_name, p.primary_specialty, p.current_status,
        p.date_joined_network::text AS date_joined_network,
-       COALESCE(string_agg(DISTINCT h.code, ', ' ORDER BY h.code) FILTER (WHERE h.code IS NOT NULL), '') AS hospitals
+       COALESCE(string_agg(DISTINCT h.code, ', ' ORDER BY h.code) FILTER (WHERE h.code IS NOT NULL), '') AS hospitals,
+       count(*) OVER () AS total_count
 FROM physicians p
 LEFT JOIN physician_engagements e ON e.physician_id = p.id AND e.status <> 'terminated'
 LEFT JOIN hospitals h ON h.id = e.hospital_id
@@ -61,15 +65,15 @@ WHERE (%s::text IS NULL OR p.current_status = %s::text)
         SELECT 1 FROM physician_engagements e2 JOIN hospitals h2 ON h2.id = e2.hospital_id
         WHERE e2.physician_id = p.id AND e2.status <> 'terminated' AND h2.code = %s::text))
 GROUP BY p.id
-ORDER BY p.full_name
-LIMIT %s
+ORDER BY p.full_name, p.id
+LIMIT %s OFFSET %s
 """
 
 PHYSICIAN_PROFILE_SQL = """
 SELECT p.id::text AS physician_id, p.full_name, p.preferred_name, p.primary_specialty, p.current_status,
        p.date_joined_network::text AS date_joined_network,
        p.registration_council, p.registration_expiry::text AS registration_expiry,
-       COALESCE((SELECT string_agg(h.code || ' ' || e.engagement_type || ' ' || e.status, ' | ' ORDER BY h.code)
+       COALESCE((SELECT string_agg(h.code || ' ' || e.category || ' ' || e.status, ' | ' ORDER BY h.code)
                  FROM physician_engagements e JOIN hospitals h ON h.id = e.hospital_id
                  WHERE e.physician_id = p.id), '') AS engagements
 FROM physicians p
@@ -222,17 +226,23 @@ async def _fetch_rows_pg(sql: str, params: tuple) -> list[dict]:
 fetch_rows = _fetch_rows_pg
 
 
-def load_fixture(tool_name: str, limit: Optional[int] = None) -> list[dict]:
+def load_fixture(tool_name: str, limit: Optional[int] = None, offset: int = 0) -> list[dict]:
     path = FIXTURE_DIR / f"{tool_name}.json"
     try:
         rows = json.loads(path.read_text())["rows"]
     except (OSError, ValueError, KeyError):
         raise ToolError("Fixture data for this tool is not available.") from None
+    rows = rows[offset:]
     return rows[:limit] if limit else rows
 
 
 async def run_read_tool(
-    tool_name: str, params: dict[str, Any], sql_params: tuple, config: Optional[RunnableConfig], limit: Optional[int]
+    tool_name: str,
+    params: dict[str, Any],
+    sql_params: tuple,
+    config: Optional[RunnableConfig],
+    limit: Optional[int],
+    offset: int = 0,
 ) -> str:
     """Execute (live or fixture), audit, and return the typed table payload as JSON."""
     staff_id = staff_id_from(config)
@@ -260,7 +270,7 @@ async def run_read_tool(
             raw = await fetch_rows(ALL_SQL[tool_name], sql_params)
             rows = [{k: _json_safe(v) for k, v in dict(r).items()} for r in raw]
         else:
-            rows = load_fixture(tool_name, limit)
+            rows = load_fixture(tool_name, limit, offset)
     except ToolError as exc:
         failure = str(exc)
     except PinError:
@@ -282,6 +292,11 @@ async def run_read_tool(
         raise ToolError("The audit log is unavailable, so this read was refused.") from None
     duration_ms = int((time.monotonic() - started) * 1000)
     logger.info("tool=%s staff=%s rows=%d ms=%d mode=%s", tool_name, staff_id, len(rows), duration_ms, "live" if live else "fixture")
+    # A paged tool selects `count(*) OVER () AS total_count` (matches before LIMIT/OFFSET); it is the payload's
+    # `total`, not a column. Past the last page there are no rows, so no total.
+    total = rows[0].get("total_count") if rows else None
+    for r in rows:
+        r.pop("total_count", None)
     columns = list(rows[0].keys()) if rows else []
     return json.dumps(
         {
@@ -291,6 +306,7 @@ async def run_read_tool(
             "columns": columns,
             "rows": rows,
             "row_count": len(rows),
+            **({"total": total} if isinstance(total, int) else {}),
         }
     )
 
@@ -313,6 +329,7 @@ class PhysicianFilter(BaseModel):
 class ListPhysiciansArgs(BaseModel):
     filter: PhysicianFilter = Field(default_factory=PhysicianFilter)
     limit: int = Limit
+    offset: int = Field(default=0, ge=0, le=MAX_OFFSET, description="Rows to skip (paging); the result's `total` is the match count.")
 
 
 class PhysicianIdArgs(BaseModel):
@@ -339,14 +356,18 @@ class NoArgs(BaseModel):
 
 
 @tool(args_schema=ListPhysiciansArgs)
-async def list_physicians(filter: PhysicianFilter = PhysicianFilter(), limit: int = 50, config: RunnableConfig = None) -> str:  # noqa: A002
-    """List physicians (id, name, specialty, status, hospitals). Read-only, up to 200 rows.
+async def list_physicians(
+    filter: PhysicianFilter = PhysicianFilter(), limit: int = 50, offset: int = 0, config: RunnableConfig = None
+) -> str:  # noqa: A002
+    """List physicians (id, name, specialty, status, hospitals). Read-only, up to 200 rows per page; use `offset`
+    to page, and the result's `total` for the match count.
     The result is a table with a `source`; present it with the table component, do not retype it."""
     f = filter if isinstance(filter, PhysicianFilter) else PhysicianFilter.model_validate(filter)
     spec = like_pattern(f.specialty_contains) if f.specialty_contains else None
     name = like_pattern(f.name_contains) if f.name_contains else None
-    sql_params = (f.status, f.status, spec, spec, name, name, f.hospital_code, f.hospital_code, limit)
-    return await run_read_tool("list_physicians", {"filter": f.model_dump(), "limit": limit}, sql_params, config, limit)
+    sql_params = (f.status, f.status, spec, spec, name, name, f.hospital_code, f.hospital_code, limit, offset)
+    params = {"filter": f.model_dump(), "limit": limit, "offset": offset}
+    return await run_read_tool("list_physicians", params, sql_params, config, limit, offset)
 
 
 @tool(args_schema=PhysicianIdArgs)
@@ -388,6 +409,27 @@ async def overview_counts(config: RunnableConfig = None) -> str:
     """Headline governance counts (physicians, hospitals, open engagements and patient feedback items, interventions,
     snapshot days). Read-only."""
     return await run_read_tool("overview_counts", {}, (), config, None)
+
+
+class ToolErrorToResult(AgentMiddleware):
+    """A failed read is a tool RESULT the model can see, not an abort of the whole chat run.
+
+    create_agent's ToolNode re-raises every error except its own validation errors, so without this one
+    failing tool (and every sibling call in the same turn) ends the run. ToolError text is safe by
+    contract (fixed strings). The screen door (studio_screen.py) calls the tools directly and still
+    sees the exception."""
+
+    async def awrap_tool_call(self, request, handler):
+        try:
+            return await handler(request)
+        except ToolError as exc:
+            return ToolMessage(content=str(exc), name=request.tool_call["name"], tool_call_id=request.tool_call["id"], status="error")
+
+    def wrap_tool_call(self, request, handler):
+        try:
+            return handler(request)
+        except ToolError as exc:
+            return ToolMessage(content=str(exc), name=request.tool_call["name"], tool_call_id=request.tool_call["id"], status="error")
 
 
 GOVERNANCE_TOOLS = [list_physicians, physician_profile, signal_snapshots, interventions, incident_summary, overview_counts]

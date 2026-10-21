@@ -49,7 +49,7 @@ from src.studio_checkpoint import dev_checkpointer, postgres_checkpointer
 from src.studio_db import connect_studio, studio_db_configured
 from src.studio_logging import configure_logging
 from src.studio_screen import MAX_AUDIT_BODY_BYTES, MAX_BODY_BYTES, record_http_audit, run_screen_tool
-from src.studio_tools import GOVERNANCE_TOOLS, STAFF_KEY
+from src.studio_tools import GOVERNANCE_TOOLS, STAFF_KEY, ToolErrorToResult
 from src.model import build_model
 from src.visualization_router import JevVisualizationMiddleware
 from src.skill_backend import SKILL_SOURCES, build_agent_backend
@@ -69,6 +69,7 @@ def build_agent(checkpointer):
         tools=TOOLS,
         middleware=[
             CopilotKitMiddleware(),
+            ToolErrorToResult(),
             JevVisualizationMiddleware(),
             ConsecutiveSystemMessagesMiddleware(),
         ],

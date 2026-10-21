@@ -27,6 +27,8 @@ export const SourceTablePayload = z.object({
   columns: z.array(z.string()),
   rows: z.array(z.record(z.string(), Cell)),
   row_count: z.number().int().nonnegative(),
+  // Paged tools only: the match count across all pages (absent past the last page).
+  total: z.number().int().nonnegative().optional(),
 });
 export type SourceTablePayload = z.infer<typeof SourceTablePayload>;
 
@@ -48,6 +50,7 @@ export const SCREEN_TOOL_PARAMS = {
         .strict()
         .optional(),
       limit: limit.optional(),
+      offset: z.number().int().min(0).max(100_000).optional(),
     })
     .strict(),
   physician_profile: z.object({ physician_id: uuid }).strict(),

@@ -127,7 +127,7 @@ def test_list_physicians_filter_is_passed_as_parameters(main, db):
     assert r.status_code == 200
     sql, params = calls[0]
     assert "a_b" not in sql and "active" not in sql.split("WHERE")[1]
-    assert "%a\\_b\\%%" in params and params[-1] == 10
+    assert "%a\\_b\\%%" in params and params[-2:] == (10, 0)
 
 
 def test_failed_read_is_audited_and_leaks_no_exception_text(main, monkeypatch, caplog):

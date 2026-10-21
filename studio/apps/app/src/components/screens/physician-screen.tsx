@@ -80,7 +80,7 @@ export function PhysicianScreen({ id }: { id: string }) {
                       ))}
                     </ul>
                   )}
-                  <p className="scr-source">Engagements from {data.source.tool} · query {data.source.query_hash} (hospital code, type, status).</p>
+                  <p className="scr-source">Engagements from {data.source.tool} · query {data.source.query_hash} (hospital code, category, status).</p>
                 </>
               );
             }}

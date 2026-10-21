@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 
 const contexts: Array<{ description: string; value: Record<string, unknown> }> = [];
@@ -107,10 +107,42 @@ describe("screens", () => {
   it("roster: links each physician to the 360 and exposes filters", async () => {
     render(<PhysiciansScreen />);
     const link = await screen.findByRole("link", { name: "Dr A" });
-    expect(link).toHaveAttribute("href", `/physicians/${PID}`);
+    expect(link).toHaveAttribute("href", `/studio/physicians/${PID}`);
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(body).toEqual({ filter: {}, limit: 200 });
+    expect(body).toEqual({ filter: {}, limit: 200, offset: 0 });
     expect(contexts.at(-1)!.value).toMatchObject({ screen: "physicians" });
+  });
+
+  it("roster: clicking anywhere on a row opens that physician's 360", async () => {
+    const assign = vi.fn();
+    vi.stubGlobal("location", { ...window.location, assign });
+    render(<PhysiciansScreen />);
+    const cell = await screen.findByText("Neurology");
+    fireEvent.click(cell);
+    expect(assign).toHaveBeenCalledWith(`/studio/physicians/${PID}`);
+    // A click on the name's own link is left to the link.
+    assign.mockClear();
+    fireEvent.click(screen.getByRole("link", { name: "Dr A" }));
+    expect(assign).not.toHaveBeenCalled();
+  });
+
+  it("roster: pages through every match with offset and shows the total", async () => {
+    const row = (i: number) => ({ physician_id: PID, full_name: `Dr ${i}`, primary_specialty: "Neurology", current_status: "active", date_joined_network: "2024-01-01", hospitals: "RR" });
+    const cols = ["physician_id", "full_name", "primary_specialty", "current_status", "date_joined_network", "hospitals"];
+    fetchMock.mockImplementation(async (_url: string, init: { body: string }) => {
+      const { offset } = JSON.parse(init.body);
+      const n = offset === 0 ? 200 : 66;
+      return new Response(JSON.stringify({ ...table("list_physicians", cols, Array.from({ length: n }, (_, i) => row(offset + i))), total: 266 }), { status: 200 });
+    });
+    render(<PhysiciansScreen />);
+    await screen.findAllByText("Showing 1–200 of 266");
+    expect(screen.getAllByRole("button", { name: "Previous" })[0]).toBeDisabled();
+    fireEvent.click(screen.getAllByRole("button", { name: "Next" })[0]);
+    await screen.findAllByText("Showing 201–266 of 266");
+    expect(JSON.parse(fetchMock.mock.calls.at(-1)![1].body)).toMatchObject({ limit: 200, offset: 200 });
+    expect(screen.getAllByRole("button", { name: "Next" })[0]).toBeDisabled();
+    fireEvent.click(screen.getAllByRole("button", { name: "Previous" })[0]);
+    await screen.findAllByText("Showing 1–200 of 266");
   });
 
   it("physician 360: reads three tools for the selected id and exposes it", async () => {

@@ -68,6 +68,9 @@ describe("/studio/api/screen/[tool]", () => {
     ["list_physicians", { filter: { status: "bogus" } }],
     ["list_physicians", { filter: { name_contains: "x".repeat(81) } }],
     ["list_physicians", [1]],
+    ["list_physicians", { offset: -1 }],
+    ["list_physicians", { offset: 100001 }],
+    ["list_physicians", { offset: 1.5 }],
   ])("422 for invalid params %s %j", async (tool, body) => {
     const res = await call(tool, body);
     expect(res.status).toBe(422);
