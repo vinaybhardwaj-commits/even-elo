@@ -1,5 +1,6 @@
 "use client";
 
+import { Suspense } from "react";
 import { CopilotKit } from "@copilotkit/react-core";
 import { CopilotChatConfigurationProvider } from "@copilotkit/react-core/v2";
 import { OPEN_GEN_UI_DESIGN_SKILL } from "@repo/design-system";
@@ -44,10 +45,15 @@ function ChatProviders({ children }: { children: React.ReactNode }) {
       openGenerativeUI={openGenerativeUI}
       a2ui={a2ui}
     >
-      <CopilotChatConfigurationProvider>
-        <OpenGenUIPromptBridge />
-        {children}
-      </CopilotChatConfigurationProvider>
+      {/* Hydration that suspends below here (a slow client chunk) must not retry the provider: each uncommitted
+          render of CopilotKitProvider builds a new core in a fresh ref, and each core fetches runtime info. Live
+          overview showed ~140 info calls in one burst this way. With this boundary the provider commits once. */}
+      <Suspense fallback={null}>
+        <CopilotChatConfigurationProvider>
+          <OpenGenUIPromptBridge />
+          {children}
+        </CopilotChatConfigurationProvider>
+      </Suspense>
     </CopilotKit>
   );
 }

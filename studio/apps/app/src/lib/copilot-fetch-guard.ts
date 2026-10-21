@@ -9,8 +9,12 @@
 //   reached the agent). Only a new user message resets the count. The next follow-up is answered here with a short
 //   assistant message that ends the chain (no request).
 // A refused call fails fast with code "client_backoff" (no request), so the chat shows its banner instead of looping.
-// Diagnostics: window.__studioCopilotGuard counts every runtime call per method and keeps the call stacks of the 2nd to
-// 4th call of each method (stacks only, never bodies), so a live capture can name whatever re-issues a call.
+// Except info: an info call never fails here. A refused or failed info is answered with the last successful info
+// response (waiting for one in flight if needed), or, before any succeeded, with FALLBACK_INFO naming the default agent.
+// A failed info empties CopilotKit's agent registry, and the chat then throws "Agent not found" during render, which
+// takes the whole page down; the agent list does not change during a page's life.
+// Diagnostics: window.__studioCopilotGuard counts every runtime call per method and keeps the call stacks (50 frames)
+// of the 2nd to 4th call of each method (stacks only, never bodies), so a live capture can name whatever re-issues a call.
 
 export const RUNTIME_PATH = "/studio/api/copilotkit";
 export const MAX_REISSUES = 3;
@@ -25,6 +29,9 @@ export const TOOL_LOOP_STOP_MESSAGE = `I stopped this answer after ${MAX_TOOL_FO
 type Streak = { failures: number; notBefore: number };
 export type GuardTrace = Record<string, { calls: number; refused: number; stacks: string[] }>;
 const TRACE_STACKS = 3;
+const TRACE_FRAMES = 50;
+export const FALLBACK_INFO = { version: "client-fallback", agents: { default: { name: "default", description: "" } }, mode: "sse" };
+type CachedInfo = { status: number; headers: [string, string][]; body: string };
 type Clock = () => number;
 
 export class ClientBackoffError extends TypeError {
@@ -109,8 +116,46 @@ export function createCopilotFetchGuard(realFetch: typeof fetch, now: Clock = ()
   const record = (method: string) => {
     const t = (trace[method] ??= { calls: 0, refused: 0, stacks: [] });
     t.calls += 1;
-    if (t.calls > 1 && t.stacks.length < TRACE_STACKS) t.stacks.push(new Error(`${method} call ${t.calls}`).stack ?? "");
+    if (t.calls > 1 && t.stacks.length < TRACE_STACKS) {
+      const limit = Error.stackTraceLimit;
+      Error.stackTraceLimit = TRACE_FRAMES;
+      t.stacks.push(new Error(`${method} call ${t.calls}`).stack ?? "");
+      Error.stackTraceLimit = limit;
+    }
     return t;
+  };
+
+  let cachedInfo: CachedInfo | undefined;
+  let infoInFlight: Promise<unknown> | undefined;
+  const localInfo = async (): Promise<Response> => {
+    if (!cachedInfo && infoInFlight) await infoInFlight.catch(() => undefined);
+    const { status, headers, body } = cachedInfo ?? { status: 200, headers: [["Content-Type", "application/json"]], body: JSON.stringify(FALLBACK_INFO) };
+    return new Response(body, { status, headers });
+  };
+  const fetchInfo = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const request = (async () => {
+      const res = await realFetch(input, init);
+      if (!res.ok) return res;
+      const body = await res.text();
+      cachedInfo = { status: res.status, headers: [...res.headers.entries()], body };
+      return new Response(body, { status: res.status, headers: res.headers });
+    })();
+    infoInFlight = request;
+    let res: Response;
+    try {
+      res = await request;
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === "AbortError")) failed("info");
+      return localInfo();
+    } finally {
+      if (infoInFlight === request) infoInFlight = undefined;
+    }
+    if (!res.ok) {
+      failed("info");
+      return localInfo();
+    }
+    succeeded("info");
+    return res;
   };
 
   async function guardedFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
@@ -148,8 +193,10 @@ export function createCopilotFetchGuard(realFetch: typeof fetch, now: Clock = ()
     }
     if (!admit(rpc)) {
       traced.refused += 1;
+      if (rpc === "info") return localInfo();
       throw new ClientBackoffError(rpc);
     }
+    if (rpc === "info") return fetchInfo(input, init);
     if (rpc === "agent/run" && threadId) ranThreads.add(threadId);
 
     let res: Response;
