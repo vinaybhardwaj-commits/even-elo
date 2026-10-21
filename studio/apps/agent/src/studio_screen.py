@@ -64,3 +64,48 @@ async def run_screen_tool(tool_name: str, params: dict, staff_id: str) -> tuple[
     except (TypeError, ValueError):
         logger.warning("screen tool=%s returned non-JSON", tool_name)
         return 502, {"ok": False, "error": "tool_failed"}
+
+
+# ---------------------------------------------------------------------------------------------
+# HTTP read tools (M1-http). These run in the Studio Next app (the agent has no egress to the
+# incident or CDMSS APIs). The app reports each call here so it lands in the same append-only
+# studio_audit table. Metadata only: tool, params hash, counts, timing. Never row content.
+# ---------------------------------------------------------------------------------------------
+
+HTTP_TOOL_NAMES = frozenset({"eiris_incidents", "eiris_incident_detail", "opd_signals"})
+MAX_AUDIT_BODY_BYTES = 4096
+_MAX_ROWS = 100_000
+_MAX_MS = 600_000
+
+
+async def record_http_audit(body: Any, staff_id: str) -> tuple[int, dict]:
+    """Validate one app-reported HTTP tool call and append its studio_audit row. (status, json_body)."""
+    from src import studio_audit  # late: tests replace studio_audit.audit_sink
+
+    if not isinstance(body, dict) or set(body) - {"tool", "params", "row_count", "duration_ms", "outcome"}:
+        return 422, {"ok": False, "error": "bad_audit"}
+    tool, params = body.get("tool"), body.get("params", {})
+    row_count, duration_ms, outcome = body.get("row_count"), body.get("duration_ms"), body.get("outcome")
+    if tool not in HTTP_TOOL_NAMES or not isinstance(params, dict):
+        return 422, {"ok": False, "error": "bad_audit"}
+    for n, cap in ((row_count, _MAX_ROWS), (duration_ms, _MAX_MS)):
+        if isinstance(n, bool) or not isinstance(n, int) or not 0 <= n <= cap:
+            return 422, {"ok": False, "error": "bad_audit"}
+    if outcome not in ("ok", "error"):
+        return 422, {"ok": False, "error": "bad_audit"}
+    try:
+        await studio_audit.audit_sink(
+            studio_audit.AuditRow(
+                staff_id=staff_id,
+                tool=tool,
+                params_hash=studio_audit.params_hash(params),
+                row_count=row_count,
+                duration_ms=duration_ms,
+                mode="live",
+                outcome=outcome,
+            )
+        )
+    except Exception as exc:  # fail closed: the app returns no data without this row
+        logger.error("http audit write failed type=%s", type(exc).__name__)
+        return 503, {"ok": False, "error": "audit_unavailable"}
+    return 200, {"ok": True}

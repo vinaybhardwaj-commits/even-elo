@@ -192,3 +192,65 @@ def test_fixture_mode_is_labelled_synthetic(main, monkeypatch):
     if r.status_code == 200:  # fixture file present
         assert r.json()["synthetic"] is True and r.json()["mode"] == "fixture"
         assert audits[0].mode == "fixture"
+
+
+# --- POST /agent/audit: audit rows for the app-side HTTP tools (M1-http) ---------------------
+
+
+def _audit_body(**over):
+    body = {"tool": "eiris_incidents", "params": {"view": "summary"}, "row_count": 4, "duration_ms": 120, "outcome": "ok"}
+    body.update(over)
+    return body
+
+
+def test_http_audit_writes_one_metadata_row(main, db):
+    c = TestClient(main.app)
+    r = c.post("/agent/audit", json=_audit_body(), headers=headers())
+    assert r.status_code == 200 and r.json() == {"ok": True}
+    (row,) = db[1]
+    assert (row.staff_id, row.tool, row.row_count, row.duration_ms, row.mode, row.outcome) == (STAFF, "eiris_incidents", 4, 120, "live", "ok")
+    assert row.params_hash == studio_audit.params_hash({"view": "summary"})
+    assert db[0] == []  # no database read happened
+
+
+def test_http_audit_requires_auth(main, db):
+    c = TestClient(main.app)
+    assert c.post("/agent/audit", json=_audit_body()).status_code == 401
+    assert c.post("/agent/audit", json=_audit_body(), headers=headers(role="doctor")).status_code == 403
+    assert db[1] == []
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"tool": "overview_counts"},
+        {"tool": "sql"},
+        {"row_count": -1},
+        {"row_count": True},
+        {"row_count": "3"},
+        {"duration_ms": 10**9},
+        {"outcome": "denied"},
+        {"params": "x"},
+        {"staff_id": "someone-else"},
+    ],
+)
+def test_http_audit_refuses_bad_bodies(main, db, over):
+    c = TestClient(main.app)
+    assert c.post("/agent/audit", json=_audit_body(**over), headers=headers()).status_code == 422
+    assert db[1] == []
+
+
+def test_http_audit_fails_closed_when_the_sink_fails(main, db, monkeypatch):
+    async def boom(row):
+        raise RuntimeError("secret host name")
+
+    monkeypatch.setattr(studio_audit, "audit_sink", boom)
+    r = TestClient(main.app).post("/agent/audit", json=_audit_body(), headers=headers())
+    assert r.status_code == 503 and r.json() == {"ok": False, "error": "audit_unavailable"}
+    assert "secret" not in r.text
+
+
+def test_http_audit_staff_id_comes_from_the_token_not_the_body(main, db):
+    c = TestClient(main.app)
+    c.post("/agent/audit", json=_audit_body(), headers=headers(sub="staff-9"))
+    assert db[1][0].staff_id == "staff-9"

@@ -1,4 +1,5 @@
 import { LangGraphHttpAgent } from "@copilotkit/runtime/langgraph";
+import { buildHttpToolActions } from "@/lib/http-tools/actions";
 
 class NoRedirectLangGraphAgent extends LangGraphHttpAgent {
   protected override requestInit(input: Parameters<LangGraphHttpAgent["requestInit"]>[0]): RequestInit {
@@ -8,6 +9,8 @@ class NoRedirectLangGraphAgent extends LangGraphHttpAgent {
 }
 
 export interface RuntimeOptionsEnv {
+  /** Server-side CopilotKit actions (the HTTP read tools), built per request with the verified actor. */
+  actions?: ReturnType<typeof buildHttpToolActions>;
   langgraphUrl?: string;
   /** Per-request headers for the agent call (service token + actor JWT). Never cookies. */
   headers?: Record<string, string>;
@@ -27,6 +30,7 @@ export function buildRuntimeOptions(env: RuntimeOptionsEnv) {
         headers: env.headers ?? {},
       }),
     },
+    ...(env.actions ? { actions: env.actions } : {}),
     a2ui: { injectA2UITool: true },
     openGenerativeUI: true as const,
   };

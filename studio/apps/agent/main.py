@@ -48,7 +48,7 @@ from src.run_errors import classify, run_error_event
 from src.studio_checkpoint import dev_checkpointer, postgres_checkpointer
 from src.studio_db import connect_studio, studio_db_configured
 from src.studio_logging import configure_logging
-from src.studio_screen import MAX_BODY_BYTES, run_screen_tool
+from src.studio_screen import MAX_AUDIT_BODY_BYTES, MAX_BODY_BYTES, record_http_audit, run_screen_tool
 from src.studio_tools import GOVERNANCE_TOOLS, STAFF_KEY
 from src.model import build_model
 from src.visualization_router import JevVisualizationMiddleware
@@ -102,7 +102,7 @@ async def lifespan(app: FastAPI):
         yield
 
 
-# No docs/openapi: the surface is POST /agent, GET /agent/health and POST /agent/tools/{name} (screen reads).
+# No docs/openapi: the surface is POST /agent, GET /agent/health and POST /agent/tools/{name} (screen reads) and POST /agent/audit (app-side HTTP reads).
 app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 app.state.studio_agent = build_ag_ui_agent(agent)
 
@@ -134,6 +134,23 @@ async def run_tool(tool_name: str, request: Request):
         return JSONResponse({"ok": False, "error": "bad_params"}, status_code=422)
     status, body = await run_screen_tool(tool_name, params, actor["staff_id"])
     return JSONResponse(body, status_code=status)
+
+
+@app.post("/agent/audit")
+async def http_tool_audit(request: Request):
+    """Append-only audit row for a read the Studio app made over HTTP (eiris_*, opd_signals). Metadata only."""
+    actor = (request.scope.get("state") or {}).get(STATE_KEY)
+    if not actor:  # defence in depth: the middleware always sets this
+        return JSONResponse({"ok": False, "error": "unauthenticated"}, status_code=401)
+    raw = await request.body()
+    if len(raw) > MAX_AUDIT_BODY_BYTES:
+        return JSONResponse({"ok": False, "error": "bad_audit"}, status_code=422)
+    try:
+        body = json.loads(raw) if raw.strip() else None
+    except ValueError:
+        return JSONResponse({"ok": False, "error": "bad_audit"}, status_code=422)
+    status, out = await record_http_audit(body, actor["staff_id"])
+    return JSONResponse(out, status_code=status)
 
 
 def scoped_thread_id(staff_id: str, thread_id: str) -> str:
