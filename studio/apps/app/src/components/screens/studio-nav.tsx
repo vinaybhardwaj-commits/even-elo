@@ -13,6 +13,7 @@ export const NAV_ITEMS = [
   { href: "/incidents", label: "e-IRIS incidents" },
   { href: "/feedback", label: "Patient feedback" },
   { href: "/surgical", label: "Surgical" },
+  { href: "/onboarding", label: "Onboarding" },
   { href: "/", label: "Chat" },
 ] as const;
 

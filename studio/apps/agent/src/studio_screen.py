@@ -92,6 +92,17 @@ HTTP_TOOL_NAMES = HTTP_TOOL_NAMES | frozenset(
         "surgical_write",
     }
 )
+HTTP_TOOL_NAMES = HTTP_TOOL_NAMES | frozenset(
+    {
+        # M3-onboarding: reads of the even-elo VC onboarding API, plus one name for confirmed writes.
+        "onboarding_overview",
+        "onboarding_pipeline",
+        "onboarding_prescreen",
+        "onboarding_pending_credentials",
+        "onboarding_hospitals",
+        "onboarding_write",
+    }
+)
 MAX_AUDIT_BODY_BYTES = 4096
 _MAX_ROWS = 100_000
 _MAX_MS = 600_000
