@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DOCAUDIT_TOOL_NAMES, DOCAUDIT_TOOL_PARAMS } from "./docaudit-schema";
 
 // Shared (server + client) contract for the six governance read tools (apps/agent/src/studio_tools.py).
 // The screen route validates params against SCREEN_TOOL_PARAMS before anything reaches the agent, and
@@ -11,6 +12,7 @@ export const GOVERNANCE_TOOL_NAMES = [
   "interventions",
   "incident_summary",
   "overview_counts",
+  ...DOCAUDIT_TOOL_NAMES,
 ] as const;
 export type GovernanceToolName = (typeof GOVERNANCE_TOOL_NAMES)[number];
 
@@ -60,6 +62,7 @@ export const SCREEN_TOOL_PARAMS = {
   interventions: z.object({ physician_id: uuid.optional(), limit: limit.optional() }).strict(),
   incident_summary: z.object({ window_days: windowDays.optional() }).strict(),
   overview_counts: z.object({}).strict(),
+  ...DOCAUDIT_TOOL_PARAMS,
 } as const satisfies Record<GovernanceToolName, z.ZodTypeAny>;
 
 export type ScreenToolParams<T extends GovernanceToolName> = z.input<(typeof SCREEN_TOOL_PARAMS)[T]>;

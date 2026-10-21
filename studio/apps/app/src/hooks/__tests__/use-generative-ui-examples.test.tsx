@@ -77,6 +77,10 @@ describe("useGenerativeUIExamples registrations", () => {
       "interventions",
       "incident_summary",
       "overview_counts",
+      "list_document_audits",
+      "document_audit_detail",
+      "document_audit_doctor_rollup",
+      "document_audit_headline",
     ]);
     // The demo meeting picker was removed; the HITL pattern lives in a comment.
     expect(captured.useHumanInTheLoop).toEqual([]);

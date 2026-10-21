@@ -56,6 +56,10 @@ def test_agent_tools_list_is_planning_plus_read_only_governance():
             "interventions",
             "incident_summary",
             "overview_counts",
+            "list_document_audits",
+            "document_audit_detail",
+            "document_audit_doctor_rollup",
+            "document_audit_headline",
         ]
     finally:
         sys.modules.pop("main", None)
