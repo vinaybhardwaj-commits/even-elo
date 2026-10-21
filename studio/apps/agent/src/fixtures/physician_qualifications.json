@@ -8,7 +8,8 @@
     "year_completed",
     "country",
     "verified",
-    "verified_on"
+    "verified_on",
+    "institution"
   ],
   "rows": [
     {
@@ -18,7 +19,8 @@
       "year_completed": 2012,
       "country": "IN",
       "verified": true,
-      "verified_on": "2026-03-01"
+      "verified_on": "2026-03-01",
+      "institution": "Sample Institute One"
     },
     {
       "qualification_id": "00000000-0000-4000-8000-0000000000d2",
@@ -27,7 +29,8 @@
       "year_completed": 2007,
       "country": "IN",
       "verified": false,
-      "verified_on": null
+      "verified_on": null,
+      "institution": "Sample Institute Two"
     }
   ]
 }

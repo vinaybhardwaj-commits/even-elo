@@ -1,9 +1,9 @@
 // Pure shaping of even-elo VC onboarding API bodies into SourceTablePayload tables. No env, no I/O.
 // Upstream bodies are untrusted: every field is read defensively and unknown fields are dropped.
 //
-// Fields NEVER emitted, whatever the upstream sends: observation narrative_notes (case narrative can name a
-// patient; only a has_notes flag is shown), observer email, and the qualification file payload (only its
-// has_file flag and filename). Free text about the candidate (red flags, decision rationale) is shortened.
+// Governance sees what the source pages show (V, 21 Oct: no doctor or PHI gating): observation narrative_notes,
+// red flags and the decision rationale in full. NEVER emitted, whatever the upstream sends: observer email and the
+// qualification file payload (only its has_file flag and filename).
 
 import type { SourceTablePayload } from "@/lib/screens/tool-schema";
 import { makePayload, type PayloadMeta } from "@/lib/http-tools/transform";
@@ -63,7 +63,7 @@ export function pipelinePayload(meta: PayloadMeta, body: unknown, limit: number)
     stage: str(v.stage),
     decision: str(v.decision),
     years_post_pg: num(v.years_post_postgraduate),
-    red_flags: short(v.red_flags, 160),
+    red_flags: str(v.red_flags),
     prescreened_by: str(v.prescreened_by_email),
     prescreened: day(v.prescreened_at),
     decided: day(v.decided_at),
@@ -91,10 +91,10 @@ export function prescreenSummaryPayload(meta: PayloadMeta, body: unknown): Sourc
     { metric: "trigger", value: str(p.trigger) },
     { metric: "fppe_from_profile", value: bool(p.fppe_from_profile) },
     { metric: "decision", value: str(p.decision) },
-    { metric: "decision_rationale", value: short(p.decision_rationale, 500) },
+    { metric: "decision_rationale", value: str(p.decision_rationale) },
     { metric: "years_post_postgraduate", value: num(p.years_post_postgraduate) },
     { metric: "prior_corporate_hospitals", value: codes(p.prior_corporate_hospitals) },
-    { metric: "red_flags", value: short(p.red_flags, 500) },
+    { metric: "red_flags", value: str(p.red_flags) },
     { metric: "cooldown_override", value: bool(p.cooldown_override) },
     ...COMMITMENT_KEYS.map((k) => ({ metric: `commitment_${k}`, value: bool(commitments[k]) })),
     ...Object.entries(perHospital)
@@ -123,9 +123,10 @@ export function observationsPayload(meta: PayloadMeta, body: unknown): SourceTab
       flag: str(c.flag_severity),
       trigger: str(c.trigger),
       has_notes: str(c.narrative_notes) !== null,
+      notes: str(c.narrative_notes),
     };
   });
-  return makePayload(meta, ["case_number", "case_date", "procedure", "observer_role", "observer", ...SCORE_DIMENSIONS, "flag", "trigger", "has_notes"], rows);
+  return makePayload(meta, ["case_number", "case_date", "procedure", "observer_role", "observer", ...SCORE_DIMENSIONS, "flag", "trigger", "has_notes", "notes"], rows);
 }
 
 export function pendingCredentialsPayload(meta: PayloadMeta, body: unknown, limit: number): SourceTablePayload | null {

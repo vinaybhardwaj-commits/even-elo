@@ -9,7 +9,8 @@
     "basis",
     "granted_date",
     "expires_at",
-    "withdrawn_date"
+    "withdrawn_date",
+    "withdrawn_reason"
   ],
   "rows": [
     {
@@ -20,7 +21,8 @@
       "basis": "initial",
       "granted_date": "2026-01-05",
       "expires_at": null,
-      "withdrawn_date": null
+      "withdrawn_date": null,
+      "withdrawn_reason": null
     },
     {
       "privilege_id": "00000000-0000-4000-8000-0000000000b2",
@@ -30,7 +32,8 @@
       "basis": "annual_review",
       "granted_date": "2026-02-10",
       "expires_at": "2027-02-10",
-      "withdrawn_date": null
+      "withdrawn_date": null,
+      "withdrawn_reason": null
     }
   ]
 }

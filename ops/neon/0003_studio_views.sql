@@ -153,6 +153,8 @@ BEGIN
   SELECT string_agg(c.relname || '.' || a.attname, ', ') INTO bad
   FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace
   WHERE n.nspname = 'studio_ro' AND a.attnum > 0 AND NOT a.attisdropped
+    AND c.relname IN ('physician_privileges', 'physician_oppe', 'physician_metrics', 'physician_qualifications',
+                      'capture_gaps', 'incident_reply_status', 'physician_feedback')
     AND a.attname ~ '(text|note|reason|narrative|email|phone|name|url|payload|packet|file|reply$)';
   IF bad IS NOT NULL THEN
     RAISE EXCEPTION 'studio_ro exposes a column that looks like free text or contact data (%): rolling back', bad;

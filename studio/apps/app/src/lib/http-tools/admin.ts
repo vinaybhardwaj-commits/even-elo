@@ -102,14 +102,22 @@ export function toAdminPayload(op: "users" | "roles" | "resignations" | "audit",
   if (!Array.isArray(b.rows)) return null;
   if (op === "resignations") {
     const rows = arr(b.rows).map((r) => {
-      const out = pick(r, RESIGNATION_COLUMNS); // the reason text is never copied
+      const out = pick(r, RESIGNATION_COLUMNS);
       out.request_id = cell(r.id);
       return out;
     });
     return { table: table("admin_resignations", hashText, RESIGNATION_COLUMNS, rows), write_enabled: writeEnabled };
   }
-  // audit: before_json / after_json are dropped; they can carry free text.
-  return { table: table("admin_audit", hashText, AUDIT_COLUMNS, arr(b.rows).map((r) => pick(r, AUDIT_COLUMNS))), write_enabled: writeEnabled };
+  // audit: before_json / after_json are shown as the old audit page shows them (objects become JSON text).
+  const auditRows = arr(b.rows).map((r) => {
+    const out = pick(r, AUDIT_COLUMNS);
+    for (const k of ["before_json", "after_json"] as const) {
+      const v = r[k];
+      if (v !== null && typeof v === "object") out[k] = JSON.stringify(v);
+    }
+    return out;
+  });
+  return { table: table("admin_audit", hashText, AUDIT_COLUMNS, auditRows), write_enabled: writeEnabled };
 }
 
 async function audit(actor: Actor, tool: string, params: Record<string, unknown>, rows: number, startedAt: number, outcome: "ok" | "error") {

@@ -7,7 +7,9 @@
     "attr",
     "status",
     "baseline_mean",
-    "shipped_on"
+    "shipped_on",
+    "note",
+    "source_doc"
   ],
   "rows": [
     {
@@ -16,7 +18,9 @@
       "attr": "synthesized",
       "status": "open",
       "baseline_mean": 1.8,
-      "shipped_on": null
+      "shipped_on": null,
+      "note": "Sample gap note.",
+      "source_doc": "Sample source document"
     },
     {
       "gap_id": "00000000-0000-4000-8000-0000000000e2",
@@ -24,7 +28,9 @@
       "attr": "useful",
       "status": "shipped",
       "baseline_mean": 2.1,
-      "shipped_on": "2026-09-01"
+      "shipped_on": "2026-09-01",
+      "note": null,
+      "source_doc": null
     }
   ]
 }

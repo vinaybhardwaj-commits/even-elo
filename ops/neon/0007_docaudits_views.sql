@@ -8,10 +8,10 @@
 --
 -- The role gets USAGE on schema studio_ro and SELECT on the two views, and NOTHING on the base tables.
 -- Views are owner-owned (security_invoker NOT set) and security_barrier.
--- Left out on purpose (free text, contact data, staff identity, URLs): finding_body, doctor_response_comment,
--- evidence_excerpt, citations_json, patient_json, cdmss_sync_error, content_hash, queue_item_ref,
--- authored_by_name and authored_by_profile_id (the RMO; only a boolean author_confirmed is exposed),
--- cdmss_pdf_url (only a boolean has_pdf), doctor_uid, source_audit_id, doctor-side text of any kind.
+-- Exposed, as the even-elo /document-audits page shows them (V, 21 Oct: no doctor or PHI gating): finding_body,
+-- evidence_excerpt, doctor_response_comment, authored_by_name (plus the boolean author_confirmed) and cdmss_pdf_url
+-- (plus the boolean has_pdf). Still left out: citations_json, patient_json, cdmss_sync_error, content_hash,
+-- queue_item_ref, authored_by_profile_id, doctor_uid, source_audit_id (no screen or tool reads them).
 \set ECHO none
 \set QUIET on
 \set ON_ERROR_STOP on
@@ -47,15 +47,16 @@ DROP VIEW IF EXISTS studio_ro.document_audit_list;
 CREATE VIEW studio_ro.document_audit_list WITH (security_barrier = true) AS
 SELECT d.id AS audit_id, d.external_ref, d.hospital_code, d.physician_id, d.doc_type, d.note_date AS doc_day,
        d.ingested_at, d.last_synced_at, d.triage_routed_at, d.note_class AS doc_class,
-       (d.cdmss_pdf_url IS NOT NULL AND d.cdmss_pdf_url ~* '^https?://') AS has_pdf, d.source, d.created_at
+       (d.cdmss_pdf_url IS NOT NULL AND d.cdmss_pdf_url ~* '^https?://') AS has_pdf, d.cdmss_pdf_url AS pdf_url, d.source, d.created_at
 FROM public.document_audits d;
 
 CREATE VIEW studio_ro.document_audit_finding_list WITH (security_barrier = true) AS
-SELECT f.id AS finding_id, f.audit_id, f.physician_id, f.finding_label, f.severity, f.status,
+SELECT f.id AS finding_id, f.audit_id, f.physician_id, f.finding_label, f.finding_body, f.evidence_excerpt,
+       f.severity, f.status, f.authored_by_name,
        (f.authored_by_name <> 'CDMSS audit (pending RMO review)') AS author_confirmed, f.authored_at,
        f.recurrence_count, f.portal_visible, f.response_owner, f.signal_reference, f.signal_type,
        f.note_class AS doc_class, f.cdmss_routed, f.doctor_response_verb AS response_verb,
-       f.doctor_responded_at AS responded_at, f.cdmss_sync_state AS sync_state,
+       f.doctor_response_comment AS response_comment, f.doctor_responded_at AS responded_at, f.cdmss_sync_state AS sync_state,
        f.cdmss_sync_attempts AS sync_attempts, f.cdmss_sync_permanent AS sync_permanent, f.created_at
 FROM public.document_audit_findings f;
 
@@ -114,11 +115,13 @@ BEGIN
     'document_audit_list.audit_id', 'document_audit_list.external_ref', 'document_audit_list.hospital_code',
     'document_audit_list.physician_id', 'document_audit_list.doc_type', 'document_audit_list.doc_day',
     'document_audit_list.ingested_at', 'document_audit_list.last_synced_at', 'document_audit_list.triage_routed_at',
-    'document_audit_list.doc_class', 'document_audit_list.has_pdf', 'document_audit_list.source',
+    'document_audit_list.doc_class', 'document_audit_list.has_pdf', 'document_audit_list.pdf_url', 'document_audit_list.source',
     'document_audit_list.created_at',
     'document_audit_finding_list.finding_id', 'document_audit_finding_list.audit_id',
     'document_audit_finding_list.physician_id', 'document_audit_finding_list.finding_label',
     'document_audit_finding_list.severity', 'document_audit_finding_list.status',
+    'document_audit_finding_list.finding_body', 'document_audit_finding_list.evidence_excerpt',
+    'document_audit_finding_list.authored_by_name', 'document_audit_finding_list.response_comment',
     'document_audit_finding_list.author_confirmed', 'document_audit_finding_list.authored_at',
     'document_audit_finding_list.recurrence_count', 'document_audit_finding_list.portal_visible',
     'document_audit_finding_list.response_owner', 'document_audit_finding_list.signal_reference',

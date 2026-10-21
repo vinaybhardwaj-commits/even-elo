@@ -10,8 +10,8 @@ Rules (all enforced in code and tests):
   * only SELECT/WITH statements can reach the connection (see assert_read_only).
 
 Tables read (from src/lib/migrations.ts of even-elo): physicians, physician_engagements, hospitals,
-gov_signal_snapshots, gov_interventions, incidents. Free-text columns (notes, narratives,
-registration numbers, contact details, doctor names inside signal payloads) are never selected.
+gov_signal_snapshots, gov_interventions, incidents. Governance sees what the source pages show (V, 21 Oct: no
+doctor or PHI gating), so notes are selected; ops/neon/0008_ungate_views.sql appends the view text columns.
 
 M1 adds six tools over the column-scoped VIEWS in schema studio_ro (ops/neon/0003_studio_views.sql):
 physician_privileges, physician_oppe, physician_metrics, physician_qualifications, capture_gaps and
@@ -111,7 +111,7 @@ LIMIT %s
 
 INTERVENTIONS_SQL = """
 SELECT i.id::text AS intervention_id, i.done_on::text AS done_on, i.signal_key, i.signal_label, i.kind,
-       i.action, i.physician_id::text AS physician_id, i.cdmss_sync_state
+       i.action, i.note, i.physician_id::text AS physician_id, i.cdmss_sync_state
 FROM gov_interventions i
 WHERE (%s::uuid IS NULL OR i.physician_id = %s::uuid)
 ORDER BY i.done_on DESC, i.created_at DESC
@@ -146,7 +146,8 @@ SELECT metric, value FROM (
 
 PHYSICIAN_PRIVILEGES_SQL = """
 SELECT v.privilege_id::text AS privilege_id, v.hospital_code, v.procedure_or_specialty, v.is_core, v.basis,
-       v.granted_date::text AS granted_date, v.expires_at::text AS expires_at, v.withdrawn_date::text AS withdrawn_date
+       v.granted_date::text AS granted_date, v.expires_at::text AS expires_at, v.withdrawn_date::text AS withdrawn_date,
+       v.withdrawn_reason
 FROM studio_ro.physician_privileges v
 WHERE v.physician_id = %s::uuid
 ORDER BY (v.withdrawn_date IS NOT NULL), v.is_core DESC, v.procedure_or_specialty
@@ -155,7 +156,7 @@ LIMIT %s
 
 PHYSICIAN_OPPE_SQL = """
 SELECT v.review_id::text AS review_id, v.hospital_code, v.period_start::text AS period_start, v.period_end::text AS period_end,
-       v.due_at::date::text AS due_on, v.status, v.completed_at::date::text AS completed_on
+       v.due_at::date::text AS due_on, v.status, v.completed_at::date::text AS completed_on, v.decision_notes
 FROM studio_ro.physician_oppe v
 WHERE v.physician_id = %s::uuid
 ORDER BY v.due_at DESC
@@ -173,7 +174,7 @@ LIMIT %s
 
 PHYSICIAN_QUALIFICATIONS_SQL = """
 SELECT v.qualification_id::text AS qualification_id, v.degree, v.institution_tier, v.year_completed, v.country,
-       v.verified, v.verified_at::date::text AS verified_on
+       v.verified, v.verified_at::date::text AS verified_on, v.institution
 FROM studio_ro.physician_qualifications v
 WHERE v.physician_id = %s::uuid
 ORDER BY v.year_completed DESC NULLS LAST, v.degree
@@ -181,7 +182,8 @@ LIMIT %s
 """
 
 CAPTURE_GAPS_SQL = """
-SELECT v.gap_id::text AS gap_id, v.title, v.attr, v.status, v.baseline_mean, v.shipped_at::text AS shipped_on
+SELECT v.gap_id::text AS gap_id, v.title, v.attr, v.status, v.baseline_mean, v.shipped_at::text AS shipped_on,
+       v.note, v.source_doc
 FROM studio_ro.capture_gaps v
 ORDER BY v.status, v.title
 LIMIT %s
@@ -501,7 +503,7 @@ async def signal_snapshots(
 
 @tool(args_schema=InterventionsArgs)
 async def interventions(physician_id: Optional[uuid.UUID] = None, limit: int = 50, config: RunnableConfig = None) -> str:
-    """Recorded governance interventions (date, signal, kind, action, sync state); no free-text notes. Read-only."""
+    """Recorded governance interventions (date, signal, kind, action, note, sync state). Read-only."""
     pid = str(physician_id) if physician_id else None
     return await run_read_tool("interventions", {"physician_id": pid, "limit": limit}, (pid, pid, limit), config, limit)
 
@@ -544,15 +546,15 @@ class ToolErrorToResult(AgentMiddleware):
 @tool(args_schema=PhysicianLimitArgs)
 async def physician_privileges(physician_id: uuid.UUID, limit: int = 50, config: RunnableConfig = None) -> str:
     """One physician's clinical privileges (hospital, procedure or specialty, core or special, basis, grant
-    and expiry dates, withdrawal date). No withdrawal reasons. Read-only."""
+    and expiry dates, withdrawal date and reason). Read-only."""
     pid = str(physician_id)
     return await run_read_tool("physician_privileges", {"physician_id": pid, "limit": limit}, (pid, limit), config, limit)
 
 
 @tool(args_schema=PhysicianLimitArgs)
 async def physician_oppe(physician_id: uuid.UUID, limit: int = 50, config: RunnableConfig = None) -> str:
-    """One physician's OPPE reviews (hospital, period, due date, status, completion date). No reviewer
-    notes or review packets. Read-only."""
+    """One physician's OPPE reviews (hospital, period, due date, status, completion date, decision notes).
+    Read-only."""
     pid = str(physician_id)
     return await run_read_tool("physician_oppe", {"physician_id": pid, "limit": limit}, (pid, limit), config, limit)
 
@@ -567,16 +569,16 @@ async def physician_metrics(physician_id: uuid.UUID, months: int = 12, limit: in
 
 @tool(args_schema=PhysicianLimitArgs)
 async def physician_qualifications(physician_id: uuid.UUID, limit: int = 50, config: RunnableConfig = None) -> str:
-    """One physician's qualifications (degree, institution tier, year, country, verified or not). No
-    institution names or certificate files. Read-only."""
+    """One physician's qualifications (degree, institution and tier, year, country, verified or not).
+    Read-only."""
     pid = str(physician_id)
     return await run_read_tool("physician_qualifications", {"physician_id": pid, "limit": limit}, (pid, limit), config, limit)
 
 
 @tool(args_schema=LimitArgs)
 async def capture_gaps(limit: int = 50, config: RunnableConfig = None) -> str:
-    """OPD documentation capture gaps (title, attribute, status, baseline score, shipped date); not per
-    physician; no notes. Read-only."""
+    """OPD documentation capture gaps (title, attribute, status, baseline score, shipped date, note, source
+    document); not per physician. Read-only."""
     return await run_read_tool("capture_gaps", {"limit": limit}, (limit,), config, limit)
 
 

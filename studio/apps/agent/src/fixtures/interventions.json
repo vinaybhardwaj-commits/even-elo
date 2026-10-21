@@ -8,6 +8,7 @@
     "signal_label",
     "kind",
     "action",
+    "note",
     "physician_id",
     "cdmss_sync_state"
   ],
@@ -19,6 +20,7 @@
       "signal_label": "Sample signal",
       "kind": "huddle_briefing",
       "action": null,
+      "note": "Sample intervention note.",
       "physician_id": null,
       "cdmss_sync_state": null
     }

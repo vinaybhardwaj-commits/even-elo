@@ -16,10 +16,13 @@ import pytest
 
 from src import studio_audit, studio_tools
 from tests.neon_harness import AGENT, OPS, PROBE, cluster, role_row, run_roles  # noqa: F401  (fixtures)
-from tests.test_lc1_live_probe import ALL_VIEW_COLUMNS, DOCAUDIT_BASE_TABLES, DOCAUDIT_VIEW_COLUMNS, FREE_TEXT_COLUMNS, VIEW_BASE_TABLES, VIEW_COLUMNS
+from tests.test_lc1_live_probe import (
+    ALL_VIEW_COLUMNS, BASE_VIEW_COLUMNS, DOCAUDIT_BASE_TABLES, DOCAUDIT_VIEW_COLUMNS, FREE_TEXT_COLUMNS, UNGATE_APPENDED, VIEW_BASE_TABLES, VIEW_COLUMNS,
+)
 
 SQL_VIEWS = OPS / "0003_studio_views.sql"
 SQL_DOCAUDIT = OPS / "0007_docaudits_views.sql"
+SQL_UNGATE = OPS / "0008_ungate_views.sql"
 STAFF = "11111111-1111-4111-8111-111111111111"
 CFG = {"configurable": {studio_tools.STAFF_KEY: STAFF}}
 VIEW_TOOLS = {
@@ -93,6 +96,8 @@ def world(cluster, tmp_path):
     assert v.returncode == 0, v.stderr
     d, _ = run_roles(cluster, tmp_path, sql_file=SQL_DOCAUDIT, tag="docaudit-views")  # the probe (EXPECT_VIEWS=1) wants both files
     assert d.returncode == 0, d.stderr
+    u, _ = run_roles(cluster, tmp_path, sql_file=SQL_UNGATE, tag="ungate-views")  # appends the text columns (after 0003)
+    assert u.returncode == 0, u.stderr
     i = ids()
     s = lambda q, *a: cluster.su_exec(q % a if a else q, db="neondb")
     s(f"INSERT INTO hospitals (id, code, name) VALUES ('{i['h1']}', 'T1', 'Hosp One'), ('{i['h2']}', 'T2', 'Hosp Two')")
@@ -150,14 +155,56 @@ def test_role_cannot_read_the_base_tables(world, table):
             c.execute(f"SELECT count(*) FROM public.{table}")
 
 
-def test_no_free_text_value_ever_comes_through_any_view(world):
+def test_source_page_text_comes_through_the_views_and_payloads_and_files_stay_out(world):
     _, _, url = world
     with ro(url) as c:
         blob = ""
         for view in VIEW_COLUMNS:
             blob += json.dumps(c.execute(f"SELECT * FROM studio_ro.{view}").fetchall(), default=str)
-    assert "SECRET" not in blob
-    assert blob.count("A") > 0  # the views are not empty (qualification tier), so the check above means something
+    for shown in ("SECRET-WITHDRAWAL-TEXT", "SECRET-DECISION-NOTE", "SECRET-INSTITUTION", "SECRET-GAP-NOTE", "SECRET-REPLY-TEXT"):
+        assert shown in blob, shown
+    for hidden in ("SECRET-PACKET", "SECRET-FILE", "SECRET-CERT", "SECRET-NARRATIVE", "SECRET-REPORTER", "SECRET-PATIENT-REF"):
+        assert hidden not in blob, hidden
+
+
+def test_ungate_appends_columns_at_the_end_and_keeps_every_grant(world, tmp_path):
+    cluster, _, url = world
+    for view, extra in UNGATE_APPENDED.items():
+        assert VIEW_COLUMNS[view][: len(BASE_VIEW_COLUMNS[view])] == BASE_VIEW_COLUMNS[view]
+        assert VIEW_COLUMNS[view][len(BASE_VIEW_COLUMNS[view]):] == extra
+    before = cluster.su_exec(ACL_SQL, db="neondb")[0][0]
+    r, _ = run_roles(cluster, tmp_path, sql_file=SQL_UNGATE, tag="ungate2")  # idempotent
+    assert r.returncode == 0, r.stderr
+    assert cluster.su_exec(ACL_SQL, db="neondb")[0][0] == before
+    sql = code(SQL_UNGATE)
+    assert sql.count("CREATE OR REPLACE VIEW studio_ro.") == len(UNGATE_APPENDED) and "DROP VIEW" not in sql
+    views_sql = sql[sql.index("CREATE OR REPLACE VIEW"):]
+    assert sql.count("security_barrier = true") == len(UNGATE_APPENDED) and "security_invoker" not in sql and "SELECT *" not in views_sql
+    assert not re.search(r"\bGRANT\b", sql)
+
+
+def test_ungate_needs_0003_first_and_rolls_back_an_unreviewed_free_text_column(cluster, tmp_path):
+    assert run_roles(cluster, tmp_path, tag="roles")[0].returncode == 0
+    r, _ = run_roles(cluster, tmp_path, sql_file=SQL_UNGATE, tag="no3")
+    assert r.returncode != 0 and "run 0003_studio_views.sql first" in r.stderr
+    assert run_roles(cluster, tmp_path, sql_file=SQL_VIEWS, tag="v3")[0].returncode == 0
+    bad = tmp_path / "bad8.sql"
+    bad.write_text(SQL_UNGATE.read_text().replace("q.institution\nFROM public.qualifications q;", "q.institution, q.file_data\nFROM public.qualifications q;"))
+    assert "q.file_data\nFROM" in bad.read_text()
+    r, _ = run_roles(cluster, tmp_path, sql_file=bad, tag="bad8")
+    assert r.returncode != 0 and "outside the reviewed list" in r.stderr
+    cols = cluster.su_exec("SELECT string_agg(attname, ',') FROM pg_attribute WHERE attrelid = 'studio_ro.physician_qualifications'::regclass AND attnum > 0", db="neondb")[0][0]
+    assert "institution" not in cols.split(",")  # rolled back: the 0003 view is untouched
+
+
+def test_rerunning_0003_drops_the_appended_columns_and_0008_restores_them(world, tmp_path):
+    cluster, _, url = world
+    assert run_roles(cluster, tmp_path, sql_file=SQL_VIEWS, tag="re3")[0].returncode == 0
+    with ro(url) as c:
+        assert tuple(d.name for d in c.execute("SELECT * FROM studio_ro.capture_gaps WHERE false").description) == BASE_VIEW_COLUMNS["capture_gaps"]
+    assert run_roles(cluster, tmp_path, sql_file=SQL_UNGATE, tag="re8")[0].returncode == 0
+    with ro(url) as c:
+        assert tuple(d.name for d in c.execute("SELECT * FROM studio_ro.capture_gaps WHERE false").description) == VIEW_COLUMNS["capture_gaps"]
 
 
 def test_feedback_view_counts_by_physician_source_polarity_severity_status(world):
@@ -208,7 +255,7 @@ ACL_SQL = "SELECT string_agg(relname || '=' || coalesce(relacl::text, ''), ';' O
 def _assert_all_views_readable_and_base_tables_denied(cluster, url):
     cluster.su_exec("ALTER ROLE studio_gov_ro LOGIN PASSWORD 'ro-test-pw'")
     with ro(url) as c:
-        for view, cols in ALL_VIEW_COLUMNS.items():
+        for view, cols in {**BASE_VIEW_COLUMNS, **DOCAUDIT_VIEW_COLUMNS}.items():  # 0003 and 0007 only: no 0008 columns
             assert tuple(d.name for d in c.execute(f"SELECT * FROM studio_ro.{view} WHERE false").description) == cols
         for table in (*VIEW_BASE_TABLES, *DOCAUDIT_BASE_TABLES):
             with pytest.raises(psycopg.errors.InsufficientPrivilege):

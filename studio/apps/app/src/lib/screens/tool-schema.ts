@@ -129,8 +129,6 @@ export const HTTP_TOOL_PARAMS = {
   eiris_incident_detail: z
     .object({
       incident_id: z.string().regex(INCIDENT_ID_RE),
-      // Free text (narrative, immediate action, root cause, CAPA actions) is off unless asked for.
-      include_text: z.boolean().optional(),
     })
     .strict(),
   opd_signals: z
@@ -149,8 +147,6 @@ export const HTTP_TOOL_PARAMS = {
   audit_finding_detail: z
     .object({
       reference: z.string().regex(AUDIT_REF_RE),
-      // Doctor comment, ruling note, finding rationale and timeline notes: off unless asked for (super_admin only).
-      include_text: z.boolean().optional(),
     })
     .strict(),
 } as const satisfies Record<HttpToolName, z.ZodTypeAny>;

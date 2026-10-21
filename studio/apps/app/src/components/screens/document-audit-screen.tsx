@@ -43,7 +43,7 @@ export function DocumentAuditScreen({ id }: { id: string }) {
       {valid && (
         <ToolSection
           title="Audit and findings"
-          note="Read-only. Finding text, evidence and doctor comments are not read here; authoring and release to the portal stay in the RMO inbox."
+          note="Read-only. Finding text, evidence, doctor comments and the PDF link are shown as on the document-audits page; authoring and release to the portal stay in the RMO inbox."
           state={detail}
           retry={detail.retry}
         >
@@ -70,7 +70,15 @@ export function DocumentAuditScreen({ id }: { id: string }) {
                   ))}
                   <div>
                     <dt>PDF on file</dt>
-                    <dd>{yes(r.has_pdf)}</dd>
+                    <dd>
+                      {typeof r.pdf_url === "string" && /^https?:\/\//i.test(r.pdf_url) ? (
+                        <a href={r.pdf_url} target="_blank" rel="noopener noreferrer">
+                          Open PDF
+                        </a>
+                      ) : (
+                        yes(r.has_pdf)
+                      )}
+                    </dd>
                   </div>
                 </dl>
                 <SourceLine data={data} />
@@ -80,8 +88,8 @@ export function DocumentAuditScreen({ id }: { id: string }) {
                 ) : (
                   <DataTable
                     data={{ ...data, rows: findings, row_count: findings.length }}
-                    columns={["finding_label", "severity", "status", "author_confirmed", "authored_on", "recurrence_count", "portal_visible", "response_owner", "response_verb", "responded_on", "sync_state"]}
-                    labels={{ finding_label: "finding", author_confirmed: "RMO confirmed", authored_on: "authored", recurrence_count: "recurrence", portal_visible: "released to portal", response_owner: "response owner", response_verb: "doctor response", responded_on: "responded", sync_state: "CDMSS sync" }}
+                    columns={["finding_label", "finding_body", "evidence_excerpt", "severity", "status", "authored_by_name", "author_confirmed", "authored_on", "recurrence_count", "portal_visible", "response_owner", "response_verb", "response_comment", "responded_on", "sync_state"]}
+                    labels={{ finding_label: "finding", finding_body: "finding text", evidence_excerpt: "evidence", authored_by_name: "author", response_comment: "doctor comment", author_confirmed: "RMO confirmed", authored_on: "authored", recurrence_count: "recurrence", portal_visible: "released to portal", response_owner: "response owner", response_verb: "doctor response", responded_on: "responded", sync_state: "CDMSS sync" }}
                     renderCell={{ author_confirmed: (v) => yes(v), portal_visible: (v) => yes(v) }}
                   />
                 )}

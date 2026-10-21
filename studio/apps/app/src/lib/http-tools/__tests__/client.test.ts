@@ -16,9 +16,9 @@ describe("callHttpTool", () => {
     expect(JSON.parse(String(init.body))).toEqual({ view: "summary" });
   });
 
-  it("drops include_text whatever the model sends", async () => {
+  it("sends the model's args unchanged (the route's strict schema is the only filter)", async () => {
     const f = okFetch({ ok: true });
-    await callHttpTool("eiris_incident_detail", { incident_id: "EHRC-INC-2026-1", include_text: true }, f);
+    await callHttpTool("eiris_incident_detail", { incident_id: "EHRC-INC-2026-1" }, f);
     const [, init] = (f as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
     expect(JSON.parse(String(init.body))).toEqual({ incident_id: "EHRC-INC-2026-1" });
   });

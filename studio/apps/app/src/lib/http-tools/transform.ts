@@ -1,10 +1,9 @@
 // Pure shaping of upstream bodies into the SourceTablePayload tables the screens and the chat render.
 // No env, no I/O. Upstream bodies are untrusted: every field is read defensively, unknown fields are dropped.
 //
-// Fields that are NEVER emitted, whatever the upstream sends: patient name / UHID / age (phi_*), reporter
-// name and contact, attachment links, doctor response comments, ruling notes. Free text the source page
-// shows a super_admin (narrative, immediate action, root cause, CAPA actions) is emitted only when the
-// caller sets include_text on eiris_incident_detail.
+// Governance sees what the source incident page shows (V, 21 Oct: no doctor or PHI gating): narrative,
+// immediate action, root cause, CAPA actions, patient name / UHID / age / sex (phi_*) and the reporter as the
+// page shows it (name unless anonymous; contact only for confidential reports). Not emitted: attachment links.
 
 import type { SourceTablePayload } from "@/lib/screens/tool-schema";
 
@@ -129,7 +128,7 @@ export function toIncidentsPayload(meta: PayloadMeta, input: IncidentsInput): So
 
 const DETAIL_COLUMNS = ["section", "field", "value"];
 
-export function toDetailPayload(meta: PayloadMeta, body: unknown, includeText: boolean): SourceTablePayload | null {
+export function toDetailPayload(meta: PayloadMeta, body: unknown): SourceTablePayload | null {
   const inc = obj(obj(body)?.incident);
   if (!inc) return null;
   const rows: Row[] = [];
@@ -148,17 +147,22 @@ export function toDetailPayload(meta: PayloadMeta, body: unknown, includeText: b
   add("incident", "impact_domain", str(inc.impact_domain));
   add("incident", "reporter_role", str(inc.role_name));
   add("incident", "source", str(inc.source));
-  // The class only ("named" / "confidential" / "anonymous"); the reporter's name and contact are never emitted.
-  add("incident", "confidentiality", str(inc.confidentiality));
+  const conf = str(inc.confidentiality);
+  add("incident", "confidentiality", conf);
+  // As the incident page: anonymous reports show no reporter; contact only on confidential reports.
+  if (conf !== "anonymous") add("incident", "reporter", str(inc.reporter_name));
+  if (conf === "confidential") add("incident", "reporter_contact", str(inc.reporter_contact));
+  add("patient", "name", str(inc.phi_patient_name));
+  add("patient", "uhid", str(inc.phi_uhid));
+  add("patient", "age", str(inc.phi_patient_age) ?? num(inc.phi_patient_age));
+  add("patient", "sex", str(inc.phi_patient_sex));
   add("incident", "occurred_at", str(inc.occurred_at));
   add("incident", "reported_at", str(inc.reported_at));
   add("incident", "due_at", str(inc.due_at));
   add("incident", "closed_at", str(inc.closed_at));
   add("incident", "sla_state", str(inc.sla_state));
-  if (includeText) {
-    add("text", "narrative", str(inc.narrative));
-    add("text", "immediate_action", str(inc.immediate_action));
-  }
+  add("text", "narrative", str(inc.narrative));
+  add("text", "immediate_action", str(inc.immediate_action));
   const rcas = arr(obj(body)?.rcas).map(obj).filter((r): r is Obj => r !== null);
   add("rca", "rca_count", rcas.length);
   rcas.forEach((r, i) => {
@@ -170,10 +174,8 @@ export function toDetailPayload(meta: PayloadMeta, body: unknown, includeText: b
     add(n, "capa_count", capas.length);
     add(n, "capa_control_levels", [...new Set(capas.map((c) => str(c.control_level)).filter(Boolean))].join(", ") || null);
     add(n, "state", r.effectiveness_verified ? "verified effective" : r.closed_at ? "closed" : "open");
-    if (includeText) {
-      add(n, "root_cause", str(r.root_cause));
-      capas.forEach((c, k) => add(n, `capa_${k + 1}`, [str(c.kind), str(c.action)].filter(Boolean).join(": ") || null));
-    }
+    add(n, "root_cause", str(r.root_cause));
+    capas.forEach((c, k) => add(n, `capa_${k + 1}`, [str(c.kind), str(c.action)].filter(Boolean).join(": ") || null));
   });
   return makePayload(meta, DETAIL_COLUMNS, rows);
 }

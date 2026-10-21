@@ -1,9 +1,8 @@
 // Pure shaping of CDMSS audit-thread bodies (roster-audits, audit-signal) into SourceTablePayload tables.
 // No env, no I/O. Upstream bodies are untrusted: every field is read defensively, unknown fields are dropped.
 //
-// Never emitted, whatever the upstream sends: patient identity, doctor free text, ruling notes, finding
-// rationale and subject. Those are emitted only when the caller sets include_text on audit_finding_detail
-// (super_admin screen path; the chat action drops the key). Governance sees what the even-elo page shows.
+// Governance sees what the even-elo page shows (V, 21 Oct: no doctor or PHI gating): doctor comment, ruling
+// note and actor, finding rationale and subject, timeline notes. A timeline actor is still reduced to its class.
 
 import type { SourceTablePayload } from "@/lib/screens/tool-schema";
 import { makePayload, type PayloadMeta } from "./transform";
@@ -153,7 +152,7 @@ export function toFindingsPayload(meta: PayloadMeta, body: unknown, f: FindingsF
 const DETAIL_COLUMNS = ["section", "field", "value"];
 
 /** One thread (audit-signal body): header, doctor response, ruling, evidence instances, timeline. */
-export function toFindingDetailPayload(meta: PayloadMeta, body: unknown, includeText: boolean): SourceTablePayload | null {
+export function toFindingDetailPayload(meta: PayloadMeta, body: unknown): SourceTablePayload | null {
   const root = obj(body);
   const sig = obj(root?.signal);
   const t = toThread(sig);
@@ -182,17 +181,15 @@ export function toFindingDetailPayload(meta: PayloadMeta, body: unknown, include
   if (resp) {
     add("response", "verb", t.doctor_response);
     add("response", "responded_at", str(resp.responded_at) ?? str(resp.at));
-    if (includeText) add("response", "comment", str(resp.comment));
+    add("response", "comment", str(resp.comment));
   }
   const ruling = obj(sig.ruling);
   if (ruling) {
     add("ruling", "action", str(ruling.action));
     add("ruling", "ruled_at", str(ruling.ruled_at));
     add("ruling", "gov_intervention_ref", str(ruling.gov_intervention_ref));
-    if (includeText) {
-      add("ruling", "actor", str(ruling.actor));
-      add("ruling", "note", str(ruling.note));
-    }
+    add("ruling", "actor", str(ruling.actor));
+    add("ruling", "note", str(ruling.note));
   }
 
   // Evidence: the audited note instances behind the finding (the representative when the list is empty).
@@ -210,10 +207,8 @@ export function toFindingDetailPayload(meta: PayloadMeta, body: unknown, include
     add(n, "note_date", str(i.note_date));
     const cites = arr(i.citations).map(obj).filter((c): c is Obj => c !== null);
     add(n, "citations", cites.map((c) => str(c.title)).filter(Boolean).slice(0, 12).join("; ") || null);
-    if (includeText) {
-      add(n, "subject", str(i.subject));
-      add(n, "rationale", str(i.rationale));
-    }
+    add(n, "subject", str(i.subject));
+    add(n, "rationale", str(i.rationale));
   });
 
   // Timeline: event, actor class and time. Actor is "cm:x", "doctor:x" or "gov:x"; the doctor id is dropped.
@@ -227,7 +222,7 @@ export function toFindingDetailPayload(meta: PayloadMeta, body: unknown, include
       add(n, "event", str(e.event));
       add(n, "at", str(e.at));
       add(n, "actor", actor ? (actor.startsWith("doctor:") ? "doctor" : actor.startsWith("cm:") ? "care manager" : actor.startsWith("gov:") ? "governance" : "system") : "system");
-      if (includeText) add(n, "note", str(obj(e.payload)?.note) ?? str(obj(e.payload)?.comment));
+      add(n, "note",str(obj(e.payload)?.note) ?? str(obj(e.payload)?.comment));
     });
   return makePayload(meta, DETAIL_COLUMNS, rows);
 }

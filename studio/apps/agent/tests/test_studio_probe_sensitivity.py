@@ -58,6 +58,7 @@ def test_probe_catches_each_over_privilege_and_recovers(cluster, neon, keyfile, 
     assert s.returncode == 0 and r.returncode == 0
     assert run_roles(cluster, tmp_path, sql_file=OPS / "0003_studio_views.sql", tag="sens-views")[0].returncode == 0
     assert run_roles(cluster, tmp_path, sql_file=OPS / "0007_docaudits_views.sql", tag="sens-docaudit")[0].returncode == 0
+    assert run_roles(cluster, tmp_path, sql_file=OPS / "0008_ungate_views.sql", tag="sens-ungate")[0].returncode == 0
     assert run_roles(cluster, tmp_path, "--login", tag="sens-login")[0].returncode == 0
     url = out.read_text().strip()
     rc, text = run_probe(url)

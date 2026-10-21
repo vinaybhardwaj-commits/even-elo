@@ -38,8 +38,9 @@ export const FeedbackPayload = z.object({
 });
 export type FeedbackPayload = z.infer<typeof FeedbackPayload>;
 
-// Never emitted: the narrative or its preview, submitter identity, reporter name or email, patient_ref,
-// retraction reason text. Ids, classification, dates and reply counts only.
+// Shown as the old incidents page shows them (V, 21 Oct: no doctor or PHI gating): the narrative preview, the
+// submitter label (the source route already masks anonymous submitters) and the retraction reason. Never emitted:
+// the target physician's email.
 export const FEEDBACK_ITEM_COLUMNS = [
   "feedback_id",
   "physician_id",
@@ -54,6 +55,9 @@ export const FEEDBACK_ITEM_COLUMNS = [
   "patient_rating",
   "status",
   "retracted_at",
+  "retraction_reason",
+  "submitter_label",
+  "narrative_preview",
   "reply_count",
   "reply_state",
   "last_reply_at",

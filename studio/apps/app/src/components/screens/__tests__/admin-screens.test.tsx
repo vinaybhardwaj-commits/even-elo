@@ -89,12 +89,12 @@ describe("admin screens", () => {
     expect(text).not.toMatch(/Staff A|a@even\.in/);
   });
 
-  it("resignations: shows the list with a source line and the process card; reason text is not a column", async () => {
+  it("resignations: shows the list with a source line and the process card; the reason is a column", async () => {
     render(<AdminResignationsScreen />);
     fireEvent.click(await screen.findByRole("button", { name: "2026-10-01" }));
     expect(await screen.findByRole("group", { name: "Process resignation" })).toBeInTheDocument();
     expect(screen.getByTestId("source-line")).toHaveTextContent("admin_resignations");
-    expect(screen.queryByText(/reason/i, { selector: "th" })).toBeNull();
+    expect(screen.getByText(/reason/i, { selector: "th" })).toBeInTheDocument();
     expect(screen.getByTestId("second-factor-note")).toBeInTheDocument();
     expect(JSON.stringify(contexts.map((c) => c.value))).not.toContain("Dr A");
   });

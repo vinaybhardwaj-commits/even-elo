@@ -8,7 +8,8 @@
     "period_end",
     "due_on",
     "status",
-    "completed_on"
+    "completed_on",
+    "decision_notes"
   ],
   "rows": [
     {
@@ -18,7 +19,8 @@
       "period_end": "2026-06-30",
       "due_on": "2026-07-15",
       "status": "satisfactory",
-      "completed_on": "2026-07-10"
+      "completed_on": "2026-07-10",
+      "decision_notes": "Sample decision note."
     },
     {
       "review_id": "00000000-0000-4000-8000-0000000000c2",
@@ -27,7 +29,8 @@
       "period_end": "2026-12-31",
       "due_on": "2027-01-15",
       "status": "pending",
-      "completed_on": null
+      "completed_on": null,
+      "decision_notes": null
     }
   ]
 }

@@ -112,19 +112,20 @@ describe("onboarding tools", () => {
       expect(rows.find((x) => x.metric === "pipeline_total")?.value).toBe(8);
       expect(rows.find((x) => x.metric === "pending_credentials")?.value).toBe(1);
     });
-    it("observations: scores by dimension, no narrative, no observer email", async () => {
+    it("observations: scores by dimension and the case narrative, never the observer email", async () => {
       const r = await runOnboardingRead("onboarding_prescreen", { prescreen_id: PS, section: "observations" }, ACTOR);
       const s = JSON.stringify(r.body);
-      expect(s).not.toContain("SECRET");
+      expect(s).toContain("SECRET-NARRATIVE");
+      expect(s).not.toContain("SECRET-EMAIL");
       const row = (r.body as unknown as { rows: Array<Record<string, unknown>> }).rows[0];
-      expect(row).toMatchObject({ case_number: 1, teamwork: 4, outcome: 5, has_notes: true, observer: "Obs One" });
+      expect(row).toMatchObject({ case_number: 1, teamwork: 4, outcome: 5, has_notes: true, notes: "SECRET-NARRATIVE patient", observer: "Obs One" });
     });
-    it("credentials never carry file data; the pipeline shortens free text", async () => {
+    it("credentials never carry file data; the pipeline shows red flags in full", async () => {
       const c = await runOnboardingRead("onboarding_pending_credentials", {}, ACTOR);
       expect(JSON.stringify(c.body)).not.toContain("SECRET");
       const p = await runOnboardingRead("onboarding_pipeline", {}, ACTOR);
       const row = (p.body as unknown as { rows: Array<{ red_flags: string; hospitals: string }> }).rows[0];
-      expect(row.red_flags.length).toBeLessThan(170);
+      expect(row.red_flags.length).toBe(400);
       expect(row.hospitals).toBe("H1, H2");
     });
     it("summary shows commitments and per-hospital case counts", async () => {

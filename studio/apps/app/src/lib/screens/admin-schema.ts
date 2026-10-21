@@ -51,9 +51,10 @@ export const AdminPayload = z.object({
 });
 export type AdminPayload = z.infer<typeof AdminPayload>;
 
-// Never emitted: password hashes, PINs, requested_roles blobs, resignation reason text, audit before/after JSON.
+// Never emitted: password hashes, PINs, requested_roles blobs (credentials). Resignation reason text and audit
+// before/after JSON are shown, as on the old admin page (V, 21 Oct: no doctor or PHI gating).
 export const USER_COLUMNS = ["profile_id", "full_name", "email", "status", "position_label", "hospital_code", "roles", "last_login_at", "created_at"] as const;
 export const ROLE_COLUMNS = ["hospital_code", "role", "granted_at"] as const;
-export const RESIGNATION_COLUMNS = ["request_id", "physician_name", "hospital_code", "status", "intended_last_date", "requested_at"] as const;
-export const AUDIT_COLUMNS = ["at", "actor_position", "action", "entity_type", "entity_id"] as const;
+export const RESIGNATION_COLUMNS = ["request_id", "physician_name", "hospital_code", "status", "intended_last_date", "requested_at", "reason"] as const;
+export const AUDIT_COLUMNS = ["at", "actor_position", "action", "entity_type", "entity_id", "before_json", "after_json"] as const;
 export const USER_COUNT_COLUMNS = ["status", "users"] as const;

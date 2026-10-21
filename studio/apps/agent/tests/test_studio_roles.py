@@ -102,7 +102,7 @@ def test_setup_creates_a_nologin_role_with_grants_and_no_membership(cluster, tmp
     t.join(2)
     assert r.returncode == 0, r.stderr
     assert not saw_login and not list(scratch.iterdir())  # never LOGIN-able at any sampled moment; temp shredded
-    assert role_row(cluster, "studio_gov_ro")[:8] == (False, False, False, False, False, False, False, 5)
+    assert role_row(cluster, "studio_gov_ro")[:8] == (False, False, False, False, False, False, False, 20)
     assert memberships(cluster, "studio_gov_ro") == []
     with psycopg.connect(cluster.owner_url) as c:
         assert c.execute("SELECT has_table_privilege('studio_gov_ro','physicians','SELECT'), has_table_privilege('studio_gov_ro','physicians','INSERT')").fetchone() == (True, False)
@@ -187,6 +187,8 @@ def test_full_flow_gov_ro_setup_reset_login_probe_and_no_secret_anywhere(cluster
     assert v.returncode == 0, v.stderr
     v7, _ = run_roles(cluster, tmp_path, sql_file=OPS / "0007_docaudits_views.sql", tag="docaudit-views")
     assert v7.returncode == 0, v7.stderr
+    v8, _ = run_roles(cluster, tmp_path, sql_file=OPS / "0008_ungate_views.sql", tag="ungate-views")
+    assert v8.returncode == 0, v8.stderr
     pw = neon.issued["studio_gov_ro"]
     assert role_row(cluster, "studio_gov_ro")[0] is False  # still NOLOGIN after the reset
     l, _ = run_roles(cluster, tmp_path, "--login", tag="login")

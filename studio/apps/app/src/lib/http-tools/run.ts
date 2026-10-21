@@ -17,8 +17,6 @@ import { incidentRows, toDetailPayload, toIncidentsPayload, toSignalsPayload } f
 
 /** Same predicate as even-elo's /api/safety proxy: super_admin or SGC member. The Studio zone admits super_admin only today. */
 export const SAFETY_ROLES: ReadonlySet<string> = new Set(["super_admin", "sgc_member"]);
-/** Narrative and RCA text (include_text) is super_admin only, as on the incident pages; sgc_member is in SAFETY_ROLES but not here. */
-const TEXT_ROLES: ReadonlySet<string> = new Set(["super_admin"]);
 const UPSTREAM_TIMEOUT_MS = 10_000;
 const AUDIT_TIMEOUT_MS = 8_000;
 
@@ -114,13 +112,13 @@ async function buildIncidents(role: string, p: { view?: "summary" | "list"; stat
   };
 }
 
-async function buildDetail(role: string, p: { incident_id: string; include_text?: boolean }): Promise<Built> {
+async function buildDetail(role: string, p: { incident_id: string }): Promise<Built> {
   const api = incidentApi(role);
   if (!api) return { payload: null, failure: { status: 503, error: "upstream_not_configured" } };
   const meta = { tool: "eiris_incident_detail", queryHash: queryHash("eiris_incident_detail") };
   const r = await getJson(`${api.base}/api/office/incidents/${encodeURIComponent(p.incident_id)}`, api.headers);
   if (!r.ok) return { payload: null, failure: { status: r.status, error: r.error } };
-  const payload = toDetailPayload(meta, r.body, p.include_text === true);
+  const payload = toDetailPayload(meta, r.body);
   return payload ? { payload } : { payload: null, failure: { status: 502, error: "bad_payload" } };
 }
 
@@ -148,12 +146,12 @@ async function buildFindings(p: { view?: "attention" | "overdue" | "disagreed" |
   return { payload: toFindingsPayload({ tool: "audit_findings", queryHash: queryHash("audit_findings") }, r.body, { view: p.view, status: p.status, hospital: p.hospital, limit: p.limit ?? 100 }) };
 }
 
-async function buildFindingDetail(p: { reference: string; include_text?: boolean }): Promise<Built> {
+async function buildFindingDetail(p: { reference: string }): Promise<Built> {
   const api = cdmssApi();
   if (!api) return { payload: null, failure: { status: 503, error: "upstream_not_configured" } };
   const r = await getJson(`${api.base}/api/governance/audit-signal/${encodeURIComponent(p.reference)}`, api.headers);
   if (!r.ok) return { payload: null, failure: { status: r.status, error: r.error } };
-  const payload = toFindingDetailPayload({ tool: "audit_finding_detail", queryHash: queryHash("audit_finding_detail") }, r.body, p.include_text === true);
+  const payload = toFindingDetailPayload({ tool: "audit_finding_detail", queryHash: queryHash("audit_finding_detail") }, r.body);
   return payload ? { payload } : { payload: null, failure: { status: 502, error: "bad_payload" } };
 }
 
@@ -204,7 +202,6 @@ export async function runHttpTool(tool: HttpToolName, rawParams: unknown, actor:
   const parsed = HTTP_TOOL_PARAMS[tool].safeParse(rawParams ?? {});
   if (!parsed.success) return fail(422, "bad_params");
   const params = parsed.data as Record<string, unknown>;
-  if (params.include_text === true && !TEXT_ROLES.has(actor.role)) return fail(403, "forbidden");
   // Kill switch: with STUDIO_LIVE_READS off nothing is read upstream and no row is claimed as live.
   if (!liveReadsEnabled()) return fail(503, "live_reads_off");
 
@@ -213,12 +210,12 @@ export async function runHttpTool(tool: HttpToolName, rawParams: unknown, actor:
     tool === "eiris_incidents"
       ? await buildIncidents(actor.role, params)
       : tool === "eiris_incident_detail"
-        ? await buildDetail(actor.role, params as { incident_id: string; include_text?: boolean })
+        ? await buildDetail(actor.role, params as { incident_id: string })
         : tool === "opd_signals"
           ? await buildSignals(params)
           : tool === "audit_findings"
             ? await buildFindings(params)
-            : await buildFindingDetail(params as { reference: string; include_text?: boolean });
+            : await buildFindingDetail(params as { reference: string });
 
   const rows = built.payload?.row_count ?? 0;
   const a = await audit(actor.staffId, actor.role, tool, params, rows, startedAt, built.payload ? "ok" : "error");

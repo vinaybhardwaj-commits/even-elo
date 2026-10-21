@@ -98,11 +98,11 @@ export function OverviewScreen() {
         {(data) => <DataTable data={data} empty="No signal snapshots in this window." />}
       </ToolSection>
 
-      <ToolSection title="Recent interventions" note="Most recent 10; no free-text notes." state={interventions} retry={interventions.retry}>
+      <ToolSection title="Recent interventions" note="Most recent 10, with notes." state={interventions} retry={interventions.retry}>
         {(data) => (
           <DataTable
             data={data}
-            columns={["done_on", "signal_label", "kind", "action", "cdmss_sync_state"]}
+            columns={["done_on", "signal_label", "kind", "action", "note", "cdmss_sync_state"]}
             labels={{ done_on: "date", signal_label: "signal", cdmss_sync_state: "sync" }}
           />
         )}
