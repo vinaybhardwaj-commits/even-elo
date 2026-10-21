@@ -179,10 +179,45 @@ async def aroute(context):
         ) from None
 
 
+def rendered_this_turn(messages) -> bool:
+    """True once a rendering tool returned (without error) after the latest human message.
+
+    Rendering tools run in the browser; each result starts a follow-up run of the same turn. Without this check the
+    routing note below would tell the model to render again on every follow-up, and the browser would loop."""
+    last_human = max((i for i, m in enumerate(messages) if m.type == "human"), default=-1)
+    turn = messages[last_human + 1 :]
+    names = {
+        call["id"]: call["name"]
+        for m in turn
+        if m.type == "ai"
+        for call in (getattr(m, "tool_calls", None) or [])
+    }
+    return any(
+        m.type == "tool"
+        and names.get(m.tool_call_id) in RENDER_TOOLS
+        and getattr(m, "status", "success") != "error"
+        and not message_text(m).startswith("Error:")
+        for m in turn
+    )
+
+
 def routed_request(request):
     decision = request.state.get("visualization_decision")
     if not decision:
         return request
+    if rendered_this_turn(request.messages):
+        tools = [
+            t
+            for t in request.tools
+            if (t.get("name") if isinstance(t, dict) else t.name) not in RENDER_TOOLS
+        ]
+        note = "\n\nThe rendering tool already returned in this user turn: the UI is on screen. Do not render it again. Finish with a short text answer that helps the user read it."
+        content = request.system_message.content if request.system_message else ""
+        if isinstance(content, list):
+            content = [*content, {"type": "text", "text": note}]
+        else:
+            content += note
+        return request.override(tools=tools, system_message=SystemMessage(content=content))
     renderer = decision["renderer"]
     allowed = {
         "a2ui": {"render_a2ui", "send_a2ui_json_to_client", "generate_a2ui"},

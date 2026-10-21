@@ -297,3 +297,43 @@ def test_jev_client_without_proxy_env(monkeypatch):
 
     monkeypatch.delenv("HTTPS_PROXY", raising=False)
     assert "proxy" not in vr.client_options()
+
+
+def _render_turn_request(tool_content="UI generated", tool_status="success", follow_human=False):
+    from langchain_core.messages import ToolMessage
+
+    messages = [
+        HumanMessage(content="How many e-IRIS incidents, top categories?", id="h1"),
+        AIMessage(content="", tool_calls=[{"name": "eiris_incidents", "args": {}, "id": "c1"}]),
+        ToolMessage(content='{"rows": []}', tool_call_id="c1"),
+        AIMessage(content="42 incidents.", tool_calls=[{"name": "generateSandboxedUi", "args": {}, "id": "c2"}]),
+        ToolMessage(content=tool_content, tool_call_id="c2", status=tool_status),
+    ]
+    if follow_human:
+        messages.append(HumanMessage(content="Now as a pie", id="h2"))
+    return ModelRequest(
+        model=None,
+        messages=messages,
+        tools=[{"name": n} for n in ["generateSandboxedUi", "render_a2ui", "eiris_incidents"]],
+        system_message=SystemMessage(content="base"),
+        state={"visualization_decision": decision_from_response(response("bar_chart"))},
+    )
+
+
+def test_follow_up_after_a_render_withholds_render_tools_and_stops_asking_for_one():
+    # Live chat loop: every follow-up run after "UI generated" was told "CRITICAL ... Use generateSandboxedUi" again.
+    result = routed_request(_render_turn_request())
+    names = {t["name"] for t in result.tools}
+    assert names == {"eiris_incidents"}
+    assert "Use generateSandboxedUi" not in result.system_message.content
+    assert "Do not render it again" in result.system_message.content
+
+
+def test_failed_render_may_be_corrected_and_a_new_human_turn_renders_again():
+    for request in (
+        _render_turn_request(tool_content="Error: bad args", tool_status="error"),
+        _render_turn_request(follow_human=True),
+    ):
+        result = routed_request(request)
+        assert "generateSandboxedUi" in {t["name"] for t in result.tools}
+        assert "Use generateSandboxedUi" in result.system_message.content

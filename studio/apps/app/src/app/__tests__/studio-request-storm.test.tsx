@@ -9,7 +9,12 @@ const net = vi.hoisted(() => {
   const state = {
     calls: [] as Array<{ url: string; method: string; rpc: string; body: string }>,
     fail: false,
+    // "loop": an agent that answers every run with text plus a generateSandboxedUi call, ignoring "UI generated".
+    loop: false,
+    history: new Map<string, object[]>(),
   };
+  const sse = (events: object[]) =>
+    new Response(events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join(""), { status: 200, headers: { "Content-Type": "text/event-stream" } });
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     const body = typeof init?.body === "string" ? init.body : "";
@@ -31,6 +36,32 @@ const net = vi.hoisted(() => {
       }
       // Live capture: the browser reports "TypeError: network error" for the runtime POSTs.
       if (state.fail) throw new TypeError("network error");
+      if (state.loop) {
+        const { body: input = {} } = JSON.parse(body) as { body?: { threadId?: string; runId?: string; messages?: unknown[] } };
+        const threadId = input.threadId ?? "";
+        const runId = input.runId ?? "run";
+        // Like the runtime, connect replays every recorded run of the thread. The server only has what reached it, so
+        // the last tool call's result (sent with the follow-up that never went out) is missing.
+        if (rpc === "agent/connect") return sse(state.history.get(threadId) ?? []);
+        const n = state.calls.length;
+        const messageId = `a-${n}`;
+        const toolCallId = `call-${n}`;
+        const args = JSON.stringify({ initialHeight: 200, placeholderMessages: ["Drawing bar chart..."], css: "", html: "<div>chart</div>" });
+        const assistant = { id: messageId, role: "assistant", content: "42 incidents.", toolCalls: [{ id: toolCallId, type: "function", function: { name: "generateSandboxedUi", arguments: args } }] };
+        const events = [
+          { type: "RUN_STARTED", threadId, runId },
+          { type: "TEXT_MESSAGE_START", messageId, role: "assistant" },
+          { type: "TEXT_MESSAGE_CONTENT", messageId, delta: "42 incidents." },
+          { type: "TEXT_MESSAGE_END", messageId },
+          { type: "TOOL_CALL_START", toolCallId, toolCallName: "generateSandboxedUi", parentMessageId: messageId },
+          { type: "TOOL_CALL_ARGS", toolCallId, delta: args },
+          { type: "TOOL_CALL_END", toolCallId },
+          { type: "MESSAGES_SNAPSHOT", messages: [...(input.messages ?? []), assistant] },
+          { type: "RUN_FINISHED", threadId, runId },
+        ];
+        state.history.set(threadId, [...(state.history.get(threadId) ?? []), ...events]);
+        return sse(events);
+      }
       return new Response("", { status: 200, headers: { "Content-Type": "text/event-stream" } });
     }
     const tool = url.split("/").pop() ?? "";
@@ -55,6 +86,7 @@ const wait = (ms: number) => act(async () => void (await new Promise((r) => setT
 beforeEach(() => {
   net.calls.length = 0;
   net.fail = false;
+  net.loop = false;
   // Wide screen: the side chat panel is open, as on the live overview.
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
@@ -108,4 +140,34 @@ describe("Studio overview: copilotkit request storm", () => {
     expect(runtimePosts("agent/run").length).toBeLessThanOrEqual(1 + 3);
     expect(screen.getByRole("alert")).toBeInTheDocument();
   }, 15000);
+
+  it("an agent that re-calls a frontend tool on every follow-up stops after 8 follow-ups with a message, and reopening the panel never restarts it", async () => {
+    // Live CHAT loop: each "UI generated" result starts a follow-up run; each reconnect replays the tool call whose result
+    // never reached the agent and starts the chain again. Date.now jumps past the guard's rate windows between reopens
+    // (and, first, past the cool-down the network-failure test above leaves on the shared guard).
+    const realNow = Date.now.bind(Date);
+    let offset = 120_000;
+    vi.spyOn(Date, "now").mockImplementation(() => realNow() + offset);
+    render(
+      <Providers>
+        <OverviewScreen />
+      </Providers>,
+    );
+    await wait(300);
+    net.loop = true;
+    const input = screen.getByPlaceholderText("Ask about anything on this screen…");
+    fireEvent.change(input, { target: { value: "How many e-IRIS incidents in the last 30 days, top categories?" } });
+    fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+    await wait(1500);
+    for (let i = 0; i < 4; i++) {
+      offset += 11_000;
+      fireEvent.click(screen.getByRole("button", { name: /hide assistant/i }));
+      await wait(20);
+      fireEvent.click(screen.getByRole("button", { name: /ask the assistant/i }));
+      await wait(1000);
+    }
+    // 1 question + at most 8 follow-ups ever reach the network; the 9th is answered locally with the stop message.
+    expect(runtimePosts("agent/run").length).toBeLessThanOrEqual(1 + 8);
+    expect(screen.getByText(/stopped this answer after 8 automatic tool steps/i)).toBeInTheDocument();
+  }, 30000);
 });
