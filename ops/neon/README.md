@@ -27,6 +27,14 @@ ops/neon/run-roles.sh --login "$XDG_RUNTIME_DIR/owner-url"
 # 4. install the views (section below), THEN probe once with the new DSN (STUDIO_EXPECT_VIEWS=1; without the views the probe skips 22 checks)
 STUDIO_EXPECT_VIEWS=1 GOV_RO_DATABASE_URL="$(<"$XDG_RUNTIME_DIR/gov-ro-url")" uv run --directory studio/apps/agent pytest tests/test_lc1_live_probe.py -q
 ```
+## Migration run order (gov/rel1)
+Each file is run as the owner over the DIRECT url (`SQL_FILE=ops/neon/<file> ops/neon/run-roles.sh <owner-url-file>`), except where noted.
+1. `0001_roles.sql`, `0002_studio_app_role.sql`: roles (steps 1 to 3 above). Applied.
+2. `0003_login.sql`, `0004_nologin.sql`, `0005_terminate.sql`, `0006_sessions.sql`: helper SQL run by name by `run-roles.sh` (`--login`, `--nologin`, session termination and count); never run by hand.
+3. `0003_studio_views.sql`: M1 views. APPLIED LIVE already. Two files share the number 0003; `--login` selects `0003_login.sql` by name, so there is no clash.
+4. `studio/apps/agent/migrations/0001_studio.sql`: Studio state tables, applied with `apply_migration.py` (see the studio_app note above).
+5. `0007_docaudits_views.sql`: NEW, owner must apply (section below). Needed by the Document audits screen. No other slice in gov/rel1 adds a migration.
+
 ### Column-scoped views (M1): `0003_studio_views.sql`
 Physician 360, OPD governance and Patient feedback read **views** in schema `studio_ro`, never the base tables behind them (`privileges`, `oppe_reviews`, `clinical_metrics_monthly`, `qualifications`, `gov_capture_gaps`, `incident_replies`). Run it as the owner over the DIRECT url, after step 1 (the role must exist), before the probe:
 ```bash

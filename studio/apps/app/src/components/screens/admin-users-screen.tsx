@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { HOSPITAL_ROLES, SETTABLE_STATUSES, USER_STATUSES, type AdminParams, type AdminPayload } from "@/lib/screens/admin-schema";
 import { postAdminWrite, useAdmin } from "@/lib/screens/use-admin";
 import { DataTable, StatTile, ToolSection } from "./parts";
-import { ConfirmCard, asScreenState } from "./admin-parts";
+import { AdminSubnav, ConfirmCard, asScreenState } from "./admin-parts";
 import { ScreenFrame } from "./screen-frame";
 import { useScreenContext } from "./screen-context";
 
@@ -28,6 +28,7 @@ export function AdminUsersScreen() {
 
   return (
     <ScreenFrame title="Users and roles">
+      <AdminSubnav current="/admin/users" />
       <p className="scr-muted">Staff accounts and their hospital roles. Create, PIN reset, role removal and delete stay on the old admin page.</p>
       <form className="scr-filters scr-form" onSubmit={(e) => e.preventDefault()} aria-label="User filters">
         <label>

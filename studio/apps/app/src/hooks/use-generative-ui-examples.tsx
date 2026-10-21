@@ -16,6 +16,7 @@ import { ToolReasoning } from "@/components/tool-rendering";
 import { PlanCard } from "@/components/generative-ui/plan-card";
 import { HTTP_TOOL_NAMES } from "@/lib/screens/tool-schema";
 import { HTTP_TOOL_CLIENT_PARAMS, HTTP_TOOL_DESCRIPTIONS, callHttpTool } from "@/lib/http-tools/client";
+import { FAMILY_CHAT_TOOLS, callFamilyTool } from "@/lib/http-tools/client-families";
 import { GOVERNANCE_TOOL_NAMES, SourceTable } from "@/components/generative-ui/source-table";
 
 export const useGenerativeUIExamples = () => {
@@ -95,6 +96,19 @@ export const useGenerativeUIExamples = () => {
       handler: async (args: Record<string, unknown>) => callHttpTool(name, args),
       render: ({ status, result }) =>
         status === "complete" ? <SourceTable result={result} /> : <ToolReasoning name={name} status={status} />,
+    });
+  }
+
+  // Surgical and Onboarding reads: same pattern, different same-origin route (the route gates, audits and types them).
+  for (const tool of FAMILY_CHAT_TOOLS) {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    useFrontendTool({
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters,
+      handler: async (args: Record<string, unknown>) => callFamilyTool(tool, args),
+      render: ({ status, result }) =>
+        status === "complete" ? <SourceTable result={result} /> : <ToolReasoning name={tool.name} status={status} />,
     });
   }
 

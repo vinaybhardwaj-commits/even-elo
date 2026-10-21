@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import type { AdminParams } from "@/lib/screens/admin-schema";
 import { postAdminWrite, useAdmin } from "@/lib/screens/use-admin";
 import { DataTable, ToolSection } from "./parts";
-import { ConfirmCard, asScreenState } from "./admin-parts";
+import { AdminSubnav, ConfirmCard, asScreenState } from "./admin-parts";
 import { ScreenFrame } from "./screen-frame";
 import { useScreenContext } from "./screen-context";
 
@@ -21,6 +21,7 @@ export function AdminResignationsScreen() {
   const selected = list.status === "ok" ? list.data.table.rows.find((r) => r.request_id === selectedId) ?? null : null;
   return (
     <ScreenFrame title="Resignation requests">
+      <AdminSubnav current="/admin/resignations" />
       <p className="scr-muted">Requests from physicians, pending first. The reason text is on the old admin page only.</p>
       <ToolSection title="Requests" state={asScreenState(list)} retry={list.retry}>
         {(data) => (

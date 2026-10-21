@@ -17,6 +17,7 @@ import { AdminUsersScreen } from "../admin-users-screen";
 import { AdminResignationsScreen } from "../admin-resignations-screen";
 import { AdminAuditScreen } from "../admin-audit-screen";
 import { NAV_ITEMS } from "../studio-nav";
+import { ADMIN_LINKS } from "../admin-parts";
 
 const PID = "22222222-2222-4222-8222-222222222222";
 const RID = "55555555-5555-4555-8555-555555555555";
@@ -107,9 +108,11 @@ describe("admin screens", () => {
     await waitFor(() => expect(fetchMock.mock.calls.some(([, i]) => i?.body && JSON.parse(String(i.body)).action === "grant_role")).toBe(true));
   });
 
-  it("nav links the three screens and none of the ops pages", () => {
+  it("nav has one Admin entry; the admin subnav links the three screens and none of the ops pages", () => {
     const hrefs = NAV_ITEMS.map((i) => i.href) as string[];
-    expect(hrefs).toEqual(expect.arrayContaining(["/admin/users", "/admin/resignations", "/admin/audit"]));
-    expect(hrefs.join()).not.toMatch(/migrate|seed|wipe|dedupe|recompute/);
+    expect(hrefs).toContain("/admin/users");
+    const sub = ADMIN_LINKS.map((l) => l.href) as string[];
+    expect(sub).toEqual(["/admin/users", "/admin/resignations", "/admin/audit"]);
+    expect([...hrefs, ...sub].join()).not.toMatch(/migrate|seed|wipe|dedupe|recompute/);
   });
 });

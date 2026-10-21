@@ -1,8 +1,27 @@
 "use client";
 
+import Link from "next/link";
 import { useState, type ReactNode } from "react";
 import type { AdminState } from "@/lib/screens/use-admin";
 import type { ScreenToolState } from "@/lib/screens/use-screen-tool";
+
+export const ADMIN_LINKS = [
+  { href: "/admin/users", label: "Users and roles" },
+  { href: "/admin/resignations", label: "Resignations" },
+  { href: "/admin/audit", label: "Audit log" },
+] as const;
+
+export function AdminSubnav({ current }: { current: string }) {
+  return (
+    <nav className="scr-pager" aria-label="Admin sections">
+      {ADMIN_LINKS.map((l) => (
+        <Link key={l.href} href={l.href} aria-current={l.href === current ? "page" : undefined} style={l.href === current ? { fontWeight: 600 } : undefined}>
+          {l.label}
+        </Link>
+      ))}
+    </nav>
+  );
+}
 
 export const asScreenState = (s: AdminState): ScreenToolState => (s.status === "ok" ? { status: "ok", data: s.data.table } : s.status === "error" ? s : { status: "loading" });
 

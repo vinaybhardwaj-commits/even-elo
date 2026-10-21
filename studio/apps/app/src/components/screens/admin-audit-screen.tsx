@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import type { AdminParams } from "@/lib/screens/admin-schema";
 import { useAdmin } from "@/lib/screens/use-admin";
 import { DataTable, ToolSection } from "./parts";
-import { asScreenState } from "./admin-parts";
+import { AdminSubnav, asScreenState } from "./admin-parts";
 import { ScreenFrame } from "./screen-frame";
 import { useScreenContext } from "./screen-context";
 
@@ -34,6 +34,7 @@ export function AdminAuditScreen() {
   const set = (k: keyof Filters) => (e: { target: { value: string } }) => setDraft((d) => ({ ...d, [k]: e.target.value }));
   return (
     <ScreenFrame title="Audit log">
+      <AdminSubnav current="/admin/audit" />
       <p className="scr-muted">Changes recorded by the governance app, newest first. Before and after values are on the old page only.</p>
       <form
         className="scr-filters scr-form"
