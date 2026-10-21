@@ -54,6 +54,29 @@ export function buildHttpToolActions(actor: Actor): RuntimeActions {
       ],
       handler: run("opd_signals", actor),
     },
+    {
+      name: "audit_findings",
+      description:
+        "CDMSS audit findings routed to doctors: one row per thread with reference, hospital, doctor, finding, status, importance, doctor response verb, ruling action, overdue flag. " +
+        "view=attention (default) shows overdue, disagreed and awaiting-ruling threads. Filter by doctor_uid, hospital code (reference prefix) and status. No comments or notes. Read-only. Present the result as a table with its source.",
+      parameters: [
+        { name: "view", type: "string" as const, description: "attention (default), overdue, disagreed, awaiting_ruling, awaiting_doctor or all", required: false, enum: ["attention", "overdue", "disagreed", "awaiting_ruling", "awaiting_doctor", "all"] },
+        { name: "status", type: "string" as const, description: "thread status", required: false, enum: ["routed", "responded", "escalated", "ruled", "closed"] },
+        { name: "doctor_uid", type: "string" as const, description: "CDMSS doctor uid", required: false },
+        { name: "hospital", type: "string" as const, description: "hospital code, e.g. EHRC", required: false },
+        { name: "window_days", type: "number" as const, description: "look-back window, 1-365 (default 30)", required: false },
+        { name: "limit", type: "number" as const, description: "max threads, 1-200", required: false },
+      ],
+      handler: run("audit_findings", actor),
+    },
+    {
+      name: "audit_finding_detail",
+      description:
+        "One CDMSS audit thread by reference (e.g. EHRC-AUD-2026-0042): header, doctor response verb, ruling action, evidence instances (audit id, verdict, note date, citation titles) and timeline (event, time, actor class). " +
+        "No free text (doctor comment, ruling note, rationale); those are on the screen only. Read-only. This tool cannot record a ruling.",
+      parameters: [{ name: "reference", type: "string" as const, description: "Thread reference such as EHRC-AUD-2026-0042", required: true }],
+      handler: run("audit_finding_detail", actor),
+    },
   ];
   // The handler takes the runtime's loosely typed args; the runner validates them against the zod schema.
   return actions as unknown as RuntimeActions;
