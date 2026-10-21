@@ -82,8 +82,11 @@ for alias, key, user_key in (("gov", "GOV_NEON_URL", "AGENT_GOV_PW"), ("studio",
     # endpoint=<id>$<pw> form when SNI is present (password authentication failed). Verified 15 Oct with psql:
     # prefixed+SNI fails, plain+SNI and prefixed+no-SNI both log in.
     password = unquote(u.password)
+    # gov pool capped at 2: studio_gov_ro has CONNECTION LIMIT 5 (fable O1-C3) and the even-studio app on Vercel
+    # reads live staff with the same role on every request; a full pool of 5 starved it (401 profile-unconfirmed, 21 Oct).
+    pool = 2 if alias == "gov" else 5
     dbs.append(f"{alias} = host={host} port={port} dbname={unquote(u.path.strip('/'))} "
-               f"user={unquote(u.username)} password={q(password)}")
+               f"user={unquote(u.username)} password={q(password)} pool_size={pool}")
     lp = local.get(user_key, "")
     if not lp:
         sys.exit(f"{user_key} is empty in local.env")
