@@ -248,7 +248,7 @@ def test_every_relation_in_every_schema_outside_the_grant_list_is_denied():
 
 
 def test_connection_limit_and_timeouts_are_set():
-    assert scalar("SELECT rolconnlimit FROM pg_roles WHERE rolname = current_user") == 5
+    assert scalar("SELECT rolconnlimit FROM pg_roles WHERE rolname = current_user") == 20
     assert scalar("SELECT current_setting('statement_timeout')") == "15s"
     assert scalar("SELECT current_setting('idle_in_transaction_session_timeout')") == "30s"
     assert scalar("SELECT current_setting('default_transaction_read_only')") == "on"
