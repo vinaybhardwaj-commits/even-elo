@@ -66,7 +66,7 @@ def seed(conn):
             (f"Dr Sample {i}", f"uid-{i}"),
         ).fetchone()["id"]
         conn.execute(
-            "INSERT INTO physician_engagements (physician_id, hospital_id, category, start_date) VALUES (%s, %s, 'active', current_date)", (pid, hosp)
+            "INSERT INTO physician_engagements (physician_id, hospital_id, category, start_date) VALUES (%s, %s, 'visiting_consultant', current_date)", (pid, hosp)
         )
         pids.append(str(pid))
     conn.execute(
@@ -120,7 +120,7 @@ async def test_every_tool_runs_on_the_real_schema(live):
 async def test_physician_profile_reads_engagement_category(live):
     out = await call("physician_profile", {"physician_id": pytest.real_pids[0]})
     assert out["row_count"] == 1
-    assert out["rows"][0]["engagements"] == "H1 active active"  # hospital code, category, status
+    assert out["rows"][0]["engagements"] == "H1 · visiting_consultant · active"  # hospital code, category, status (field separator " · ", row separator " | ")
 
 
 def test_the_old_engagement_type_query_fails_on_the_real_schema(real_db):

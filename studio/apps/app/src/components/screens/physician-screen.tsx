@@ -88,9 +88,16 @@ export function PhysicianScreen({ id }: { id: string }) {
                     <p className="scr-muted">No engagements recorded.</p>
                   ) : (
                     <ul className="scr-list">
-                      {engagements.map((e) => (
-                        <li key={e}>{e}</li>
-                      ))}
+                      {engagements.map((e) => {
+                        // "hospital · category · status": show category and status separately, never one as the other.
+                        const [hospital, category, status] = e.split(" · ");
+                        if (!hospital || !category || !status) return <li key={e}>{e}</li>;
+                        return (
+                          <li key={e}>
+                            {hospital} · category: {category} · status: {status}
+                          </li>
+                        );
+                      })}
                     </ul>
                   )}
                   <p className="scr-source">Engagements from {data.source.tool} · query {data.source.query_hash} (hospital code, category, status).</p>

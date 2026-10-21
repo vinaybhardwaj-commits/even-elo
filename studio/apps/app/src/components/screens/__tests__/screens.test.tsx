@@ -48,7 +48,7 @@ const DATA: Record<string, unknown> = {
   physician_profile: table(
     "physician_profile",
     ["physician_id", "full_name", "preferred_name", "primary_specialty", "current_status", "date_joined_network", "registration_council", "registration_expiry", "engagements"],
-    [{ physician_id: PID, full_name: "Dr A", preferred_name: null, primary_specialty: "Neurology", current_status: "active", date_joined_network: "2024-01-01", registration_council: "KMC", registration_expiry: "2027-01-01", engagements: "RR consultant active | KH visiting active" }],
+    [{ physician_id: PID, full_name: "Dr A", preferred_name: null, primary_specialty: "Neurology", current_status: "active", date_joined_network: "2024-01-01", registration_council: "KMC", registration_expiry: "2027-01-01", engagements: "RR · consultant · active | KH · visiting · on_leave" }],
   ),
   physician_privileges: table(
     "physician_privileges",
@@ -165,7 +165,8 @@ describe("screens", () => {
   it("physician 360: reads the profile, signal, intervention and view tools for the selected id and exposes it", async () => {
     render(<PhysicianScreen id={PID} />);
     await screen.findByText("Neurology");
-    expect(screen.getByText("RR consultant active")).toBeInTheDocument();
+    expect(screen.getByText("RR · category: consultant · status: active")).toBeInTheDocument();
+    expect(screen.getByText("KH · category: visiting · status: on_leave")).toBeInTheDocument();
     const calls = fetchMock.mock.calls.map((c) => [c[0], JSON.parse(c[1].body)]);
     expect(calls).toEqual(
       expect.arrayContaining([

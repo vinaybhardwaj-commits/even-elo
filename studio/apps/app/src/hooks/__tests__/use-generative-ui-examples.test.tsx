@@ -68,7 +68,12 @@ describe("useGenerativeUIExamples registrations", () => {
 
   it("keeps the remaining demo registrations intact", () => {
     render(<Probe />);
-    expect(captured.useFrontendTool.map((c) => c.name)).toEqual(["toggleTheme"]);
+    expect(captured.useFrontendTool.map((c) => c.name)).toEqual([
+      "toggleTheme",
+      "eiris_incidents",
+      "eiris_incident_detail",
+      "opd_signals",
+    ]);
     expect(captured.useRenderTool.map((c) => c.name)).toEqual([
       "plan_visualization",
       "list_physicians",

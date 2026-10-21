@@ -11,18 +11,16 @@ import {
 } from "@copilotkit/react-core/v2";
 import { useGenerativeUIExamples } from "@/hooks";
 import { StudioNav } from "@/components/screens/studio-nav";
-import { decideRunError, describeRunError, type ErrorEventLike } from "@/lib/run-error";
+import { useRunError } from "@/lib/use-run-error";
 
 export default function HomePage() {
   useGenerativeUIExamples();
   const { agent } = useAgent();
   const { newChat } = useChatSession();
   const { copilotkit } = useCopilotKit();
-  const [error, setError] = useState<string | null>(null);
+  const { error, setError, onError, clear } = useRunError(agent);
   const [retrying, setRetrying] = useState(false);
   const retryingRef = useRef(false);
-  // True once the current run delivered RUN_FINISHED; later errors (abort, closed stream) are noise.
-  const runFinishedRef = useRef(false);
   const chatRoot = useRef<HTMLDivElement>(null);
   const latestQuestion = agent.messages.filter((message) => message.role === "user").at(-1)?.id;
 
@@ -46,26 +44,11 @@ export default function HomePage() {
     return () => observer.disconnect();
   }, [latestQuestion]);
 
-  useEffect(() => {
-    const subscription = agent.subscribe({
-      onRunInitialized: () => {
-        runFinishedRef.current = false;
-        setError(null);
-      },
-      onRunFinishedEvent: () => {
-        runFinishedRef.current = true;
-        setError(null);
-      },
-    });
-    return () => subscription.unsubscribe();
-  }, [agent]);
-
   const retry = async () => {
     if (retryingRef.current || agent.isRunning) return;
     retryingRef.current = true;
     setRetrying(true);
-    runFinishedRef.current = false;
-    setError(null);
+    clear();
     try {
       await copilotkit.runAgent({ agent });
     } catch {
@@ -111,12 +94,7 @@ export default function HomePage() {
             autoScroll={false}
             scrollView={ReaderScrollView}
             messageView={{ assistantMessage: { markdownRenderer: AnswerMarkdown } }}
-            onError={(raw) => {
-              const event = raw as ErrorEventLike;
-              console.warn(describeRunError(event));
-              const decision = decideRunError(event, runFinishedRef.current);
-              if (decision.show) setError(decision.message);
-            }}
+            onError={onError}
             labels={{
               welcomeMessageText: "What would you like to explore?",
               chatInputPlaceholder: "Ask anything…",

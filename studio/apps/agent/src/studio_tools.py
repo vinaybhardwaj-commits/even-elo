@@ -77,7 +77,7 @@ PHYSICIAN_PROFILE_SQL = """
 SELECT p.id::text AS physician_id, p.full_name, p.preferred_name, p.primary_specialty, p.current_status,
        p.date_joined_network::text AS date_joined_network,
        p.registration_council, p.registration_expiry::text AS registration_expiry,
-       COALESCE((SELECT string_agg(h.code || ' ' || e.category || ' ' || e.status, ' | ' ORDER BY h.code)
+       COALESCE((SELECT string_agg(h.code || ' · ' || e.category || ' · ' || e.status, ' | ' ORDER BY h.code)
                  FROM physician_engagements e JOIN hospitals h ON h.id = e.hospital_id
                  WHERE e.physician_id = p.id), '') AS engagements
 FROM physicians p
