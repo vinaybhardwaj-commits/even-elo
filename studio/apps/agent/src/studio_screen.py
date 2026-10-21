@@ -72,7 +72,7 @@ async def run_screen_tool(tool_name: str, params: dict, staff_id: str) -> tuple[
 # studio_audit table. Metadata only: tool, params hash, counts, timing. Never row content.
 # ---------------------------------------------------------------------------------------------
 
-HTTP_TOOL_NAMES = frozenset({"eiris_incidents", "eiris_incident_detail", "opd_signals"})
+HTTP_TOOL_NAMES = frozenset({"eiris_incidents", "eiris_incident_detail", "opd_signals", "rmo_inbox", "rmo_author", "rmo_release"})
 MAX_AUDIT_BODY_BYTES = 4096
 _MAX_ROWS = 100_000
 _MAX_MS = 600_000
