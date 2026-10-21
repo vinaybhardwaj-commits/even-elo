@@ -1,0 +1,36 @@
+{
+  "synthetic": true,
+  "note": "Synthetic sample data for STUDIO_LIVE_READS=0 and tests. Not real physicians.",
+  "columns": [
+    "privilege_id",
+    "hospital_code",
+    "procedure_or_specialty",
+    "is_core",
+    "basis",
+    "granted_date",
+    "expires_at",
+    "withdrawn_date"
+  ],
+  "rows": [
+    {
+      "privilege_id": "00000000-0000-4000-8000-0000000000b1",
+      "hospital_code": "SMP",
+      "procedure_or_specialty": "Sample core privilege",
+      "is_core": true,
+      "basis": "initial",
+      "granted_date": "2026-01-05",
+      "expires_at": null,
+      "withdrawn_date": null
+    },
+    {
+      "privilege_id": "00000000-0000-4000-8000-0000000000b2",
+      "hospital_code": "SMP",
+      "procedure_or_specialty": "Sample special privilege",
+      "is_core": false,
+      "basis": "annual_review",
+      "granted_date": "2026-02-10",
+      "expires_at": "2027-02-10",
+      "withdrawn_date": null
+    }
+  ]
+}

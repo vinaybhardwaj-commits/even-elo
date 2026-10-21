@@ -1,0 +1,30 @@
+{
+  "synthetic": true,
+  "note": "Synthetic sample data for STUDIO_LIVE_READS=0 and tests. Not real physicians.",
+  "columns": [
+    "gap_id",
+    "title",
+    "attr",
+    "status",
+    "baseline_mean",
+    "shipped_on"
+  ],
+  "rows": [
+    {
+      "gap_id": "00000000-0000-4000-8000-0000000000e1",
+      "title": "Sample capture gap one",
+      "attr": "synthesized",
+      "status": "open",
+      "baseline_mean": 1.8,
+      "shipped_on": null
+    },
+    {
+      "gap_id": "00000000-0000-4000-8000-0000000000e2",
+      "title": "Sample capture gap two",
+      "attr": "useful",
+      "status": "shipped",
+      "baseline_mean": 2.1,
+      "shipped_on": "2026-09-01"
+    }
+  ]
+}

@@ -21,12 +21,25 @@ export function PhysicianScreen({ id }: { id: string }) {
   const profileParams = useMemo(() => (valid ? { physician_id: id } : null), [valid, id]);
   const signalParams = useMemo(() => (valid ? { physician_id: id, window_days: 90, limit: 50 } : null), [valid, id]);
   const interventionParams = useMemo(() => (valid ? { physician_id: id, limit: 50 } : null), [valid, id]);
+  const listParams = useMemo(() => (valid ? { physician_id: id, limit: 50 } : null), [valid, id]);
+  const metricsParams = useMemo(() => (valid ? { physician_id: id, months: 12, limit: 50 } : null), [valid, id]);
+  const feedbackParams = useMemo(() => (valid ? { physician_id: id, window_days: 365, source: "patient" as const, limit: 50 } : null), [valid, id]);
   const profile = useScreenTool("physician_profile", profileParams);
+  const privileges = useScreenTool("physician_privileges", listParams);
+  const oppe = useScreenTool("physician_oppe", listParams);
+  const metrics = useScreenTool("physician_metrics", metricsParams);
+  const qualifications = useScreenTool("physician_qualifications", listParams);
+  const feedback = useScreenTool("feedback_by_physician", feedbackParams);
   const signals = useScreenTool("signal_snapshots", signalParams);
   const interventions = useScreenTool("interventions", interventionParams);
 
-  useScreenContext("physician_360", { physician_id: valid ? id : "(invalid id)" }, { signal_window_days: 90 }, [
+  useScreenContext("physician_360", { physician_id: valid ? id : "(invalid id)" }, { signal_window_days: 90, metrics_months: 12, patient_feedback_window_days: 365 }, [
     { tool: "physician_profile", params: profileParams, state: profile },
+    { tool: "physician_privileges", params: listParams, state: privileges },
+    { tool: "physician_oppe", params: listParams, state: oppe },
+    { tool: "physician_metrics", params: metricsParams, state: metrics },
+    { tool: "physician_qualifications", params: listParams, state: qualifications },
+    { tool: "feedback_by_physician", params: feedbackParams, state: feedback },
     { tool: "signal_snapshots", params: signalParams, state: signals },
     { tool: "interventions", params: interventionParams, state: interventions },
   ]);
@@ -118,15 +131,77 @@ export function PhysicianScreen({ id }: { id: string }) {
             )}
           </ToolSection>
 
-          <section className="scr-card" aria-label="Patient feedback">
-            <header className="scr-card-head">
-              <h2>Patient feedback</h2>
-            </header>
-            <p className="scr-muted">
-              Not available per physician. The patient feedback read (incident_summary) returns programme-wide counts only, so nothing here is
-              attributed to this physician.
-            </p>
-          </section>
+          <ToolSection
+            title="Privileges"
+            note="Clinical privileges by hospital; no withdrawal reasons."
+            state={privileges}
+            retry={privileges.retry}
+          >
+            {(data) => (
+              <DataTable
+                data={data}
+                columns={["hospital_code", "procedure_or_specialty", "is_core", "basis", "granted_date", "expires_at", "withdrawn_date"]}
+                labels={{ hospital_code: "hospital", procedure_or_specialty: "procedure or specialty", is_core: "core", granted_date: "granted", expires_at: "expires", withdrawn_date: "withdrawn" }}
+                renderCell={{ is_core: (v) => (v === true ? "Core" : v === false ? "Special" : "–") }}
+                empty="No privileges recorded for this physician."
+              />
+            )}
+          </ToolSection>
+
+          <ToolSection title="OPPE reviews" note="Review periods, due dates and status; no reviewer notes or packets." state={oppe} retry={oppe.retry}>
+            {(data) => (
+              <DataTable
+                data={data}
+                columns={["hospital_code", "period_start", "period_end", "due_on", "status", "completed_on"]}
+                labels={{ hospital_code: "hospital", period_start: "period start", period_end: "period end", due_on: "due", completed_on: "completed" }}
+                empty="No OPPE reviews recorded for this physician."
+              />
+            )}
+          </ToolSection>
+
+          <ToolSection title="Monthly volumes" note="OPD, IPD and OT counts and revenue by hospital, last 12 months." state={metrics} retry={metrics.retry}>
+            {(data) => (
+              <DataTable
+                data={data}
+                columns={["hospital_code", "year", "month", "opd_count", "ipd_admissions", "ot_cases", "revenue_inr"]}
+                labels={{ hospital_code: "hospital", opd_count: "OPD", ipd_admissions: "IPD admissions", ot_cases: "OT cases", revenue_inr: "revenue (INR)" }}
+                empty="No monthly volumes in the last 12 months."
+              />
+            )}
+          </ToolSection>
+
+          <ToolSection
+            title="Qualifications"
+            note="Degree, institution tier, year and verification; no institution names or certificates."
+            state={qualifications}
+            retry={qualifications.retry}
+          >
+            {(data) => (
+              <DataTable
+                data={data}
+                columns={["degree", "institution_tier", "year_completed", "country", "verified", "verified_on"]}
+                labels={{ institution_tier: "tier", year_completed: "year", verified_on: "verified on" }}
+                renderCell={{ verified: (v) => (v === true ? "Yes" : v === false ? "No" : "–") }}
+                empty="No qualifications recorded for this physician."
+              />
+            )}
+          </ToolSection>
+
+          <ToolSection
+            title="Patient feedback"
+            note="Counts for this physician, last 12 months, by polarity, severity and status. No comments, reporters or patient references."
+            state={feedback}
+            retry={feedback.retry}
+          >
+            {(data) => (
+              <DataTable
+                data={data}
+                columns={["polarity", "severity", "status", "incidents"]}
+                labels={{ incidents: "count" }}
+                empty="No patient feedback recorded for this physician in the last 12 months."
+              />
+            )}
+          </ToolSection>
         </>
       )}
     </ScreenFrame>

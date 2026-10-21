@@ -1,0 +1,33 @@
+{
+  "synthetic": true,
+  "note": "Synthetic sample data for STUDIO_LIVE_READS=0 and tests. Not real physicians.",
+  "columns": [
+    "review_id",
+    "hospital_code",
+    "period_start",
+    "period_end",
+    "due_on",
+    "status",
+    "completed_on"
+  ],
+  "rows": [
+    {
+      "review_id": "00000000-0000-4000-8000-0000000000c1",
+      "hospital_code": "SMP",
+      "period_start": "2026-01-01",
+      "period_end": "2026-06-30",
+      "due_on": "2026-07-15",
+      "status": "satisfactory",
+      "completed_on": "2026-07-10"
+    },
+    {
+      "review_id": "00000000-0000-4000-8000-0000000000c2",
+      "hospital_code": "SMP",
+      "period_start": "2026-07-01",
+      "period_end": "2026-12-31",
+      "due_on": "2027-01-15",
+      "status": "pending",
+      "completed_on": null
+    }
+  ]
+}

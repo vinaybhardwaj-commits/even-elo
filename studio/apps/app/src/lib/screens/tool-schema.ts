@@ -1,6 +1,7 @@
 import { z } from "zod";
 
-// Shared (server + client) contract for the six governance read tools (apps/agent/src/studio_tools.py).
+// Shared (server + client) contract for the governance read tools (apps/agent/src/studio_tools.py): the six
+// M0-S2 tools and the six M1 tools that read the column-scoped studio_ro views.
 // The screen route validates params against SCREEN_TOOL_PARAMS before anything reaches the agent, and
 // validates what comes back against SourceTablePayload before anything reaches a screen.
 
@@ -11,6 +12,12 @@ export const GOVERNANCE_TOOL_NAMES = [
   "interventions",
   "incident_summary",
   "overview_counts",
+  "physician_privileges",
+  "physician_oppe",
+  "physician_metrics",
+  "physician_qualifications",
+  "capture_gaps",
+  "feedback_by_physician",
 ] as const;
 export type GovernanceToolName = (typeof GOVERNANCE_TOOL_NAMES)[number];
 
@@ -57,6 +64,21 @@ export const SCREEN_TOOL_PARAMS = {
   interventions: z.object({ physician_id: uuid.optional(), limit: limit.optional() }).strict(),
   incident_summary: z.object({ window_days: windowDays.optional() }).strict(),
   overview_counts: z.object({}).strict(),
+  physician_privileges: z.object({ physician_id: uuid, limit: limit.optional() }).strict(),
+  physician_oppe: z.object({ physician_id: uuid, limit: limit.optional() }).strict(),
+  physician_metrics: z
+    .object({ physician_id: uuid, months: z.number().int().min(1).max(60).optional(), limit: limit.optional() })
+    .strict(),
+  physician_qualifications: z.object({ physician_id: uuid, limit: limit.optional() }).strict(),
+  capture_gaps: z.object({ limit: limit.optional() }).strict(),
+  feedback_by_physician: z
+    .object({
+      physician_id: uuid,
+      window_days: z.number().int().min(1).max(1825).optional(),
+      source: z.enum(["patient", "peer", "governance", "external_public"]).optional(),
+      limit: limit.optional(),
+    })
+    .strict(),
 } as const satisfies Record<GovernanceToolName, z.ZodTypeAny>;
 
 export type ScreenToolParams<T extends GovernanceToolName> = z.input<(typeof SCREEN_TOOL_PARAMS)[T]>;

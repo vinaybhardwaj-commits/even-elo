@@ -27,7 +27,7 @@ def test_grant_list_agrees_across_sql_tools_and_probe():
     granted = tuple(t.strip() for t in re.search(r"GRANT SELECT ON ([a-z_, ]+) TO studio_gov_ro;", sql).group(1).split(","))
     used = set()
     for q in studio_tools.ALL_SQL.values():
-        used |= set(re.findall(r"\b(?:FROM|JOIN)\s+([a-z_]+)\b", q))
+        used |= set(re.findall(r"\b(?:FROM|JOIN)\s+([a-z_]+)\b(?!\.)", q))  # schema-qualified (studio_ro.*) views are checked in test_studio_views.py
     used -= {"jsonb_array_elements", "generate_series"}
     probe = re.search(r"GOV_TABLES = \(([^)]*)\)", PROBE.read_text()).group(1)
     probe_tables = tuple(t.strip().strip('"') for t in probe.split(",") if t.strip())

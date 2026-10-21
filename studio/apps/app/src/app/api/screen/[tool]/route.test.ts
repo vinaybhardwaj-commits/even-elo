@@ -48,7 +48,7 @@ describe("/studio/api/screen/[tool]", () => {
   });
 
   it.each(["plan_visualization", "write_file", "execute", "sql", "overview_counts2", "../copilotkit", "LIST_PHYSICIANS"])(
-    "404 for %s (allowlist is exactly the six read tools)",
+    "404 for %s (allowlist is exactly the twelve read tools)",
     async (tool) => {
       expect((await call(tool)).status).toBe(404);
       expect(fetchMock).not.toHaveBeenCalled();
@@ -68,6 +68,16 @@ describe("/studio/api/screen/[tool]", () => {
     ["list_physicians", { filter: { status: "bogus" } }],
     ["list_physicians", { filter: { name_contains: "x".repeat(81) } }],
     ["list_physicians", [1]],
+    ["physician_privileges", {}],
+    ["physician_oppe", { physician_id: "not-a-uuid" }],
+    ["physician_metrics", { physician_id: PID, months: 61 }],
+    ["physician_metrics", { physician_id: PID, months: 0 }],
+    ["physician_qualifications", { physician_id: PID, sql: "select 1" }],
+    ["capture_gaps", { physician_id: PID }],
+    ["capture_gaps", { limit: 201 }],
+    ["feedback_by_physician", { physician_id: PID, source: "everyone" }],
+    ["feedback_by_physician", { physician_id: PID, window_days: 1826 }],
+    ["feedback_by_physician", { physician_id: PID, staff_id: "attacker" }],
   ])("422 for invalid params %s %j", async (tool, body) => {
     const res = await call(tool, body);
     expect(res.status).toBe(422);
@@ -101,6 +111,21 @@ describe("/studio/api/screen/[tool]", () => {
     expect(init.headers["X-Studio-Service-Token"]).toBe("svc");
     expect(init.headers["X-Studio-Actor"].split(".")).toHaveLength(3);
     expect(JSON.parse(init.body)).toEqual({ physician_id: PID, limit: 10 });
+  });
+
+  it.each([
+    ["physician_privileges", { physician_id: PID, limit: 5 }],
+    ["physician_oppe", { physician_id: PID }],
+    ["physician_metrics", { physician_id: PID, months: 6 }],
+    ["physician_qualifications", { physician_id: PID }],
+    ["capture_gaps", {}],
+    ["feedback_by_physician", { physician_id: PID, window_days: 90, source: "patient" }],
+  ])("forwards the view tool %s to the agent unchanged and returns its payload", async (tool, body) => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify(payload(tool)), { status: 200 }));
+    const res = await call(tool, body);
+    expect(res.status).toBe(200);
+    expect(fetchMock.mock.calls[0][0]).toBe(`https://agent.invalid/agent/tools/${tool}`);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual(body);
   });
 
   it("never forwards client-supplied identity or cookies", async () => {

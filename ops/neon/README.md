@@ -27,6 +27,14 @@ ops/neon/run-roles.sh --login "$XDG_RUNTIME_DIR/owner-url"
 # 4. probe once with the new DSN
 GOV_RO_DATABASE_URL="$(<"$XDG_RUNTIME_DIR/gov-ro-url")" uv run --directory studio/apps/agent pytest tests/test_lc1_live_probe.py -q
 ```
+### Column-scoped views (M1): `0003_studio_views.sql`
+Physician 360, OPD governance and Patient feedback read **views** in schema `studio_ro`, never the base tables behind them (`privileges`, `oppe_reviews`, `clinical_metrics_monthly`, `qualifications`, `gov_capture_gaps`, `incident_replies`). Run it as the owner over the DIRECT url, after step 1 (the role must exist), before the probe:
+```bash
+SQL_FILE=ops/neon/0003_studio_views.sql ops/neon/run-roles.sh "$XDG_RUNTIME_DIR/owner-url"    # one transaction, idempotent
+STUDIO_EXPECT_VIEWS=1 GOV_RO_DATABASE_URL="$(<"$XDG_RUNTIME_DIR/gov-ro-url")" uv run --directory studio/apps/agent pytest tests/test_lc1_live_probe.py -q
+```
+It refuses a superuser, a Studio role, a missing `studio_gov_ro`, and a `studio_ro` schema owned by someone else. The role gets `USAGE` on `studio_ro` and `SELECT` on seven `security_barrier` views; no grant is made on any base table, and a post-check rolls back if one is. The file is numbered 0003 by order; `run-roles.sh --login` selects `0003_login.sql` by name, so there is no clash. Without `STUDIO_EXPECT_VIEWS=1` the probe skips the view checks when the schema is absent; with it, a missing schema fails.
+
 Then move the DSN into the even-studio Vercel project and the Asus agent env (never even-elo), and destroy the files. To rotate later, follow **Rotation** below: do NOT just repeat steps 2 and 3.
 
 ## Rotation (the role is already LOGIN)

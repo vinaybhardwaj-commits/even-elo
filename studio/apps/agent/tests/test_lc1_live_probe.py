@@ -20,6 +20,23 @@ DSN = os.environ.get("GOV_RO_DATABASE_URL", "")
 pytestmark = pytest.mark.skipif(not DSN, reason="GOV_RO_DATABASE_URL not set (live L-C1 probe)")
 
 GOV_TABLES = ("physicians", "physician_engagements", "hospitals", "gov_signal_snapshots", "gov_interventions", "incidents")
+# Column-scoped views (ops/neon/0003_studio_views.sql). EXACT column lists: a new column is a test failure until reviewed.
+VIEW_COLUMNS = {
+    "physician_privileges": ("privilege_id", "physician_id", "hospital_code", "procedure_or_specialty", "is_core", "basis", "granted_date", "expires_at", "withdrawn_date", "created_at"),
+    "physician_oppe": ("review_id", "physician_id", "hospital_code", "period_start", "period_end", "due_at", "status", "completed_at", "created_at"),
+    "physician_metrics": ("metric_id", "physician_id", "hospital_code", "year", "month", "opd_count", "ipd_admissions", "ot_cases", "revenue_inr", "uploaded_at"),
+    "physician_qualifications": ("qualification_id", "physician_id", "degree", "institution_tier", "year_completed", "country", "verified", "verified_at", "created_at"),
+    "capture_gaps": ("gap_id", "title", "attr", "status", "baseline_mean", "shipped_at", "created_at"),
+    "incident_reply_status": ("reply_id", "incident_id", "physician_id", "incident_status", "replied_by_physician", "replied_at"),
+    "physician_feedback": ("physician_id", "source", "polarity", "severity", "status", "month", "incidents"),
+}
+VIEW_BASE_TABLES = ("privileges", "oppe_reviews", "clinical_metrics_monthly", "qualifications", "gov_capture_gaps", "incident_replies")
+FREE_TEXT_COLUMNS = (
+    "reply_text", "decision_notes", "packet_jsonb", "withdrawn_reason", "granted_by", "reviewer_id", "source_file", "uploaded_by",
+    "institution", "file_data", "verified_by", "note", "source_doc", "replied_by_profile_id", "replied_by_physician_id",
+    "narrative", "evidence_urls", "reporter_name", "reporter_email", "patient_ref", "patient_rating", "submitter_user_id",
+    "retraction_reason", "category", "target_physician_id",
+)
 COLUMN_GRANT_ONLY = ("profiles", "profiles_with_roles")  # id/status/is_super_admin and id/must_change_pin only
 WRITES = {
     "insert": "INSERT INTO {t} SELECT * FROM {t} WHERE false",
@@ -236,7 +253,7 @@ def test_the_catalogue_is_enumerated_and_the_named_examples_exist():
 
 
 def test_every_relation_in_every_schema_outside_the_grant_list_is_denied():
-    granted = {("public", t) for t in GOV_TABLES}
+    granted = {("public", t) for t in GOV_TABLES} | {("studio_ro", v) for v in VIEW_COLUMNS if views_installed()}
     checked = 0
     for schema, rel in _relations():
         if (schema, rel) in granted:
@@ -245,6 +262,70 @@ def test_every_relation_in_every_schema_outside_the_grant_list_is_denied():
         assert attempt(f'SELECT * FROM "{schema}"."{rel}" WHERE false') == "denied", f"{schema}.{rel}"
         checked += 1
     assert checked >= 3
+
+
+def views_installed() -> bool:
+    return bool(scalar("SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'studio_ro')"))
+
+
+# The views are installed by a separate owner step (0003_studio_views.sql). Without STUDIO_EXPECT_VIEWS=1 a
+# database that has not had it yet skips these; with it, a missing schema is a FAILURE.
+def _need_views():
+    if views_installed():
+        return
+    if os.environ.get("STUDIO_EXPECT_VIEWS") == "1":
+        pytest.fail("studio_ro views are not installed (0003_studio_views.sql was not run)")
+    pytest.skip("studio_ro views not installed in this database")
+
+
+@pytest.mark.parametrize("view", sorted(VIEW_COLUMNS))
+def test_view_select_works(view):
+    _need_views()
+    assert scalar(f"SELECT count(*) >= 0 FROM studio_ro.{view}") is True
+
+
+@pytest.mark.parametrize("view", sorted(VIEW_COLUMNS))
+def test_view_exposes_exactly_the_reviewed_columns_and_no_free_text(view):
+    _need_views()
+    with psycopg.connect(DSN, autocommit=False, prepare_threshold=None) as conn:
+        try:
+            cols = tuple(d.name for d in conn.execute(f"SELECT * FROM studio_ro.{view} WHERE false").description)
+        finally:
+            conn.rollback()
+    assert cols == VIEW_COLUMNS[view]
+    assert not set(cols) & set(FREE_TEXT_COLUMNS)
+
+
+@pytest.mark.parametrize("table", VIEW_BASE_TABLES)
+def test_base_tables_behind_the_views_stay_denied(table):
+    _need_views()
+    assert attempt(f"SELECT * FROM public.{table} WHERE false") == "denied"
+    assert scalar("SELECT has_any_column_privilege(current_user, %s, 'SELECT')", (f"public.{table}",)) is False
+
+
+def test_views_are_security_barrier_owner_run_and_not_owned_by_the_role():
+    _need_views()
+    n = scalar(
+        """SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+           WHERE n.nspname = 'studio_ro' AND c.relkind = 'v'
+             AND COALESCE(c.reloptions, '{}') @> ARRAY['security_barrier=true']
+             AND NOT COALESCE(c.reloptions, '{}') @> ARRAY['security_invoker=true']
+             AND c.relowner <> (SELECT oid FROM pg_roles WHERE rolname = current_user)"""
+    )
+    assert n == len(VIEW_COLUMNS)
+    assert scalar("SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'studio_ro'") == len(VIEW_COLUMNS)
+
+
+def test_views_are_read_only_for_the_role_and_the_schema_has_no_create():
+    _need_views()
+    # Catalogue, not an attempted write: a view over a join is "not updatable" before Postgres checks privileges.
+    for view in VIEW_COLUMNS:
+        rel = f"studio_ro.{view}"
+        assert scalar("SELECT has_any_column_privilege(current_user, %s, 'INSERT') OR has_any_column_privilege(current_user, %s, 'UPDATE')", (rel, rel)) is False, view
+        assert scalar("SELECT has_table_privilege(current_user, %s, 'DELETE') OR has_table_privilege(current_user, %s, 'TRUNCATE')", (rel, rel)) is False, view
+        assert scalar("SELECT has_table_privilege(current_user, %s, 'SELECT')", (rel,)) is True, view
+    assert scalar("SELECT has_schema_privilege(current_user, 'studio_ro', 'CREATE')") is False
+    assert scalar("SELECT has_schema_privilege(current_user, 'studio_ro', 'USAGE')") is True
 
 
 def test_connection_limit_and_timeouts_are_set():

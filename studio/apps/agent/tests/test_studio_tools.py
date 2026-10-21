@@ -50,6 +50,12 @@ def test_tool_list_is_the_read_only_set():
         "interventions",
         "incident_summary",
         "overview_counts",
+        "physician_privileges",
+        "physician_oppe",
+        "physician_metrics",
+        "physician_qualifications",
+        "capture_gaps",
+        "feedback_by_physician",
     ]
 
 
@@ -212,6 +218,15 @@ async def test_argument_validation(db):
         ("signal_snapshots", {"window_days": 366}),
         ("incident_summary", {"window_days": -1}),
         ("interventions", {"physician_id": "1 OR 1=1"}),
+        ("physician_privileges", {}),
+        ("physician_privileges", {"physician_id": "not-a-uuid"}),
+        ("physician_oppe", {"physician_id": PID, "limit": 201}),
+        ("physician_metrics", {"physician_id": PID, "months": 0}),
+        ("physician_metrics", {"physician_id": PID, "months": 61}),
+        ("physician_qualifications", {"physician_id": "1 OR 1=1"}),
+        ("capture_gaps", {"limit": 0}),
+        ("feedback_by_physician", {"physician_id": PID, "source": "everyone"}),
+        ("feedback_by_physician", {"physician_id": PID, "window_days": 1826}),
     ]:
         with pytest.raises(Exception):
             await call(name, args)
@@ -229,9 +244,18 @@ async def test_each_tool_runs_with_its_parameters(db):
     await call("interventions", {})
     await call("incident_summary", {"window_days": 90})
     await call("overview_counts", {})
+    await call("physician_privileges", {"physician_id": PID})
+    await call("physician_oppe", {"physician_id": PID, "limit": 5})
+    await call("physician_metrics", {"physician_id": PID, "months": 6})
+    await call("physician_qualifications", {"physician_id": PID})
+    await call("capture_gaps", {})
+    await call("feedback_by_physician", {"physician_id": PID, "source": "patient", "window_days": 90})
+    await call("feedback_by_physician", {"physician_id": PID})
     assert [a.tool for a in audits] == [
         "list_physicians", "physician_profile", "signal_snapshots", "signal_snapshots",
         "interventions", "interventions", "incident_summary", "overview_counts",
+        "physician_privileges", "physician_oppe", "physician_metrics", "physician_qualifications", "capture_gaps",
+        "feedback_by_physician", "feedback_by_physician",
     ]
     by_tool = {}
     for (sql, params), a in zip(calls, audits):
@@ -242,6 +266,10 @@ async def test_each_tool_runs_with_its_parameters(db):
     assert by_tool["signal_snapshots"][0] == (PID, 14, PID, 50)
     assert by_tool["signal_snapshots"][1] == (None, 30, None, 50)
     assert by_tool["incident_summary"] == [(90, 200)]
+    assert by_tool["physician_privileges"] == [(PID, 50)] and by_tool["physician_oppe"] == [(PID, 5)]
+    assert by_tool["physician_metrics"] == [(PID, 6, 50)] and by_tool["physician_qualifications"] == [(PID, 50)]
+    assert by_tool["capture_gaps"] == [(50,)]
+    assert by_tool["feedback_by_physician"] == [(PID, 90, "patient", "patient", 50), (PID, 365, None, None, 50)]
     assert max(len(p) for p in by_tool["list_physicians"]) == 9
 
 
@@ -332,6 +360,12 @@ async def test_kill_switch_is_read_per_call_and_serves_fixtures_without_touching
     ("interventions", {}),
     ("incident_summary", {}),
     ("overview_counts", {}),
+    ("physician_privileges", {"physician_id": PID}),
+    ("physician_oppe", {"physician_id": PID}),
+    ("physician_metrics", {"physician_id": PID}),
+    ("physician_qualifications", {"physician_id": PID}),
+    ("capture_gaps", {}),
+    ("feedback_by_physician", {"physician_id": PID}),
 ])
 async def test_every_tool_has_a_fixture_and_labels_it_synthetic(db, monkeypatch, name, args):
     monkeypatch.setenv("STUDIO_LIVE_READS", "0")
@@ -361,6 +395,6 @@ async def test_missing_fixture_is_an_error_not_live_data(db, monkeypatch):
 
 def test_selected_columns_exclude_free_text_and_contact_details():
     joined = " ".join(ALL_SQL.values()).lower()
-    for banned in ("narrative", "ruling_note", "note,", ".notes", "email", "phone", "registration_number", "password", "reporter_name", "evidence_urls", "payload,"):
+    for banned in ("narrative", "ruling_note", "note,", ".notes", "email", "phone", "registration_number", "password", "reporter_name", "evidence_urls", "payload,", "reply_text", "decision_notes", "withdrawn_reason", "packet_jsonb", "file_data", "source_file", "patient_ref"):
         assert banned not in joined, banned
     assert "select *" not in joined and ".*" not in joined
