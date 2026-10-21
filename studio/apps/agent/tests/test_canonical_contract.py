@@ -62,3 +62,11 @@ def test_prompt_forbids_top_level_await_in_js_channels():
 def test_plan_visualization_docstring_names_canonical_tool():
     assert "generateSandboxedUi" in plan_visualization.description
     assert "widgetRenderer" not in plan_visualization.description
+
+
+def test_prompt_routes_incident_questions_to_eiris_not_patient_feedback():
+    for name in ("eiris_incidents", "eiris_incident_detail", "opd_signals"):
+        assert name in SYSTEM_PROMPT
+    normalized = " ".join(SYSTEM_PROMPT.split())
+    assert "Never answer an incident question from patient feedback" in normalized
+    assert "do not substitute other data" in normalized

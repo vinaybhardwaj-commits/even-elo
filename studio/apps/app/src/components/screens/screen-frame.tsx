@@ -1,16 +1,17 @@
 "use client";
 
 import { useState, useSyncExternalStore, type ReactNode } from "react";
-import { CopilotChat } from "@copilotkit/react-core/v2";
+import { CopilotChat, useAgent } from "@copilotkit/react-core/v2";
 import { AnswerMarkdown } from "@/components/chat/answer-markdown";
 import { useGenerativeUIExamples } from "@/hooks";
-import { decideRunError, describeRunError, type ErrorEventLike } from "@/lib/run-error";
+import { useRunError } from "@/lib/use-run-error";
 import { StudioNav } from "./studio-nav";
 
 function AskPanel({ screenTitle }: { screenTitle: string }) {
   // Same typed renderers as the chat page: governance tool results render as SourceTable with a source line.
   useGenerativeUIExamples();
-  const [error, setError] = useState<string | null>(null);
+  const { agent } = useAgent();
+  const { error, onError } = useRunError(agent);
   return (
     <div className="scr-panel-body">
       {error && (
@@ -20,12 +21,7 @@ function AskPanel({ screenTitle }: { screenTitle: string }) {
       )}
       <CopilotChat
         messageView={{ assistantMessage: { markdownRenderer: AnswerMarkdown } }}
-        onError={(raw) => {
-          const event = raw as ErrorEventLike;
-          console.warn(describeRunError(event));
-          const decision = decideRunError(event, false);
-          if (decision.show) setError(decision.message);
-        }}
+        onError={onError}
         labels={{
           welcomeMessageText: `Ask about ${screenTitle.toLowerCase()}`,
           chatInputPlaceholder: "Ask about anything on this screen…",

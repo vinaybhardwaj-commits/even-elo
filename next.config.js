@@ -1,4 +1,4 @@
-const { studioRewrites } = require('./studio-rewrites')
+const { studioRewrites, studioRedirects } = require('./studio-rewrites')
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -15,6 +15,7 @@ const nextConfig = {
     return [
       { source: '/surgical-elo', destination: '/surgical-governance', permanent: true },
       { source: '/surgical-elo/:path*', destination: '/surgical-governance/:path*', permanent: true },
+      ...studioRedirects(process.env.STUDIO_ORIGIN),
     ]
   },
 }

@@ -14,6 +14,8 @@ import { PieChart, PieChartProps } from "@/components/generative-ui/charts/pie-c
 import { BarChart, BarChartProps } from "@/components/generative-ui/charts/bar-chart";
 import { ToolReasoning } from "@/components/tool-rendering";
 import { PlanCard } from "@/components/generative-ui/plan-card";
+import { HTTP_TOOL_NAMES } from "@/lib/screens/tool-schema";
+import { HTTP_TOOL_CLIENT_PARAMS, HTTP_TOOL_DESCRIPTIONS, callHttpTool } from "@/lib/http-tools/client";
 import { GOVERNANCE_TOOL_NAMES, SourceTable } from "@/components/generative-ui/source-table";
 
 export const useGenerativeUIExamples = () => {
@@ -74,6 +76,23 @@ export const useGenerativeUIExamples = () => {
     useRenderTool({
       name,
       parameters: z.object({}).passthrough(),
+      render: ({ status, result }) =>
+        status === "complete" ? <SourceTable result={result} /> : <ToolReasoning name={name} status={status} />,
+    });
+  }
+
+  // --------------------------
+  // e-IRIS and OPD signal reads. The agent cannot reach those hosts and does not know server-side CopilotKit
+  // actions, so they are frontend tools: the browser calls /studio/api/screen/<tool> (cookie auth, role gate and
+  // audit stay in that route) and the result renders as the same typed SourceTable.
+  // --------------------------
+  for (const name of HTTP_TOOL_NAMES) {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    useFrontendTool({
+      name,
+      description: HTTP_TOOL_DESCRIPTIONS[name],
+      parameters: HTTP_TOOL_CLIENT_PARAMS[name],
+      handler: async (args: Record<string, unknown>) => callHttpTool(name, args),
       render: ({ status, result }) =>
         status === "complete" ? <SourceTable result={result} /> : <ToolReasoning name={name} status={status} />,
     });
