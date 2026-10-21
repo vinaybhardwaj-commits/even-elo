@@ -225,7 +225,7 @@ CREATE TABLE incidents (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), submitted
   polarity text NOT NULL DEFAULT 'negative', severity text);
 CREATE TABLE gov_signal_snapshots (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), source text NOT NULL DEFAULT 'cdmss_opd', day date NOT NULL, period text NOT NULL DEFAULT 'day', payload jsonb NOT NULL);
 CREATE TABLE gov_interventions (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), signal_key text NOT NULL, signal_label text, kind text NOT NULL, physician_id uuid REFERENCES physicians(id),
-  done_on date NOT NULL DEFAULT current_date, created_at timestamptz NOT NULL DEFAULT now(), action text, cdmss_sync_state text);
+  done_on date NOT NULL DEFAULT current_date, created_at timestamptz NOT NULL DEFAULT now(), action text, note text, cdmss_sync_state text);
 """
 
 
