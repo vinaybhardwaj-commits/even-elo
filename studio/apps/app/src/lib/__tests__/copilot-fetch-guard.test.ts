@@ -75,8 +75,8 @@ describe("copilot fetch guard", () => {
     const { real, tryRun, at } = setup(() => new Response("{}", { status: 200 }));
     const results: string[] = [];
     for (let i = 0; i < 50; i++) results.push(await tryRun("info"));
-    expect(real).toHaveBeenCalledTimes(3);
-    expect(results.filter((r) => r === "refused")).toHaveLength(47);
+    expect(real).toHaveBeenCalledTimes(10);
+    expect(results.filter((r) => r === "refused")).toHaveLength(40);
     at(WINDOW_MS);
     expect(await tryRun("info")).toBe("sent");
   });

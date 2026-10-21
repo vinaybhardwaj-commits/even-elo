@@ -11,7 +11,7 @@ export const MAX_REISSUES = 3;
 export const BACKOFF_BASE_MS = 1_000;
 export const COOLDOWN_MS = 60_000;
 export const WINDOW_MS = 10_000;
-export const WINDOW_LIMIT: Record<string, number> = { info: 3, "agent/connect": 3, "agent/run": 6 };
+export const WINDOW_LIMIT: Record<string, number> = { info: 10, "agent/connect": 3, "agent/run": 6 };
 const DEFAULT_LIMIT = 3;
 
 type Streak = { failures: number; notBefore: number };
@@ -67,7 +67,7 @@ export function createCopilotFetchGuard(realFetch: typeof fetch, now: Clock = Da
           }
           controller.enqueue(value);
         } catch (error) {
-          failed(method);
+          if (!(error instanceof DOMException && error.name === "AbortError")) failed(method);
           controller.error(error);
         }
       },
