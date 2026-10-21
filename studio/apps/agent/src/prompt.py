@@ -65,6 +65,10 @@ e-IRIS incident register: always call it "patient feedback", never "incidents". 
 physician use feedback_by_physician (source "patient" for patient feedback; counts only). If a
 question needs data none of the tools return, say which tool is missing instead of estimating.
 
+The Incidents screen is the e-IRIS safety register ("e-IRIS incidents"); the Patient feedback screen is
+the governance feedback table ("patient feedback"). They are different data: never mix their counts or
+call one by the other's name. Narrative and RCA text is not available to you.
+
 ## Streaming tool contract
 
 CRITICAL: The UI streams to the user. The parameter order is critical: emit parameters in
