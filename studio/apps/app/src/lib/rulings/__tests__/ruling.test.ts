@@ -46,7 +46,7 @@ describe("forwardRuling", () => {
     }
     expect(f).not.toHaveBeenCalled();
   });
-  it.each([[409, 409, "conflict"], [403, 403, "forbidden"], [404, 404, "not_found"], [502, 502, "cdmss_unconfirmed"], [500, 502, "cdmss_unconfirmed"]])("maps upstream %i to fixed code", async (up, status, error) => {
+  it.each([[409, 409, "conflict"], [401, 401, "unauthorized"], [403, 403, "forbidden"], [404, 404, "not_found"], [502, 502, "cdmss_unconfirmed"], [500, 502, "cdmss_unconfirmed"]])("maps upstream %i to fixed code", async (up, status, error) => {
     const out = await forwardRuling({ ...base, secondFactor: ok, fetchImpl: mk(up, { message: "UPSTREAM-TEXT" }) as unknown as typeof fetch });
     expect(out.status).toBe(status);
     expect(out.body.error).toBe(error);

@@ -46,6 +46,6 @@ export async function forwardRuling(input: ForwardInput): Promise<RulingOutcome>
   if (res.ok) return { status: 200, body: { ok: true, replayed: o.replayed === true, status: typeof o.status === "string" ? o.status : null } };
   // even-elo's own codes (conflict, forbidden, not_found) are mapped to fixed ones; 502 = saved there, CDMSS unconfirmed.
   if (res.status === 409) return { status: 409, body: { ok: false, error: "conflict", current_status: typeof o.current_status === "string" ? o.current_status : null } };
-  if (res.status === 401 || res.status === 403 || res.status === 404 || res.status === 400) return fail(res.status, res.status === 404 ? "not_found" : res.status === 400 ? "bad_params" : "forbidden");
+  if (res.status === 401 || res.status === 403 || res.status === 404 || res.status === 400) return fail(res.status, res.status === 404 ? "not_found" : res.status === 400 ? "bad_params" : res.status === 401 ? "unauthorized" : "forbidden");
   return fail(502, "cdmss_unconfirmed");
 }

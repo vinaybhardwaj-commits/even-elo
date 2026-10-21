@@ -26,7 +26,7 @@ const fail = (status: number, error: string, headers?: Record<string, string>): 
 });
 
 const QUERY_TEXT = "GET /api/rmo-inbox";
-const queryHash = (): string => createHash("sha256").update(QUERY_TEXT).digest("hex").slice(0, 12);
+const queryHash = (qs = ""): string => createHash("sha256").update(`${QUERY_TEXT}${qs ? `?${qs}` : ""}`).digest("hex").slice(0, 12);
 
 /** G3 second factor: not built yet, so writes are refused. Replace with the real check when G3 lands. */
 export const noSecondFactorYet = async (): Promise<boolean> => false;
@@ -42,10 +42,10 @@ const cell = (v: unknown): Cell => (typeof v === "string" || typeof v === "numbe
 const rec = (v: unknown): Record<string, unknown> => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
 const arr = (v: unknown): Record<string, unknown>[] => (Array.isArray(v) ? v.map(rec) : []);
 
-function table(columns: readonly string[], rows: Record<string, unknown>[]) {
+function table(columns: readonly string[], rows: Record<string, unknown>[], qs = "") {
   const out = rows.map((r) => Object.fromEntries(columns.map((c) => [c, cell(r[c])])) as Record<string, Cell>);
   return {
-    source: { tool: "rmo_inbox", query_hash: queryHash() },
+    source: { tool: "rmo_inbox", query_hash: queryHash(qs) },
     mode: "live" as const,
     synthetic: false,
     columns: [...columns],
@@ -57,7 +57,7 @@ function table(columns: readonly string[], rows: Record<string, unknown>[]) {
 const EXC_COLUMNS = ["finding_id", "finding_label", "severity", "status", "physician_name", "hospital_code", "open_age_days", "recurrence_count", "exception_score", "authored_by_name"] as const;
 
 /** Shapes even-elo's GET /api/rmo-inbox body into typed tables; null if it is not that body. */
-export function toInboxPayload(body: unknown, writeEnabled: boolean): RmoInboxPayload | null {
+export function toInboxPayload(body: unknown, writeEnabled: boolean, qs = ""): RmoInboxPayload | null {
   const b = rec(body);
   if (b.ok !== true || !Array.isArray(b.items) || !Array.isArray(b.exceptions)) return null;
   const head = rec(b.headline);
@@ -67,9 +67,9 @@ export function toInboxPayload(body: unknown, writeEnabled: boolean): RmoInboxPa
     { metric: "sla_risk", value: head.sla_risk },
   ];
   return {
-    items: table(RMO_ITEM_COLUMNS, arr(b.items)),
-    counts: table(["metric", "value"], metrics),
-    exceptions: table(EXC_COLUMNS, arr(b.exceptions)),
+    items: table(RMO_ITEM_COLUMNS, arr(b.items), qs),
+    counts: table(["metric", "value"], metrics, qs),
+    exceptions: table(EXC_COLUMNS, arr(b.exceptions), qs),
     write_enabled: writeEnabled,
   };
 }
@@ -136,7 +136,7 @@ async function runRead(rawParams: unknown, actor: Actor, secondFactorOk: (a: Act
     });
     if (res.status === 401) failure = { status: 401, error: "unauthorized" };
     else if (res.ok) {
-      payload = toInboxPayload(await res.json().catch(() => null), await secondFactorOk(actor).catch(() => false));
+      payload = toInboxPayload(await res.json().catch(() => null), await secondFactorOk(actor).catch(() => false), qs.toString());
       if (!payload) failure = { status: 502, error: "bad_payload" };
     }
   } catch {

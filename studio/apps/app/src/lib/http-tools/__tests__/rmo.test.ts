@@ -104,6 +104,13 @@ describe("rmo", () => {
     expect(audits()[0]).toMatchObject({ tool: "rmo_author", outcome: "error", row_count: 0 });
   });
 
+  it("query_hash differs by filter", async () => {
+    const a = await runRmo("inbox", { pipe: "open" }, ACTOR);
+    const b = await runRmo("inbox", { pipe: "escalated" }, ACTOR);
+    const hash = (r: Awaited<ReturnType<typeof runRmo>>) => (r.body as { items: { source: { query_hash: string } } }).items.source.query_hash;
+    expect(hash(a)).not.toBe(hash(b));
+  });
+
   it("toInboxPayload refuses a body that is not the inbox", () => {
     expect(toInboxPayload({ ok: true }, false)).toBeNull();
     expect(toInboxPayload(null, false)).toBeNull();
