@@ -213,6 +213,21 @@ def test_http_audit_writes_one_metadata_row(main, db):
     assert db[0] == []  # no database read happened
 
 
+@pytest.mark.parametrize("tool", ["audit_findings", "audit_finding_detail"])
+def test_http_audit_accepts_the_audit_findings_tools(main, db, tool):
+    c = TestClient(main.app)
+    r = c.post("/agent/audit", json=_audit_body(tool=tool, params={"reference": "EHRC-AUD-2026-0001"}), headers=headers())
+    assert r.status_code == 200
+    assert db[1][0].tool == tool
+
+
+@pytest.mark.parametrize("tool", ["audit_ruling", "record_ruling", "signal_action"])
+def test_http_audit_has_no_write_tools(main, db, tool):
+    c = TestClient(main.app)
+    assert c.post("/agent/audit", json=_audit_body(tool=tool), headers=headers()).status_code == 422
+    assert db[1] == []
+
+
 def test_http_audit_requires_auth(main, db):
     c = TestClient(main.app)
     assert c.post("/agent/audit", json=_audit_body()).status_code == 401

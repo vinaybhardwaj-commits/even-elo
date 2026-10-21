@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { agentHeaders } from "@/lib/zone/actor-token";
 import { HTTP_TOOL_PARAMS, type HttpToolName, type SourceTablePayload } from "@/lib/screens/tool-schema";
+import { toFindingDetailPayload, toFindingsPayload } from "./audit-transform";
 import { incidentRows, toDetailPayload, toIncidentsPayload, toSignalsPayload } from "./transform";
 
 // The three HTTP read tools (M1-http): eiris_incidents, eiris_incident_detail, opd_signals.
@@ -36,6 +37,8 @@ const QUERIES: Record<HttpToolName, string> = {
   eiris_incidents: "GET /api/office/incidents; GET /api/office/stats; GET /api/mm/stats",
   eiris_incident_detail: "GET /api/office/incidents/{id}",
   opd_signals: "GET /api/governance/roster-audits",
+  audit_findings: "GET /api/governance/roster-audits",
+  audit_finding_detail: "GET /api/governance/audit-signal/{reference}",
 };
 export const queryHash = (tool: HttpToolName): string => createHash("sha256").update(QUERIES[tool]).digest("hex").slice(0, 12);
 
@@ -133,6 +136,27 @@ async function buildSignals(p: { doctor_uid?: string; window_days?: number; limi
   return { payload: toSignalsPayload({ tool: "opd_signals", queryHash: queryHash("opd_signals") }, r.body, p.limit ?? 50) };
 }
 
+async function buildFindings(p: { view?: "attention" | "overdue" | "disagreed" | "awaiting_ruling" | "awaiting_doctor" | "all"; status?: string; doctor_uid?: string; hospital?: string; window_days?: number; limit?: number }): Promise<Built> {
+  const api = cdmssApi();
+  if (!api) return { payload: null, failure: { status: 503, error: "upstream_not_configured" } };
+  const qs = new URLSearchParams();
+  if (p.doctor_uid) qs.set("doctor_uid", p.doctor_uid);
+  qs.set("window", String(p.window_days ?? 30));
+  const r = await getJson(`${api.base}/api/governance/roster-audits?${qs.toString()}`, api.headers);
+  if (!r.ok) return { payload: null, failure: { status: r.status, error: r.error } };
+  if (!Array.isArray((r.body as { doctors?: unknown } | null)?.doctors)) return { payload: null, failure: { status: 502, error: "bad_payload" } };
+  return { payload: toFindingsPayload({ tool: "audit_findings", queryHash: queryHash("audit_findings") }, r.body, { view: p.view, status: p.status, hospital: p.hospital, limit: p.limit ?? 100 }) };
+}
+
+async function buildFindingDetail(p: { reference: string; include_text?: boolean }): Promise<Built> {
+  const api = cdmssApi();
+  if (!api) return { payload: null, failure: { status: 503, error: "upstream_not_configured" } };
+  const r = await getJson(`${api.base}/api/governance/audit-signal/${encodeURIComponent(p.reference)}`, api.headers);
+  if (!r.ok) return { payload: null, failure: { status: r.status, error: r.error } };
+  const payload = toFindingDetailPayload({ tool: "audit_finding_detail", queryHash: queryHash("audit_finding_detail") }, r.body, p.include_text === true);
+  return payload ? { payload } : { payload: null, failure: { status: 502, error: "bad_payload" } };
+}
+
 /** Appends the studio_audit row through the agent. false = the row was not written (the caller returns no data). */
 async function audit(
   staffId: string,
@@ -190,7 +214,11 @@ export async function runHttpTool(tool: HttpToolName, rawParams: unknown, actor:
       ? await buildIncidents(actor.role, params)
       : tool === "eiris_incident_detail"
         ? await buildDetail(actor.role, params as { incident_id: string; include_text?: boolean })
-        : await buildSignals(params);
+        : tool === "opd_signals"
+          ? await buildSignals(params)
+          : tool === "audit_findings"
+            ? await buildFindings(params)
+            : await buildFindingDetail(params as { reference: string; include_text?: boolean });
 
   const rows = built.payload?.row_count ?? 0;
   const a = await audit(actor.staffId, actor.role, tool, params, rows, startedAt, built.payload ? "ok" : "error");

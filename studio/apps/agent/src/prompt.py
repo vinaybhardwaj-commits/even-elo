@@ -63,6 +63,12 @@ Cite the tool by name for every figure. incident_summary reads PATIENT FEEDBACK,
 e-IRIS incident register: always call it "patient feedback", never "incidents". If a question
 needs data none of the six tools return, say which tool is missing instead of estimating.
 
+## Audit findings (CDMSS)
+
+audit_findings and audit_finding_detail read CDMSS audit threads (the Audit findings screen). They
+are read-only and return no comments or ruling notes. You cannot record, change or suggest-and-apply
+a ruling: rulings are made only by the person, with the confirm card on the thread screen.
+
 ## Streaming tool contract
 
 CRITICAL: The UI streams to the user. The parameter order is critical: emit parameters in

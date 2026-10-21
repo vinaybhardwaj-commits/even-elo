@@ -73,7 +73,7 @@ export function isUuid(value: string): boolean {
 // governance API). They run in this app, server side (the agent has no egress to either host), behind the
 // same /api/screen/<tool> door, and return the same SourceTablePayload. Handlers: lib/http-tools/.
 
-export const HTTP_TOOL_NAMES = ["eiris_incidents", "eiris_incident_detail", "opd_signals"] as const;
+export const HTTP_TOOL_NAMES = ["eiris_incidents", "eiris_incident_detail", "opd_signals", "audit_findings", "audit_finding_detail"] as const;
 export type HttpToolName = (typeof HTTP_TOOL_NAMES)[number];
 
 export function isHttpTool(name: string): name is HttpToolName {
@@ -84,6 +84,13 @@ export function isHttpTool(name: string): name is HttpToolName {
 export const INCIDENT_ID_RE = /^[A-Z]{4}-INC-\d{4}-\d{1,6}$/;
 /** CDMSS doctor uid is opaque; keep it to a safe token alphabet. */
 export const DOCTOR_UID_RE = /^[A-Za-z0-9_.:-]{1,80}$/;
+
+/** CDMSS audit thread reference (EHRC-AUD-2026-0042), as even-elo validates it (src/lib/cdmss-governance.ts). */
+export const AUDIT_REF_RE = /^[A-Z]{2,6}-AUD-\d{4}-\d{3,}$/;
+/** Hospital code = the reference prefix. */
+export const HOSPITAL_CODE_RE = /^[A-Z]{2,6}$/;
+export const AUDIT_STATUSES = ["routed", "responded", "escalated", "ruled", "closed"] as const;
+export const AUDIT_VIEWS = ["attention", "overdue", "disagreed", "awaiting_ruling", "awaiting_doctor", "all"] as const;
 
 export const HTTP_TOOL_PARAMS = {
   eiris_incidents: z
@@ -104,6 +111,31 @@ export const HTTP_TOOL_PARAMS = {
   opd_signals: z
     .object({ doctor_uid: z.string().regex(DOCTOR_UID_RE).optional(), window_days: windowDays.optional(), limit: limit.optional() })
     .strict(),
+  audit_findings: z
+    .object({
+      view: z.enum(AUDIT_VIEWS).optional(),
+      status: z.enum(AUDIT_STATUSES).optional(),
+      doctor_uid: z.string().regex(DOCTOR_UID_RE).optional(),
+      hospital: z.string().regex(HOSPITAL_CODE_RE).optional(),
+      window_days: windowDays.optional(),
+      limit: limit.optional(),
+    })
+    .strict(),
+  audit_finding_detail: z
+    .object({
+      reference: z.string().regex(AUDIT_REF_RE),
+      // Doctor comment, ruling note, finding rationale and timeline notes: off unless asked for (super_admin only).
+      include_text: z.boolean().optional(),
+    })
+    .strict(),
 } as const satisfies Record<HttpToolName, z.ZodTypeAny>;
 
 export type HttpToolParams<T extends HttpToolName> = z.input<(typeof HTTP_TOOL_PARAMS)[T]>;
+
+/** Params of any screen read tool (governance SQL tool or HTTP tool). */
+export type AnyScreenToolName = GovernanceToolName | HttpToolName;
+export type AnyScreenToolParams<T extends AnyScreenToolName> = T extends GovernanceToolName
+  ? ScreenToolParams<T>
+  : T extends HttpToolName
+    ? HttpToolParams<T>
+    : never;

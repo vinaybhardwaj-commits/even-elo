@@ -245,9 +245,9 @@ describe("HTTP read tools", () => {
     expect(await runHttpTool("opd_signals", {}, ACTOR)).toMatchObject({ status: 502, body: { error: "bad_payload" } });
   });
 
-  it("CopilotKit actions expose exactly the three tools and run the same handler", async () => {
+  it("CopilotKit actions expose exactly the HTTP tools and run the same handler", async () => {
     const actions = buildHttpToolActions(ACTOR) as unknown as Array<{ name: string; handler: (a: Record<string, unknown>) => Promise<unknown>; parameters: Array<{ name: string }> }>;
-    expect(actions.map((a) => a.name)).toEqual(["eiris_incidents", "eiris_incident_detail", "opd_signals"]);
+    expect(actions.map((a) => a.name)).toEqual(["eiris_incidents", "eiris_incident_detail", "opd_signals", "audit_findings", "audit_finding_detail"]);
     const out = SourceTablePayload.parse(await actions[2].handler({ limit: 1 }));
     expect(out.row_count).toBe(1);
     expect(await actions[1].handler({ incident_id: "nope" })).toEqual({ ok: false, error: "bad_params" });
