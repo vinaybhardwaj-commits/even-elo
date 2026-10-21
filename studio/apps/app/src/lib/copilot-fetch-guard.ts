@@ -4,7 +4,13 @@
 //   agent, so there is nothing to restore; a fresh panel therefore makes no connect call at all);
 // - per method, 1 call plus MAX_REISSUES re-issues after network failures, spaced 1 s, 2 s, 4 s, then a cool-down;
 // - per method, at most WINDOW_LIMIT calls per WINDOW_MS even when every call answers 200.
+// - per thread, at most MAX_TOOL_FOLLOW_UPS agent/run follow-ups in a row (runs whose last message is a tool result,
+//   which CopilotKit issues after every frontend tool, and again when a reconnect replays a tool call whose result never
+//   reached the agent). Only a new user message resets the count. The next follow-up is answered here with a short
+//   assistant message that ends the chain (no request).
 // A refused call fails fast with code "client_backoff" (no request), so the chat shows its banner instead of looping.
+// Diagnostics: window.__studioCopilotGuard counts every runtime call per method and keeps the call stacks of the 2nd to
+// 4th call of each method (stacks only, never bodies), so a live capture can name whatever re-issues a call.
 
 export const RUNTIME_PATH = "/studio/api/copilotkit";
 export const MAX_REISSUES = 3;
@@ -13,8 +19,12 @@ export const COOLDOWN_MS = 60_000;
 export const WINDOW_MS = 10_000;
 export const WINDOW_LIMIT: Record<string, number> = { info: 10, "agent/connect": 3, "agent/run": 6 };
 const DEFAULT_LIMIT = 3;
+export const MAX_TOOL_FOLLOW_UPS = 8;
+export const TOOL_LOOP_STOP_MESSAGE = `I stopped this answer after ${MAX_TOOL_FOLLOW_UPS} automatic tool steps in a row because it kept repeating. Ask again to continue.`;
 
 type Streak = { failures: number; notBefore: number };
+export type GuardTrace = Record<string, { calls: number; refused: number; stacks: string[] }>;
+const TRACE_STACKS = 3;
 type Clock = () => number;
 
 export class ClientBackoffError extends TypeError {
@@ -25,8 +35,26 @@ export class ClientBackoffError extends TypeError {
   }
 }
 
-export function createCopilotFetchGuard(realFetch: typeof fetch, now: Clock = Date.now) {
+/** A complete AG-UI run, served locally: one assistant message, then RUN_FINISHED, so no follow-up is issued. */
+function stoppedRun(threadId: string, runId: string): Response {
+  const messageId = `tool-loop-stop-${runId}`;
+  const events = [
+    { type: "RUN_STARTED", threadId, runId },
+    { type: "TEXT_MESSAGE_START", messageId, role: "assistant" },
+    { type: "TEXT_MESSAGE_CONTENT", messageId, delta: TOOL_LOOP_STOP_MESSAGE },
+    { type: "TEXT_MESSAGE_END", messageId },
+    { type: "RUN_FINISHED", threadId, runId },
+  ];
+  return new Response(events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join(""), {
+    status: 200,
+    headers: { "Content-Type": "text/event-stream" },
+  });
+}
+
+export function createCopilotFetchGuard(realFetch: typeof fetch, now: Clock = () => Date.now()) {
+  const trace: GuardTrace = {};
   const ranThreads = new Set<string>();
+  const followUps = new Map<string, number>();
   const streaks = new Map<string, Streak>();
   const recent = new Map<string, number[]>();
 
@@ -78,27 +106,50 @@ export function createCopilotFetchGuard(realFetch: typeof fetch, now: Clock = Da
     return new Response(body, { status: res.status, statusText: res.statusText, headers: res.headers });
   };
 
-  return async function guardedFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const record = (method: string) => {
+    const t = (trace[method] ??= { calls: 0, refused: 0, stacks: [] });
+    t.calls += 1;
+    if (t.calls > 1 && t.stacks.length < TRACE_STACKS) t.stacks.push(new Error(`${method} call ${t.calls}`).stack ?? "");
+    return t;
+  };
+
+  async function guardedFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     const method = (init?.method ?? (typeof input === "object" && "method" in input ? input.method : "GET")).toUpperCase();
     if (method !== "POST" || !new URL(url, "http://local").pathname.startsWith(RUNTIME_PATH)) return realFetch(input, init);
 
     let rpc = "?";
     let threadId: string | undefined;
+    let runId = "";
+    let lastRole: unknown;
     if (typeof init?.body === "string") {
       try {
-        const parsed = JSON.parse(init.body) as { method?: unknown; body?: { threadId?: unknown } };
+        const parsed = JSON.parse(init.body) as {
+          method?: unknown;
+          body?: { threadId?: unknown; runId?: unknown; messages?: Array<{ role?: unknown }> };
+        };
         if (typeof parsed.method === "string") rpc = parsed.method;
         if (typeof parsed.body?.threadId === "string") threadId = parsed.body.threadId;
+        if (typeof parsed.body?.runId === "string") runId = parsed.body.runId;
+        if (Array.isArray(parsed.body?.messages)) lastRole = parsed.body.messages.at(-1)?.role;
       } catch {
         // Not JSON: guard it under "?".
       }
     }
 
+    const traced = record(rpc);
     if (rpc === "agent/connect" && (!threadId || !ranThreads.has(threadId))) {
       return new Response("", { status: 200, headers: { "Content-Type": "text/event-stream" } });
     }
-    if (!admit(rpc)) throw new ClientBackoffError(rpc);
+    if (rpc === "agent/run" && threadId) {
+      const n = lastRole === "tool" ? (followUps.get(threadId) ?? 0) + 1 : 0;
+      followUps.set(threadId, n);
+      if (n > MAX_TOOL_FOLLOW_UPS) return stoppedRun(threadId, runId);
+    }
+    if (!admit(rpc)) {
+      traced.refused += 1;
+      throw new ClientBackoffError(rpc);
+    }
     if (rpc === "agent/run" && threadId) ranThreads.add(threadId);
 
     let res: Response;
@@ -114,7 +165,8 @@ export function createCopilotFetchGuard(realFetch: typeof fetch, now: Clock = Da
     }
     succeeded(rpc);
     return watchBody(res, rpc);
-  };
+  }
+  return Object.assign(guardedFetch, { trace });
 }
 
 const INSTALLED = Symbol.for("studio.copilotFetchGuard");
@@ -124,7 +176,8 @@ export function installCopilotFetchGuard(win: (Window & typeof globalThis) | und
   if (!win) return;
   const current = win.fetch as typeof fetch & { [INSTALLED]?: true };
   if (current[INSTALLED]) return;
-  const guarded = createCopilotFetchGuard(current.bind(win)) as typeof fetch & { [INSTALLED]?: true };
+  const guarded = createCopilotFetchGuard(current.bind(win)) as ReturnType<typeof createCopilotFetchGuard> & { [INSTALLED]?: true };
   guarded[INSTALLED] = true;
   win.fetch = guarded;
+  (win as unknown as { __studioCopilotGuard?: GuardTrace }).__studioCopilotGuard = guarded.trace;
 }

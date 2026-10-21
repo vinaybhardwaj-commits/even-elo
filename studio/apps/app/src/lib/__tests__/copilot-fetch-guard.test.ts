@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
-import { BACKOFF_BASE_MS, COOLDOWN_MS, WINDOW_MS, createCopilotFetchGuard } from "../copilot-fetch-guard";
+import {
+  BACKOFF_BASE_MS,
+  COOLDOWN_MS,
+  MAX_TOOL_FOLLOW_UPS,
+  TOOL_LOOP_STOP_MESSAGE,
+  WINDOW_MS,
+  createCopilotFetchGuard,
+} from "../copilot-fetch-guard";
 import { CLIENT_BACKOFF_ERROR, decideRunError } from "../run-error";
 
 const URL_ = "/studio/api/copilotkit";
@@ -90,5 +97,42 @@ describe("copilot fetch guard", () => {
   it("a refused call shows the back-off banner", () => {
     const decision = decideRunError({ error: Object.assign(new TypeError("x"), { code: "client_backoff" }) }, false);
     expect(decision).toEqual({ show: true, message: CLIENT_BACKOFF_ERROR });
+  });
+
+  it("ends a frontend-tool follow-up chain after 8 in a row with a local assistant message; a new user message resets it", async () => {
+    const { real, guarded, at } = setup(() => new Response("", { status: 200 }));
+    const run = (lastRole: string, runId: string) =>
+      guarded(URL_, {
+        method: "POST",
+        body: JSON.stringify({ method: "agent/run", params: { agentId: "default" }, body: { threadId: "t1", runId, messages: [{ role: "user" }, { role: lastRole }] } }),
+      });
+    await run("user", "r0");
+    for (let i = 1; i <= MAX_TOOL_FOLLOW_UPS; i++) {
+      at(i * WINDOW_MS); // spread out so the rate window never refuses
+      await run("tool", `r${i}`);
+    }
+    expect(real).toHaveBeenCalledTimes(1 + MAX_TOOL_FOLLOW_UPS);
+    at(100 * WINDOW_MS);
+    const stopped = await run("tool", "r9");
+    const text = await stopped.text();
+    expect(real).toHaveBeenCalledTimes(1 + MAX_TOOL_FOLLOW_UPS);
+    expect(text).toContain('"type":"RUN_FINISHED"');
+    expect(text).toContain(TOOL_LOOP_STOP_MESSAGE);
+    // A reconnect replaying the dangling tool call later is still a follow-up: still stopped locally.
+    at(200 * WINDOW_MS);
+    await run("tool", "r10");
+    expect(real).toHaveBeenCalledTimes(1 + MAX_TOOL_FOLLOW_UPS);
+    await run("user", "r11");
+    expect(real).toHaveBeenCalledTimes(2 + MAX_TOOL_FOLLOW_UPS);
+  });
+
+  it("traces calls per method, with the stacks of repeated calls only", async () => {
+    const { guarded, tryRun } = setup(() => new Response("{}", { status: 200 }));
+    for (let i = 0; i < 12; i++) await tryRun("info");
+    const { trace } = guarded as unknown as { trace: Record<string, { calls: number; refused: number; stacks: string[] }> };
+    expect(trace.info.calls).toBe(12);
+    expect(trace.info.refused).toBe(2);
+    expect(trace.info.stacks).toHaveLength(3);
+    expect(trace.info.stacks[0]).toContain("info call 2");
   });
 });
