@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { SourceTablePayload, type GovernanceToolName, type ScreenToolParams } from "./tool-schema";
+import { SourceTablePayload, type AnyScreenToolName, type AnyScreenToolParams } from "./tool-schema";
 
 export type ScreenToolState =
   | { status: "loading" }
@@ -29,15 +29,22 @@ const ERROR_TEXT: Record<string, string> = {
   agent_unreachable: "The agent is unreachable. Retry in a moment.",
   agent_not_configured: "The agent is not configured.",
   unauthorized: "Your session is no longer valid. Sign in again.",
+  forbidden: "Your role cannot read this.",
+  upstream_not_configured: "The CDMSS connection is not configured.",
+  upstream_unreachable: "CDMSS did not answer. Retry in a moment.",
+  upstream_failed: "CDMSS refused the read. Retry in a moment.",
+  not_found: "CDMSS does not know this thread.",
+  live_reads_off: "Live reads are switched off.",
+  audit_unavailable: "The audit log is unavailable, so nothing is shown. Retry later.",
   bad_params: "This view asked for something the read tool does not accept.",
 };
 export const describeScreenError = (code: string) => ERROR_TEXT[code] ?? "This read failed. Retry, or ask the agent in the panel.";
 
 /** Loads ONE governance read tool through /studio/api/screen/<tool>. `params` is compared by value. */
-export function useScreenTool<T extends GovernanceToolName>(
+export function useScreenTool<T extends AnyScreenToolName>(
   tool: T,
-  params: ScreenToolParams<T> | null,
-): ScreenToolState & { retry: () => void; params: ScreenToolParams<T> | null } {
+  params: AnyScreenToolParams<T> | null,
+): ScreenToolState & { retry: () => void; params: AnyScreenToolParams<T> | null } {
   const key = params === null ? null : JSON.stringify(params);
   const [attempt, setAttempt] = useState(0);
   // The result is tagged with the request that produced it; a different request means "loading".

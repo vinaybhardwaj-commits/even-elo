@@ -2,11 +2,11 @@
 
 import { useAgentContext, type JsonSerializable } from "@copilotkit/react-core/v2";
 import type { ScreenToolState } from "@/lib/screens/use-screen-tool";
-import type { GovernanceToolName } from "@/lib/screens/tool-schema";
+import type { AnyScreenToolName } from "@/lib/screens/tool-schema";
 
 const toJson = (v: unknown): JsonSerializable => JSON.parse(JSON.stringify(v ?? null));
 
-export type LoadedRead = { tool: GovernanceToolName; params: unknown; state: ScreenToolState };
+export type LoadedRead = { tool: AnyScreenToolName; params: unknown; state: ScreenToolState };
 
 /**
  * Tells the side-panel agent what the user is looking at: the screen id, the selected record ids, the active
