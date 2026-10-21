@@ -9,6 +9,10 @@ import { OpenGenUIPromptBridge } from "@/lib/sandbox/prompt-bridge";
 import { tableCatalog } from "@/components/generative-ui/table-catalog";
 import { ChatSessionProvider, useChatSession } from "@/components/chat/chat-session";
 import { ThemeProvider } from "@/hooks/use-theme";
+import { installCopilotFetchGuard } from "@/lib/copilot-fetch-guard";
+
+// Before any CopilotKit effect runs: caps runtime POSTs (no connect for unrun threads, bounded re-issues, backoff).
+installCopilotFetchGuard();
 
 const a2ui = { catalog: tableCatalog };
 
