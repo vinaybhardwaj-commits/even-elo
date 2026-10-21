@@ -74,6 +74,8 @@ async def run_screen_tool(tool_name: str, params: dict, staff_id: str) -> tuple[
 # ---------------------------------------------------------------------------------------------
 
 HTTP_TOOL_NAMES = frozenset({"eiris_incidents", "eiris_incident_detail", "opd_signals"})
+# M3 admin: users, roles, resignations and audit-log reads plus three confirm-card writes, audited by the Studio server like the tools above.
+HTTP_TOOL_NAMES = HTTP_TOOL_NAMES | frozenset({"admin_users", "admin_roles", "admin_resignations", "admin_audit", "admin_set_status", "admin_grant_role", "admin_process_resignation"})
 MAX_AUDIT_BODY_BYTES = 4096
 _MAX_ROWS = 100_000
 _MAX_MS = 600_000

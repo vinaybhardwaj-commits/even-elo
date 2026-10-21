@@ -290,3 +290,25 @@ def test_view_tools_serve_synthetic_fixtures_when_live_reads_are_off(main, db, m
     body = r.json()
     assert r.status_code == 200 and body["mode"] == "fixture" and body["synthetic"] is True and body["rows"]
     assert db[0] == [] and len(db[1]) == 1 and db[1][0].mode == "fixture"
+
+
+ADMIN_TOOLS = ["admin_users", "admin_roles", "admin_resignations", "admin_audit", "admin_set_status", "admin_grant_role", "admin_process_resignation"]
+
+
+@pytest.mark.parametrize("tool", ADMIN_TOOLS)
+def test_admin_tools_are_auditable_and_ops_names_are_not(monkeypatch, tool):
+    import asyncio
+
+    from src import studio_screen
+
+    rows = []
+
+    async def fake_audit(row):
+        rows.append(row)
+
+    monkeypatch.setattr(studio_audit, "audit_sink", fake_audit)
+    body = {"tool": tool, "params": {"profile_id": PID}, "row_count": 1, "duration_ms": 5, "outcome": "ok"}
+    assert asyncio.run(studio_screen.record_http_audit(body, STAFF)) == (200, {"ok": True})
+    assert rows[0].tool == tool and rows[0].staff_id == STAFF
+    for ops in ["admin_migrate", "admin_seed", "admin_wipe_smoke", "admin_dedupe", "admin_recompute"]:
+        assert asyncio.run(studio_screen.record_http_audit({**body, "tool": ops}, STAFF))[0] == 422
