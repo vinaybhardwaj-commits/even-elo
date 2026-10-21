@@ -18,7 +18,7 @@ export default function HomePage() {
   const { agent } = useAgent();
   const { newChat } = useChatSession();
   const { copilotkit } = useCopilotKit();
-  const { error, setError, onError, clear } = useRunError(agent);
+  const { error, setError, onError, clear, beginRetry } = useRunError(agent);
   const [retrying, setRetrying] = useState(false);
   const retryingRef = useRef(false);
   const chatRoot = useRef<HTMLDivElement>(null);
@@ -46,6 +46,7 @@ export default function HomePage() {
 
   const retry = async () => {
     if (retryingRef.current || agent.isRunning) return;
+    if (!beginRetry()) return;
     retryingRef.current = true;
     setRetrying(true);
     clear();
