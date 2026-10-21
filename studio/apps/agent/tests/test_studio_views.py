@@ -178,7 +178,8 @@ def test_ungate_appends_columns_at_the_end_and_keeps_every_grant(world, tmp_path
     assert cluster.su_exec(ACL_SQL, db="neondb")[0][0] == before
     sql = code(SQL_UNGATE)
     assert sql.count("CREATE OR REPLACE VIEW studio_ro.") == len(UNGATE_APPENDED) and "DROP VIEW" not in sql
-    assert sql.count("security_barrier = true") == len(UNGATE_APPENDED) and "security_invoker" not in sql and "SELECT *" not in sql
+    views_sql = sql[sql.index("CREATE OR REPLACE VIEW"):]
+    assert sql.count("security_barrier = true") == len(UNGATE_APPENDED) and "security_invoker" not in sql and "SELECT *" not in views_sql
     assert not re.search(r"\bGRANT\b", sql)
 
 

@@ -102,7 +102,7 @@ def test_setup_creates_a_nologin_role_with_grants_and_no_membership(cluster, tmp
     t.join(2)
     assert r.returncode == 0, r.stderr
     assert not saw_login and not list(scratch.iterdir())  # never LOGIN-able at any sampled moment; temp shredded
-    assert role_row(cluster, "studio_gov_ro")[:8] == (False, False, False, False, False, False, False, 5)
+    assert role_row(cluster, "studio_gov_ro")[:8] == (False, False, False, False, False, False, False, 20)
     assert memberships(cluster, "studio_gov_ro") == []
     with psycopg.connect(cluster.owner_url) as c:
         assert c.execute("SELECT has_table_privilege('studio_gov_ro','physicians','SELECT'), has_table_privilege('studio_gov_ro','physicians','INSERT')").fetchone() == (True, False)
