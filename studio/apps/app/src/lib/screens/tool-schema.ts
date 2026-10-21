@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DOCAUDIT_TOOL_NAMES, DOCAUDIT_TOOL_PARAMS } from "./docaudit-schema";
 
 // Shared (server + client) contract for the governance read tools (apps/agent/src/studio_tools.py): the six
 // M0-S2 tools and the six M1 tools that read the column-scoped studio_ro views.
@@ -12,6 +13,7 @@ export const GOVERNANCE_TOOL_NAMES = [
   "interventions",
   "incident_summary",
   "overview_counts",
+  ...DOCAUDIT_TOOL_NAMES,
   "physician_privileges",
   "physician_oppe",
   "physician_metrics",
@@ -67,6 +69,7 @@ export const SCREEN_TOOL_PARAMS = {
   interventions: z.object({ physician_id: uuid.optional(), limit: limit.optional() }).strict(),
   incident_summary: z.object({ window_days: windowDays.optional() }).strict(),
   overview_counts: z.object({}).strict(),
+  ...DOCAUDIT_TOOL_PARAMS,
   physician_privileges: z.object({ physician_id: uuid, limit: limit.optional() }).strict(),
   physician_oppe: z.object({ physician_id: uuid, limit: limit.optional() }).strict(),
   physician_metrics: z

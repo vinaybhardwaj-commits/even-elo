@@ -1,0 +1,30 @@
+{
+  "synthetic": true,
+  "note": "Synthetic sample data for STUDIO_LIVE_READS=0 and tests. Not real audits.",
+  "columns": [
+    "physician_id",
+    "full_name",
+    "primary_specialty",
+    "audits",
+    "findings",
+    "open_findings",
+    "critical_high_open",
+    "contested",
+    "responded",
+    "last_finding_on"
+  ],
+  "rows": [
+    {
+      "physician_id": "00000000-0000-4000-8000-000000000001",
+      "full_name": "Sample Physician A",
+      "primary_specialty": "Cardiology",
+      "audits": 1,
+      "findings": 2,
+      "open_findings": 1,
+      "critical_high_open": 1,
+      "contested": 0,
+      "responded": 1,
+      "last_finding_on": "2026-10-03"
+    }
+  ]
+}

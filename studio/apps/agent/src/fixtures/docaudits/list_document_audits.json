@@ -1,0 +1,54 @@
+{
+  "synthetic": true,
+  "note": "Synthetic sample data for STUDIO_LIVE_READS=0 and tests. Not real audits.",
+  "columns": [
+    "audit_id",
+    "external_ref",
+    "hospital_code",
+    "physician_id",
+    "full_name",
+    "primary_specialty",
+    "doc_type",
+    "doc_day",
+    "ingested_on",
+    "has_pdf",
+    "routed",
+    "findings",
+    "open_findings",
+    "top_severity"
+  ],
+  "rows": [
+    {
+      "audit_id": "00000000-0000-4000-8000-0000000000a1",
+      "external_ref": "SAMPLE-AUD-1",
+      "hospital_code": "SAMPLE-1",
+      "physician_id": "00000000-0000-4000-8000-000000000001",
+      "full_name": "Sample Physician A",
+      "primary_specialty": "Cardiology",
+      "doc_type": "progress",
+      "doc_day": "2026-10-01",
+      "ingested_on": "2026-10-02",
+      "has_pdf": true,
+      "routed": true,
+      "findings": 2,
+      "open_findings": 1,
+      "top_severity": "high"
+    },
+    {
+      "audit_id": "00000000-0000-4000-8000-0000000000a2",
+      "external_ref": "SAMPLE-AUD-2",
+      "hospital_code": "SAMPLE-1",
+      "physician_id": "00000000-0000-4000-8000-000000000002",
+      "full_name": "Sample Physician B",
+      "primary_specialty": "Orthopaedics",
+      "doc_type": "ot",
+      "doc_day": "2026-10-03",
+      "ingested_on": "2026-10-04",
+      "has_pdf": false,
+      "routed": false,
+      "findings": 0,
+      "open_findings": 0,
+      "top_severity": "none"
+    }
+  ]
+}

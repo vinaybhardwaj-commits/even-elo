@@ -16,9 +16,10 @@ import pytest
 
 from src import studio_audit, studio_tools
 from tests.neon_harness import AGENT, OPS, PROBE, cluster, role_row, run_roles  # noqa: F401  (fixtures)
-from tests.test_lc1_live_probe import FREE_TEXT_COLUMNS, VIEW_BASE_TABLES, VIEW_COLUMNS
+from tests.test_lc1_live_probe import ALL_VIEW_COLUMNS, DOCAUDIT_BASE_TABLES, DOCAUDIT_VIEW_COLUMNS, FREE_TEXT_COLUMNS, VIEW_BASE_TABLES, VIEW_COLUMNS
 
 SQL_VIEWS = OPS / "0003_studio_views.sql"
+SQL_DOCAUDIT = OPS / "0007_docaudits_views.sql"
 STAFF = "11111111-1111-4111-8111-111111111111"
 CFG = {"configurable": {studio_tools.STAFF_KEY: STAFF}}
 VIEW_TOOLS = {
@@ -90,6 +91,8 @@ def world(cluster, tmp_path):
     assert r.returncode == 0, r.stderr
     v, _ = run_roles(cluster, tmp_path, sql_file=SQL_VIEWS, tag="views")
     assert v.returncode == 0, v.stderr
+    d, _ = run_roles(cluster, tmp_path, sql_file=SQL_DOCAUDIT, tag="docaudit-views")  # the probe (EXPECT_VIEWS=1) wants both files
+    assert d.returncode == 0, d.stderr
     i = ids()
     s = lambda q, *a: cluster.su_exec(q % a if a else q, db="neondb")
     s(f"INSERT INTO hospitals (id, code, name) VALUES ('{i['h1']}', 'T1', 'Hosp One'), ('{i['h2']}', 'T2', 'Hosp Two')")
@@ -195,6 +198,77 @@ def test_rerun_is_idempotent_and_keeps_grants(world, tmp_path):
     assert before == after
     with ro(url) as c:
         assert c.execute("SELECT count(*) FROM studio_ro.physician_privileges").fetchone()[0] == 1
+
+
+# ---------------------------------------------------------------- 0003 and 0007 compose in either order
+
+ACL_SQL = "SELECT string_agg(relname || '=' || coalesce(relacl::text, ''), ';' ORDER BY relname) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'studio_ro' AND relkind = 'v'"
+
+
+def _assert_all_views_readable_and_base_tables_denied(cluster, url):
+    cluster.su_exec("ALTER ROLE studio_gov_ro LOGIN PASSWORD 'ro-test-pw'")
+    with ro(url) as c:
+        for view, cols in ALL_VIEW_COLUMNS.items():
+            assert tuple(d.name for d in c.execute(f"SELECT * FROM studio_ro.{view} WHERE false").description) == cols
+        for table in (*VIEW_BASE_TABLES, *DOCAUDIT_BASE_TABLES):
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                c.execute(f"SELECT * FROM public.{table}")
+            c.rollback()
+
+
+@pytest.mark.parametrize("order", [("a", "b"), ("b", "a"), ("a", "b", "a"), ("b", "a", "b", "a")])
+def test_0003_and_0007_compose_in_any_order_and_reruns_keep_every_grant(cluster, tmp_path, order):
+    files = {"a": SQL_VIEWS, "b": SQL_DOCAUDIT}
+    assert run_roles(cluster, tmp_path, tag="roles")[0].returncode == 0
+    for n, key in enumerate(order):
+        r, _ = run_roles(cluster, tmp_path, sql_file=files[key], tag=f"c{n}")
+        assert r.returncode == 0, r.stderr
+    after_all = cluster.su_exec(ACL_SQL, db="neondb")[0][0]
+    # a further 0003 re-run (the case that used to strip the doc-audit grants) changes nothing
+    r, _ = run_roles(cluster, tmp_path, sql_file=SQL_VIEWS, tag="rerun3")
+    assert r.returncode == 0, r.stderr
+    assert cluster.su_exec(ACL_SQL, db="neondb")[0][0] == after_all
+    for v in DOCAUDIT_VIEW_COLUMNS:
+        assert f"{v}=" in after_all and "studio_gov_ro=r/" in after_all.split(f"{v}=")[1].split(";")[0], v
+    cluster.su_exec("ALTER ROLE studio_gov_ro LOGIN PASSWORD 'ro-test-pw'")
+    _assert_all_views_readable_and_base_tables_denied(cluster, cluster.url("studio_gov_ro", "neondb", "ro-test-pw"))
+
+
+def test_0007_rerun_after_0003_does_not_touch_the_m1_grants(cluster, tmp_path):
+    assert run_roles(cluster, tmp_path, tag="roles")[0].returncode == 0
+    assert run_roles(cluster, tmp_path, sql_file=SQL_VIEWS, tag="v")[0].returncode == 0
+    m1_acl = cluster.su_exec("SELECT string_agg(relname || '=' || relacl::text, ';' ORDER BY relname) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'studio_ro' AND relkind = 'v'", db="neondb")[0][0]
+    for n in range(2):
+        assert run_roles(cluster, tmp_path, sql_file=SQL_DOCAUDIT, tag=f"d{n}")[0].returncode == 0
+    for part in m1_acl.split(";"):
+        assert part in cluster.su_exec(ACL_SQL, db="neondb")[0][0]
+
+
+def test_0007_revokes_a_stray_grant_on_its_views_but_a_stray_column_grant_rolls_back(cluster, tmp_path):
+    assert run_roles(cluster, tmp_path, tag="roles")[0].returncode == 0
+    assert run_roles(cluster, tmp_path, sql_file=SQL_VIEWS, tag="v")[0].returncode == 0
+    assert run_roles(cluster, tmp_path, sql_file=SQL_DOCAUDIT, tag="d")[0].returncode == 0
+    cluster.su_exec("GRANT SELECT ON studio_ro.document_audit_list TO PUBLIC", db="neondb")
+    assert run_roles(cluster, tmp_path, sql_file=SQL_DOCAUDIT, tag="d2")[0].returncode == 0
+    assert cluster.su_exec("SELECT count(*) FROM pg_class c, aclexplode(c.relacl) a WHERE c.oid = 'studio_ro.document_audit_list'::regclass AND a.grantee = 0", db="neondb")[0][0] == 0
+    cluster.su_exec("GRANT SELECT (physician_id) ON public.document_audits TO studio_gov_ro", db="neondb")
+    r, _ = run_roles(cluster, tmp_path, sql_file=SQL_DOCAUDIT, tag="d3")
+    assert r.returncode != 0 and "can read base table document_audits" in r.stderr
+
+
+@pytest.mark.parametrize("old,new", [
+    ("d.source, d.created_at\nFROM public.document_audits d;", "d.source, d.created_at, d.external_ref AS code\nFROM public.document_audits d;"),
+    ("d.doc_type, d.note_date AS doc_day", "d.doc_type"),
+])
+def test_0007_allowlist_rolls_back_an_added_or_missing_column(cluster, tmp_path, old, new):
+    assert run_roles(cluster, tmp_path, tag="roles")[0].returncode == 0
+    text = SQL_DOCAUDIT.read_text()
+    assert old in text
+    bad = tmp_path / "bad7.sql"
+    bad.write_text(text.replace(old, new))
+    r, _ = run_roles(cluster, tmp_path, sql_file=bad, tag="bad7")
+    assert r.returncode != 0 and "differ from the reviewed allowlist" in r.stderr
+    assert cluster.su_exec("SELECT count(*) FROM pg_namespace WHERE nspname = 'studio_ro'", db="neondb")[0][0] == 0
 
 
 def test_migration_refuses_without_the_read_role_and_as_a_superuser(cluster, tmp_path):

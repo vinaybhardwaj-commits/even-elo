@@ -99,7 +99,9 @@ FROM public.incidents i
 GROUP BY i.target_physician_id, i.source, i.polarity, COALESCE(i.severity, 'n/a'), i.status, date_trunc('month', i.submitted_at)::date;
 
 -- Grants: nothing on the views for anyone but the Studio read role; no grant on any base table.
--- Revoke from EVERY grantee other than the owner (default privileges may have granted to other roles).
+-- Revoke from EVERY grantee other than the owner (default privileges may have granted to other roles), on
+-- THESE seven views only: later slices (0007_docaudits_views.sql) own further studio_ro views and their grants,
+-- and re-running this file must not strip them.
 DO $$
 DECLARE
   g record;
@@ -109,6 +111,8 @@ BEGIN
     FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace,
          LATERAL aclexplode(c.relacl) a
     WHERE n.nspname = 'studio_ro' AND c.relkind = 'v' AND a.grantee <> c.relowner
+      AND c.relname IN ('physician_privileges', 'physician_oppe', 'physician_metrics', 'physician_qualifications',
+                        'capture_gaps', 'incident_reply_status', 'physician_feedback')
   LOOP
     IF g.grantee = 0 THEN
       EXECUTE format('REVOKE ALL ON %s FROM PUBLIC', g.rel);

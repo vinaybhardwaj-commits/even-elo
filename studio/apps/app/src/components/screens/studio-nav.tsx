@@ -8,6 +8,7 @@ export const NAV_ITEMS = [
   { href: "/overview", label: "Overview" },
   { href: "/physicians", label: "Physicians" },
   { href: "/audit-findings", label: "Audit findings" },
+  { href: "/document-audits", label: "Document audits" },
   { href: "/rmo-inbox", label: "RMO inbox" },
   { href: "/", label: "Chat" },
 ] as const;

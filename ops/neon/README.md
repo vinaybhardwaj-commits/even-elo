@@ -35,6 +35,14 @@ STUDIO_EXPECT_VIEWS=1 GOV_RO_DATABASE_URL="$(<"$XDG_RUNTIME_DIR/gov-ro-url")" uv
 ```
 It refuses a superuser, a Studio role, a missing `studio_gov_ro`, and a `studio_ro` schema owned by someone else. The role gets `USAGE` on `studio_ro` and `SELECT` on seven `security_barrier` views; no grant is made on any base table, and a post-check rolls back if one is. The file is numbered 0003 by order; `run-roles.sh --login` selects `0003_login.sql` by name, so there is no clash. Without `STUDIO_EXPECT_VIEWS=1` the probe skips the view checks when the schema is absent; with it, a missing schema fails.
 
+### Document-audit views (M2): `0007_docaudits_views.sql`
+Adds two more `studio_ro` views (`document_audit_list`, `document_audit_finding_list`) over `document_audits` / `document_audit_findings`, which stay denied. Same rules as 0003; run after it (either order is safe: each file revokes and grants only on its own views, so re-running one never strips the other's grants):
+```bash
+SQL_FILE=ops/neon/0007_docaudits_views.sql ops/neon/run-roles.sh "$XDG_RUNTIME_DIR/owner-url"    # one transaction, idempotent
+STUDIO_EXPECT_VIEWS=1 GOV_RO_DATABASE_URL="$(<"$XDG_RUNTIME_DIR/gov-ro-url")" uv run --directory studio/apps/agent pytest tests/test_lc1_live_probe.py -q
+```
+The post-check compares the views' columns with an explicit allowlist in the file (a renamed column cannot slip past a name regex). The probe with `STUDIO_EXPECT_VIEWS=1` expects BOTH files to be installed (nine views) and that the two base tables stay denied.
+
 Then move the DSN into the even-studio Vercel project and the Asus agent env (never even-elo), and destroy the files. To rotate later, follow **Rotation** below: do NOT just repeat steps 2 and 3.
 
 ## Rotation (the role is already LOGIN)

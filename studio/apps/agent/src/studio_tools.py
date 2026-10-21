@@ -249,8 +249,8 @@ def assert_read_only(sql: str) -> None:
         raise ValueError("studio tools are read-only: statement refused")
 
 
-def query_hash(tool_name: str) -> str:
-    return hashlib.sha256(ALL_SQL[tool_name].encode()).hexdigest()[:12]
+def query_hash(tool_name: str, sql: Optional[str] = None) -> str:
+    return hashlib.sha256((sql or ALL_SQL[tool_name]).encode()).hexdigest()[:12]
 
 
 def like_pattern(text: str) -> str:
@@ -307,6 +307,7 @@ fetch_rows = _fetch_rows_pg
 
 
 def load_fixture(tool_name: str, limit: Optional[int] = None, offset: int = 0) -> list[dict]:
+    # tool_name may carry a subdirectory ("docaudits/x"): only the six top-level fixtures belong to ALL_SQL.
     path = FIXTURE_DIR / f"{tool_name}.json"
     try:
         rows = json.loads(path.read_text())["rows"]
@@ -323,8 +324,14 @@ async def run_read_tool(
     config: Optional[RunnableConfig],
     limit: Optional[int],
     offset: int = 0,
+    sql: Optional[str] = None,
+    fixture: Optional[str] = None,
 ) -> str:
-    """Execute (live or fixture), audit, and return the typed table payload as JSON."""
+    """Execute (live or fixture), audit, and return the typed table payload as JSON.
+
+    `sql` / `fixture`: tools outside ALL_SQL (other modules' read tools) pass their own fixed SQL text and fixture
+    name; everything else (audit, kill switch, source line) is shared."""
+    statement = sql or ALL_SQL[tool_name]
     staff_id = staff_id_from(config)
     started = time.monotonic()
     live = live_reads_enabled()
@@ -347,10 +354,10 @@ async def run_read_tool(
     rows: list[dict] = []
     try:
         if live:
-            raw = await fetch_rows(ALL_SQL[tool_name], sql_params)
+            raw = await fetch_rows(statement, sql_params)
             rows = [{k: _json_safe(v) for k, v in dict(r).items()} for r in raw]
         else:
-            rows = load_fixture(tool_name, limit, offset)
+            rows = load_fixture(fixture or tool_name, limit, offset)
     except ToolError as exc:
         failure = str(exc)
     except PinError:
@@ -380,7 +387,7 @@ async def run_read_tool(
     columns = list(rows[0].keys()) if rows else []
     return json.dumps(
         {
-            "source": {"tool": tool_name, "query_hash": query_hash(tool_name)},
+            "source": {"tool": tool_name, "query_hash": query_hash(tool_name, statement)},
             "mode": "live" if live else "fixture",
             "synthetic": not live,
             "columns": columns,

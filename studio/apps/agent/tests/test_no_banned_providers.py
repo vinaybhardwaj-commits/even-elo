@@ -62,6 +62,10 @@ def test_agent_tools_list_is_planning_plus_read_only_governance():
             "physician_qualifications",
             "capture_gaps",
             "feedback_by_physician",
+            "list_document_audits",
+            "document_audit_detail",
+            "document_audit_doctor_rollup",
+            "document_audit_headline",
         ]
     finally:
         sys.modules.pop("main", None)

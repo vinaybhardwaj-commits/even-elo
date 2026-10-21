@@ -1,0 +1,38 @@
+{
+  "synthetic": true,
+  "note": "Synthetic sample data for STUDIO_LIVE_READS=0 and tests. Not real audits.",
+  "columns": [
+    "metric",
+    "value"
+  ],
+  "rows": [
+    {
+      "metric": "audits_total",
+      "value": 2
+    },
+    {
+      "metric": "findings_total",
+      "value": 2
+    },
+    {
+      "metric": "findings_open",
+      "value": 1
+    },
+    {
+      "metric": "critical_high_open",
+      "value": 1
+    },
+    {
+      "metric": "doctors_with_findings",
+      "value": 1
+    },
+    {
+      "metric": "findings_responded",
+      "value": 1
+    },
+    {
+      "metric": "days_since_last_ingest",
+      "value": 3
+    }
+  ]
+}

@@ -30,12 +30,21 @@ VIEW_COLUMNS = {
     "incident_reply_status": ("reply_id", "incident_id", "physician_id", "incident_status", "replied_by_physician", "replied_at"),
     "physician_feedback": ("physician_id", "source", "polarity", "severity", "status", "month", "incidents"),
 }
-VIEW_BASE_TABLES = ("privileges", "oppe_reviews", "clinical_metrics_monthly", "qualifications", "gov_capture_gaps", "incident_replies")
+# Document-audit views (ops/neon/0007_docaudits_views.sql), EXACT columns; installed by a second owner step.
+DOCAUDIT_VIEW_COLUMNS = {
+    "document_audit_list": ("audit_id", "external_ref", "hospital_code", "physician_id", "doc_type", "doc_day", "ingested_at", "last_synced_at", "triage_routed_at", "doc_class", "has_pdf", "source", "created_at"),
+    "document_audit_finding_list": ("finding_id", "audit_id", "physician_id", "finding_label", "severity", "status", "author_confirmed", "authored_at", "recurrence_count", "portal_visible", "response_owner", "signal_reference", "signal_type", "doc_class", "cdmss_routed", "response_verb", "responded_at", "sync_state", "sync_attempts", "sync_permanent", "created_at"),
+}
+DOCAUDIT_BASE_TABLES = ("document_audits", "document_audit_findings")
+ALL_VIEW_COLUMNS = {**VIEW_COLUMNS, **DOCAUDIT_VIEW_COLUMNS}
+VIEW_BASE_TABLES = ("privileges", "oppe_reviews", "clinical_metrics_monthly", "qualifications", "gov_capture_gaps", "incident_replies") + DOCAUDIT_BASE_TABLES
 FREE_TEXT_COLUMNS = (
     "reply_text", "decision_notes", "packet_jsonb", "withdrawn_reason", "granted_by", "reviewer_id", "source_file", "uploaded_by",
     "institution", "file_data", "verified_by", "note", "source_doc", "replied_by_profile_id", "replied_by_physician_id",
     "narrative", "evidence_urls", "reporter_name", "reporter_email", "patient_ref", "patient_rating", "submitter_user_id",
     "retraction_reason", "category", "target_physician_id",
+    "finding_body", "doctor_response_comment", "evidence_excerpt", "citations_json", "patient_json", "cdmss_sync_error", "authored_by_name",
+    "authored_by_profile_id", "cdmss_pdf_url", "doctor_uid", "content_hash", "queue_item_ref", "source_audit_id",
 )
 COLUMN_GRANT_ONLY = ("profiles", "profiles_with_roles")  # id/status/is_super_admin and id/must_change_pin only
 WRITES = {
@@ -253,7 +262,7 @@ def test_the_catalogue_is_enumerated_and_the_named_examples_exist():
 
 
 def test_every_relation_in_every_schema_outside_the_grant_list_is_denied():
-    granted = {("public", t) for t in GOV_TABLES} | {("studio_ro", v) for v in VIEW_COLUMNS if views_installed()}
+    granted = {("public", t) for t in GOV_TABLES} | {("studio_ro", v) for v in ALL_VIEW_COLUMNS if views_installed()}
     checked = 0
     for schema, rel in _relations():
         if (schema, rel) in granted:
@@ -268,23 +277,23 @@ def views_installed() -> bool:
     return bool(scalar("SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'studio_ro')"))
 
 
-# The views are installed by a separate owner step (0003_studio_views.sql). Without STUDIO_EXPECT_VIEWS=1 a
+# The views are installed by separate owner steps (0003_studio_views.sql, 0007_docaudits_views.sql). Without STUDIO_EXPECT_VIEWS=1 a
 # database that has not had it yet skips these; with it, a missing schema is a FAILURE.
 def _need_views():
     if views_installed():
         return
     if os.environ.get("STUDIO_EXPECT_VIEWS") == "1":
-        pytest.fail("studio_ro views are not installed (0003_studio_views.sql was not run)")
+        pytest.fail("studio_ro views are not installed (0003_studio_views.sql / 0007_docaudits_views.sql was not run)")
     pytest.skip("studio_ro views not installed in this database")
 
 
-@pytest.mark.parametrize("view", sorted(VIEW_COLUMNS))
+@pytest.mark.parametrize("view", sorted(ALL_VIEW_COLUMNS))
 def test_view_select_works(view):
     _need_views()
     assert scalar(f"SELECT count(*) >= 0 FROM studio_ro.{view}") is True
 
 
-@pytest.mark.parametrize("view", sorted(VIEW_COLUMNS))
+@pytest.mark.parametrize("view", sorted(ALL_VIEW_COLUMNS))
 def test_view_exposes_exactly_the_reviewed_columns_and_no_free_text(view):
     _need_views()
     with psycopg.connect(DSN, autocommit=False, prepare_threshold=None) as conn:
@@ -292,7 +301,7 @@ def test_view_exposes_exactly_the_reviewed_columns_and_no_free_text(view):
             cols = tuple(d.name for d in conn.execute(f"SELECT * FROM studio_ro.{view} WHERE false").description)
         finally:
             conn.rollback()
-    assert cols == VIEW_COLUMNS[view]
+    assert cols == ALL_VIEW_COLUMNS[view]
     assert not set(cols) & set(FREE_TEXT_COLUMNS)
 
 
@@ -312,14 +321,14 @@ def test_views_are_security_barrier_owner_run_and_not_owned_by_the_role():
              AND NOT COALESCE(c.reloptions, '{}') @> ARRAY['security_invoker=true']
              AND c.relowner <> (SELECT oid FROM pg_roles WHERE rolname = current_user)"""
     )
-    assert n == len(VIEW_COLUMNS)
-    assert scalar("SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'studio_ro'") == len(VIEW_COLUMNS)
+    assert n == len(ALL_VIEW_COLUMNS)
+    assert scalar("SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'studio_ro'") == len(ALL_VIEW_COLUMNS)
 
 
 def test_views_are_read_only_for_the_role_and_the_schema_has_no_create():
     _need_views()
     # Catalogue, not an attempted write: a view over a join is "not updatable" before Postgres checks privileges.
-    for view in VIEW_COLUMNS:
+    for view in ALL_VIEW_COLUMNS:
         rel = f"studio_ro.{view}"
         assert scalar("SELECT has_any_column_privilege(current_user, %s, 'INSERT') OR has_any_column_privilege(current_user, %s, 'UPDATE')", (rel, rel)) is False, view
         assert scalar("SELECT has_table_privilege(current_user, %s, 'DELETE') OR has_table_privilege(current_user, %s, 'TRUNCATE')", (rel, rel)) is False, view
