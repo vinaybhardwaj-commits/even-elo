@@ -100,7 +100,8 @@ def test_unauthenticated_post_never_reaches_the_graph(main):
 
 def test_governance_tools_are_registered_and_no_write_tool_exists(main):
     names = {t.name for t in main.TOOLS}
-    assert {"list_physicians", "physician_profile", "signal_snapshots", "interventions", "incident_summary", "overview_counts"} <= names
+    assert {"list_physicians", "physician_profile", "signal_snapshots", "interventions", "incident_summary", "overview_counts",
+            "physician_privileges", "physician_oppe", "physician_metrics", "physician_qualifications", "capture_gaps", "feedback_by_physician"} <= names
     assert not any(w in n for n in names for w in ("write", "update", "delete", "insert", "create"))
 
 

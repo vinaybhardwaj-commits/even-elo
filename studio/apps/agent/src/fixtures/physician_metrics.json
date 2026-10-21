@@ -1,0 +1,33 @@
+{
+  "synthetic": true,
+  "note": "Synthetic sample data for STUDIO_LIVE_READS=0 and tests. Not real physicians.",
+  "columns": [
+    "hospital_code",
+    "year",
+    "month",
+    "opd_count",
+    "ipd_admissions",
+    "ot_cases",
+    "revenue_inr"
+  ],
+  "rows": [
+    {
+      "hospital_code": "SMP",
+      "year": 2026,
+      "month": 9,
+      "opd_count": 110,
+      "ipd_admissions": 9,
+      "ot_cases": 5,
+      "revenue_inr": 210000.5
+    },
+    {
+      "hospital_code": "SMP",
+      "year": 2026,
+      "month": 8,
+      "opd_count": 120,
+      "ipd_admissions": 10,
+      "ot_cases": 6,
+      "revenue_inr": 250000.0
+    }
+  ]
+}

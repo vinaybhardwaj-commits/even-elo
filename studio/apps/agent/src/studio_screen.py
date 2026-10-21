@@ -3,7 +3,8 @@
 Fixed layouts in the app load their data through the SAME audited read tools the chat uses. This module
 only adds a direct-invocation door; it adds no SQL, no grants and no write path.
 
-  * allowlist: exactly the six governance read tools (GOVERNANCE_TOOL_NAMES), nothing else;
+  * allowlist: exactly the governance read tools (GOVERNANCE_TOOL_NAMES: the six M0-S2 tools and the six
+    studio_ro view tools added in M1), nothing else;
   * params: validated against the tool's own pydantic args model; unknown keys are refused;
   * identity: the staff id comes from the verified actor JWT (StudioAuthMiddleware), never the body;
   * audit + live/fixture switch + source line + query hash: inherited, because the tool itself runs
