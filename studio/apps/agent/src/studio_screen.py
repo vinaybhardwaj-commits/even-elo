@@ -73,7 +73,21 @@ async def run_screen_tool(tool_name: str, params: dict, staff_id: str) -> tuple[
 # studio_audit table. Metadata only: tool, params hash, counts, timing. Never row content.
 # ---------------------------------------------------------------------------------------------
 
-HTTP_TOOL_NAMES = frozenset({"eiris_incidents", "eiris_incident_detail", "opd_signals"})
+HTTP_TOOL_NAMES = frozenset({"eiris_incidents", "eiris_incident_detail", "opd_signals"}) | frozenset(
+    {
+        # M3-surgical: reads of the even-elo surgical-governance API, plus one name for confirmed writes.
+        "surgical_overview",
+        "surgical_leaderboard",
+        "surgical_vcs",
+        "surgical_vc_detail",
+        "surgical_cases",
+        "surgical_streams",
+        "surgical_weights",
+        "surgical_positions",
+        "surgical_audit_log",
+        "surgical_write",
+    }
+)
 MAX_AUDIT_BODY_BYTES = 4096
 _MAX_ROWS = 100_000
 _MAX_MS = 600_000
