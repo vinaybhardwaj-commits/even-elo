@@ -14,6 +14,7 @@ export const NAV_ITEMS = [
   { href: "/feedback", label: "Patient feedback" },
   { href: "/surgical", label: "Surgical" },
   { href: "/onboarding", label: "Onboarding" },
+  { href: "/admin/users", label: "Admin" },
   { href: "/", label: "Chat" },
 ] as const;
 
