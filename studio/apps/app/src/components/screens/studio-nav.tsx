@@ -12,6 +12,7 @@ export const NAV_ITEMS = [
   { href: "/rmo-inbox", label: "RMO inbox" },
   { href: "/incidents", label: "e-IRIS incidents" },
   { href: "/feedback", label: "Patient feedback" },
+  { href: "/surgical", label: "Surgical" },
   { href: "/", label: "Chat" },
 ] as const;
 
