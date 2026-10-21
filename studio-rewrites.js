@@ -27,11 +27,29 @@ function studioRewrites(origin) {
 function studioRedirects(origin) {
   if (!studioBase(origin)) return [];
   const notDoctorsHost = [{ type: "host", value: "doctors\\..*" }];
-  return [
-    { source: "/overview", destination: "/studio/overview", permanent: false, missing: notDoctorsHost },
-    { source: "/physicians", destination: "/studio/physicians", permanent: false, missing: notDoctorsHost },
-    { source: "/physicians/:id", destination: "/studio/physicians/:id", permanent: false, missing: notDoctorsHost },
+  const map = [
+    ["/overview", "/studio/overview"],
+    ["/physicians", "/studio/physicians"],
+    ["/physicians/:id", "/studio/physicians/:id"],
+    ["/audit-findings", "/studio/audit-findings"],
+    ["/audit-findings/:reference", "/studio/audit-findings/:reference"],
+    ["/document-audits", "/studio/document-audits"],
+    ["/document-audits/:id", "/studio/document-audits/:id"],
+    ["/rmo-inbox", "/studio/rmo-inbox"],
+    ["/incidents", "/studio/incidents"],
+    ["/safety", "/studio/incidents"],
+    ["/mm", "/studio/surgical"],
+    ["/surgical-governance", "/studio/surgical"],
+    ["/surgical-governance/vc/:id", "/studio/surgical/vcs/:id"],
+    ["/onboarding", "/studio/onboarding"],
+    ["/onboarding/:id", "/studio/onboarding/:id"],
+    ["/admin/users", "/studio/admin/users"],
+    ["/admin/resignations", "/studio/admin/resignations"],
   ];
+  // Only exact pages listed above move. Sub-pages without a Studio equivalent (e.g. /incidents/new, /mm/cases/:id,
+  // /surgical-governance/input|admin|capture-queue|ot-sheets, /admin, /admin/pending, /admin/metrics, /admin/users/:id,
+  // /audit-findings/mapping), /api/* and /portal stay on the old app. Query strings are preserved by Next.
+  return map.map(([source, destination]) => ({ source, destination, permanent: false, missing: notDoctorsHost }));
 }
 
 module.exports = { studioRewrites, studioRedirects };
