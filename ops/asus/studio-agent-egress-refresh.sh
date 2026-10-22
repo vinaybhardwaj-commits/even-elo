@@ -11,10 +11,12 @@
 # If any host fails to resolve the script exits 1 and leaves the existing rules and pins as they are.
 # After a success it starts the relay and the agent if they are enabled but not running (boot-time retry, see unit Restart=),
 # unless an operator stopped them (/run/studio-agent/operator-stop, set by `install-studio-agent.sh --stop`).
+#   --print-nft  with --check: print the rendered nft table instead of checking it (tests: allowlist diff).
 #   --check   render and `nft -c` only; addresses from $STUDIO_EGRESS_TEST_IPS; changes nothing.
 set -euo pipefail
 
 CONF=/etc/studio-agent/egress.conf
+EXTRA_HOSTS=/etc/studio-agent/neon-hosts.extra
 SVC=studio-agent
 RELAY_SVC=studio-pgrelay
 PROXY_PORT=8888
@@ -25,8 +27,9 @@ PINS=$RUN_DIR/neon-pins.json
 STAMP=/var/lib/studio-agent-egress-ok
 STOP_FLAG=/run/studio-agent/operator-stop
 LOCK=/run/lock/studio-agent-egress.lock
-CHECK=0
+CHECK=0 PRINT=0
 [ "${1:-}" = "--check" ] && CHECK=1
+[ "${2:-}" = "--print-nft" ] && PRINT=1
 
 if [ "$CHECK" = 1 ]; then
   NEON_HOSTS=${NEON_HOSTS:-example.invalid}
@@ -38,6 +41,13 @@ else
   . "$CONF"
   UID_AGENT=$(id -u "$SVC")
   UID_RELAY=$(id -u "$RELAY_SVC")
+  # extra relay-only Neon hosts (one per line), kept apart from egress.conf so an installer run cannot drop them: ops/cdmss/relay-install.sh
+  # writes the CDMSS endpoint here. They are pinned and allowed for the relay uid on :5432 exactly like a --neon-host, nothing broader.
+  if [ -s "$EXTRA_HOSTS" ]; then
+    while read -r h _ || [ -n "$h" ]; do
+      if [[ $h =~ ^[A-Za-z0-9.-]+$ ]]; then NEON_HOSTS="$NEON_HOSTS $h"; fi
+    done <"$EXTRA_HOSTS"
+  fi
   [ -n "${BROKER_ADDR:-}" ] || { echo "BROKER_ADDR missing from $CONF (rerun the installer with --broker)" >&2; exit 1; }
   mkdir -p "$(dirname "$LOCK")"
   exec 9>"$LOCK"
@@ -144,6 +154,10 @@ NFT
 NFT
 }
 
+if [ "$CHECK" = 1 ] && [ "$PRINT" = 1 ]; then
+  render_nft
+  exit 0
+fi
 if [ "$CHECK" = 1 ]; then
   if [ "$(id -u)" = 0 ]; then render_nft | nft -c -f -; else render_nft | unshare -rn nft -c -f -; fi
   echo "nft -c ok"
