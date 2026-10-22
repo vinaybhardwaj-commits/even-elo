@@ -102,6 +102,23 @@ describe("admin", () => {
     expect(calls).toEqual([]);
   });
 
+  it("an audit POST that hits a stale socket is re-sent once and the read still succeeds", async () => {
+    let auditSends = 0;
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (url.endsWith("/audit")) {
+        auditSends += 1;
+        if (auditSends === 1) throw new TypeError("fetch failed", { cause: Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }) });
+        return json({ ok: true }, auditStatus);
+      }
+      return up(url, init);
+    });
+    const r = await runAdmin("users", {}, ACTOR);
+    expect(r.status).toBe(200);
+    expect(auditSends).toBe(2);
+    expect(upstream()).toHaveLength(1);
+  });
+
   it("maps upstream failures to fixed codes without echoing text", async () => {
     up = () => json({ ok: false, error: "SECRET-UPSTREAM" }, 500);
     const r = await runAdmin("users", {}, ACTOR);
