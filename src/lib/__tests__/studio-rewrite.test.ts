@@ -109,7 +109,7 @@ describe("Studio redirects (role-conditional, in middleware)", () => {
     }
   });
 
-  it("<Link> prefetches are not redirected (alone or with rsc / _rsc / state-tree), so they cost nothing in the Studio", async () => {
+  it("<Link> prefetches of moved pages get an empty 204 (alone or with rsc / _rsc / state-tree), so a click hard-navigates to the Studio", async () => {
     process.env.STUDIO_ORIGIN = ORIGIN;
     const t = await jwt(true);
     const prefetches: Array<[string, string, Record<string, string>]> = [
@@ -119,9 +119,8 @@ describe("Studio redirects (role-conditional, in middleware)", () => {
     ];
     for (const [name, path, headers] of prefetches) {
       const r = await hit(path, t, { headers });
-      expect(r.status, name).toBe(200);
+      expect(r.status, name).toBe(204);
       expect(r.headers.get("location"), name).toBeNull();
-      expect(r.headers.get("x-middleware-next"), name).toBe("1");
     }
   });
 

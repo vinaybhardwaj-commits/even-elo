@@ -205,9 +205,12 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(new URL("/auth/change-pin", request.url));
     }
 
-    // Pages that moved into the Studio: super_admin only (the Studio zone admits nobody else), navigations only (not <Link> prefetches).
-    if (payload.is_super_admin === true && (request.method === "GET" || request.method === "HEAD") && !isPrefetchRequest(request)) {
+    // Pages that moved into the Studio: super_admin only (the Studio zone admits nobody else), prefetches get 204.
+    if (payload.is_super_admin === true && (request.method === "GET" || request.method === "HEAD")) {
       const to = studioRedirectPath(process.env.STUDIO_ORIGIN, pathname, host);
+      // A <Link> prefetch of a moved page gets an empty 204, not the old page: Next then treats the
+      // later click as a hard navigation (fetch-server-response doMpaNavigation), which gets the 307 below.
+      if (to && isPrefetchRequest(request)) return new NextResponse(null, { status: 204 });
       if (to) {
         const url = request.nextUrl.clone();
         url.pathname = to;
