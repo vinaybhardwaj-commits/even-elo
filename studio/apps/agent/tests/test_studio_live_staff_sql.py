@@ -10,13 +10,13 @@ skips when the even-elo repo root (parents[4]) is not around or no Postgres is a
 import importlib.util
 import os
 import re
-import tempfile
 import uuid
 from pathlib import Path
 
 import psycopg
 import pytest
 from psycopg.conninfo import make_conninfo
+from tests.pg_teardown import start_server, stop_server
 
 ROOT = Path(__file__).resolve().parents[4]
 MIGRATIONS_TS = ROOT / "src" / "lib" / "migrations.ts"
@@ -44,15 +44,13 @@ def uri():
     if not base:
         if importlib.util.find_spec("pgserver") is None:
             pytest.skip("no local Postgres (set STUDIO_TEST_PG_URI or install pgserver)")
-        import pgserver
-
-        server = pgserver.get_server(tempfile.mkdtemp(prefix="studio-live-staff-"))
+        server = start_server("studio-live-staff")
         base = server.get_uri()
     try:
         yield base
     finally:
         if server:
-            server.cleanup()
+            stop_server(server)
 
 
 @pytest.fixture(scope="module")

@@ -10,7 +10,6 @@ import asyncio
 import importlib.util
 import os
 import re
-import tempfile
 import uuid
 from pathlib import Path
 
@@ -19,6 +18,7 @@ import pytest
 
 import apply_migration
 from src import studio_tools
+from tests.pg_teardown import start_server, stop_server
 from tests.neon_harness import incident_view_ddl
 from src.studio_auth import PostgresNonceStore
 
@@ -72,15 +72,13 @@ def pg_uri():
     if not uri:
         if importlib.util.find_spec("pgserver") is None:
             pytest.skip("no local Postgres (set STUDIO_TEST_PG_URI or install pgserver)")
-        import pgserver
-
-        server = pgserver.get_server(tempfile.mkdtemp(prefix="studio-pg-"))
+        server = start_server("studio-pg")
         uri = server.get_uri()
     try:
         yield uri
     finally:
         if server:
-            server.cleanup()
+            stop_server(server)
 
 
 @pytest.fixture(scope="module")

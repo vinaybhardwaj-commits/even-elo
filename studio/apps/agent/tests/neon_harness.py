@@ -11,7 +11,6 @@ import os
 import re
 import shutil
 import subprocess
-import tempfile
 import threading
 import time
 import uuid
@@ -21,6 +20,7 @@ from pathlib import Path
 import psycopg
 import pytest
 
+from tests.pg_teardown import start_server, stop_server
 from tests.test_studio_live_staff_sql import migrations
 
 AGENT = Path(__file__).resolve().parents[1]
@@ -43,7 +43,7 @@ class Cluster:
     def __init__(self):
         import pgserver
 
-        self.server = pgserver.get_server(tempfile.mkdtemp(prefix="neon-emu-"))
+        self.server = start_server("neon-emu")
         self.su = self.server.get_uri()  # superuser url (harness only)
         self.sock = self.su.split("host=")[1]
         self.psql = str(Path(pgserver.__file__).parent / "pginstall" / "bin" / "psql")
@@ -95,7 +95,7 @@ class Cluster:
         return self.log.read_bytes()[mark:].decode(errors="replace")
 
     def stop(self):
-        self.server.cleanup()
+        stop_server(self.server)
 
 
 @pytest.fixture

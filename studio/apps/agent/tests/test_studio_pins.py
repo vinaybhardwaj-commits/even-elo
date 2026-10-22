@@ -4,7 +4,6 @@ import os
 import re
 import json
 import socket
-import tempfile
 import threading
 
 from pathlib import Path
@@ -14,6 +13,7 @@ from psycopg.conninfo import conninfo_to_dict
 
 from src import studio_audit, studio_db, studio_pins, studio_tools
 from src.studio_pins import PinError, pinned_conninfo
+from tests.pg_teardown import start_server, stop_server
 
 HOST = "ep-fake-1234.example-neon.invalid"  # never resolvable
 
@@ -209,9 +209,7 @@ def _forward(unix_dir: str):
 async def test_connects_through_the_pin_to_a_real_postgres_without_resolving_the_name(monkeypatch, pins):
     if importlib.util.find_spec("pgserver") is None:
         pytest.skip("pgserver not installed")
-    import pgserver
-
-    server = pgserver.get_server(tempfile.mkdtemp(prefix="studio-pins-"))
+    server = start_server("studio-pins")
     try:
         unix_dir = server.get_uri().split("host=")[1]
         srv, port = _forward(unix_dir)
@@ -229,7 +227,7 @@ async def test_connects_through_the_pin_to_a_real_postgres_without_resolving_the
             await conn.close()
         srv.close()
     finally:
-        server.cleanup()
+        stop_server(server)
 
 
 # ----- R8: strictness under STUDIO_REQUIRE_PINS=1 -----

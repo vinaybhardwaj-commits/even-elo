@@ -19,3 +19,23 @@ def _clean_studio_env(monkeypatch):
 @pytest.fixture
 def anyio_backend():
     return "asyncio"
+
+
+def pytest_configure(config):
+    """Guard against piles of stale clusters, then arm teardown (atexit + SIGTERM) for every pgserver this run starts."""
+    import importlib.util
+
+    from tests import pg_teardown
+
+    if importlib.util.find_spec("pgserver") is not None:
+        try:
+            pg_teardown.guard()
+        except RuntimeError as exc:
+            raise pytest.UsageError(str(exc)) from None
+    pg_teardown.install_handlers()
+
+
+def pytest_sessionfinish(session, exitstatus):
+    from tests import pg_teardown
+
+    pg_teardown.cleanup_all()
