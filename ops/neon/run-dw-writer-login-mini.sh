@@ -209,7 +209,7 @@ def get(path):
     return json.load(urllib.request.urlopen(urllib.request.Request(base + path, headers=hdr), timeout=30))
 
 hits = []
-for p in get("/projects").get("projects", []):
+for p in get("/projects?limit=400").get("projects", []):
     for e in get(f"/projects/{p['id']}/endpoints").get("endpoints", []):
         if e.get("host") == host:
             hits.append((p["id"], e["branch_id"]))
