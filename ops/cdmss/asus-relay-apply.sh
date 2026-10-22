@@ -15,7 +15,8 @@
 # Squid, its allowlist, the pre-filter, the agent unit and the agent's nft rules are not touched. Postgres never passes Squid: the relay
 # (uid studio-pgrelay) is the only process that reaches Neon, on :5432, TLS verify-full against the system CA.
 # Then it verifies AS studio-agent through the relay with the agent venv's psycopg: current_user=studio_cdmss_ro, SELECT count on
-# cdmss_ro.ams_formulary, a write refused (role fence, session read-only switched OFF first), a base table read refused (public.formulary).
+# cdmss_ro.ams_formulary, role-level settings present after DISCARD ALL (read-only on, statement_timeout 30s, idle-in-transaction 60s: the 0004 file
+# must have been run), a write refused with SQLSTATE 42501 ONLY (role fence, session read-only switched OFF first), a base table read refused (42501).
 # Any failure (or HUP/INT/TERM, e.g. the ssh link dropping) restores the previous state of items 1-4 and refreshes/restarts again.
 # Prints fixed status lines starting "asus " only. Exit: 0 ok, 3 bad url, 7 precondition (nothing changed), 1 verify/apply failed (rolled back),
 # 9 rollback itself incomplete.
@@ -50,7 +51,8 @@ exec 8>"$LOCKF"
 flock -n 8 || { say "another relay-apply is running"; exit 7; }
 
 # private scratch on tmpfs (values only ever live here for the length of the run)
-SCR=$(mktemp -d "$ROOT/run/studio-cdmss-relay.XXXXXX" 2>/dev/null) || SCR=$(mktemp -d) || { say "no scratch dir"; exit 7; }
+# tmpfs only: never fall back to /tmp (the url and the loopback password pass through here)
+SCR=$(mktemp -d "$ROOT/run/studio-cdmss-relay.XXXXXX" 2>/dev/null) || { say "no scratch dir under $ROOT/run (tmpfs): refusing, nothing changed"; exit 7; }
 chmod 700 "$SCR"
 wipe() { local f; for f in "$@"; do [ ! -e "$f" ] || { shred -u "$f" 2>/dev/null || rm -f "$f"; }; done; }
 CHANGED=0 COMMITTED=0 ROLLING=0 PGDIR=
@@ -237,7 +239,7 @@ apply_runtime || exit 1
 say "egress refreshed, relay restarted"
 
 # ---- verify as studio-agent through the relay (the agent's own psycopg; the loopback password via a pgpass file owned by the agent)
-PGDIR=$(mktemp -d "$ROOT/run/studio-cdmss-pg.XXXXXX") || { say "no scratch dir"; exit 1; }
+PGDIR=$(mktemp -d "$ROOT/run/studio-cdmss-pg.XXXXXX") || { say "no scratch dir under $ROOT/run (tmpfs)"; exit 1; }
 python3 -I - "$SCR/pw" "$PGDIR/pgpass" <<'PY'
 import os, sys
 pw = open(sys.argv[1]).read().strip()
@@ -266,6 +268,17 @@ try:
     out("current_user", who == "studio_cdmss_ro", "current_user=" + str(who))
 except Exception as e:
     out("current_user", False, code(e))
+# ROLE-LEVEL settings (ops/cdmss/0004_role_settings.sql). The relay's connect_query also sets read-only on a NEW server connection, so
+# DISCARD ALL first: it returns the session to the role's own defaults, and only then do the SHOWs mean "the role carries the setting".
+try:
+    conn.execute("discard all")
+    ro = conn.execute("show default_transaction_read_only").fetchone()[0]
+    st = conn.execute("show statement_timeout").fetchone()[0]
+    idle = conn.execute("show idle_in_transaction_session_timeout").fetchone()[0]
+    out("role-settings", (ro, st, idle) == ("on", "30s", "1min"),
+        f"default_transaction_read_only={ro} statement_timeout={st} idle_in_transaction_session_timeout={idle}" + ("" if (ro, st, idle) == ("on", "30s", "1min") else " (run ops/cdmss/run-cdmss-ro.sh with 0004_role_settings.sql first)"))
+except Exception as e:
+    out("role-settings", False, code(e))
 try:
     n = conn.execute("select count(*) from cdmss_ro.ams_formulary").fetchone()[0]
     out("select-count", n >= 0, "cdmss_ro.ams_formulary rows=" + str(n))
@@ -276,7 +289,8 @@ try:
     conn.execute("delete from cdmss_ro.ams_formulary where false")
     out("write-refused", False, "the write was ACCEPTED")
 except Exception as e:
-    out("write-refused", code(e) in ("42501", "25006", "0A000"), "refused " + code(e))
+    # ONLY 42501 (permission denied) proves the role fence; 25006 (read-only transaction) would be the session setting, 0A000 a non-updatable view
+    out("write-refused", code(e) == "42501", "refused " + code(e))
 try:
     conn.execute("select 1 from public.formulary limit 1")
     out("base-table-refused", False, "the base table was READABLE")

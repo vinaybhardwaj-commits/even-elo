@@ -15,6 +15,9 @@
 # like a URL. The detach (rm -P of relay-url and hdiutil detach) runs ONLY after the Asus reported "relay ready"; on any failure the Asus
 # script has restored its previous state (and this script asks for a rollback once more if the ssh link itself broke) and the RAM disk stays
 # attached for a retry: run it again, or `run-login-mini.sh --detach` to give up (and --nologin to disable the role).
+# ORDER: ops/cdmss/0004_role_settings.sql (role-level read-only + 30s timeouts, via run-cdmss-ro.sh) must have been applied first: the Asus
+# verification does DISCARD ALL in a fresh relay session and refuses (rolls back, keeps the RAM disk) unless SHOW default_transaction_read_only = on,
+# statement_timeout = 30s and idle_in_transaction_session_timeout = 1min come from the ROLE.
 # Exit: 0 done and wiped; 2 refused (usage/environment/missing file); 3 relay-url unusable; 5 the Asus install failed (rolled back);
 # 6 ssh could not reach the Asus; 4 installed but the RAM disk could not be detached; 9 a rollback was incomplete.
 # Test-only overrides (honoured ONLY with RELAY_INSTALL_TEST=1; any other run REFUSES TO START if one is set):

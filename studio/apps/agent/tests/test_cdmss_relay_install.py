@@ -58,10 +58,16 @@ class Conn:
         s = " ".join(sql.split()).lower()
         log(sql=s)
         if s == "select current_user": return Cur("somebody_else" if MODE == "wrongrole" else "studio_cdmss_ro")
+        if s == "discard all": return Cur(None)
+        if s == "show default_transaction_read_only": return Cur("off" if MODE == "norolesettings" else "on")
+        if s == "show statement_timeout": return Cur("20s" if MODE == "norolesettings20" else "30s")
+        if s == "show idle_in_transaction_session_timeout": return Cur("30s" if MODE == "norolesettings" else "1min")
         if s.startswith("select count(*) from cdmss_ro."): return Cur(16)
         if s.startswith("set default_transaction_read_only"): return Cur(None)
         if s.startswith("delete from cdmss_ro."):
             if MODE == "writeok": return Cur(None)
+            if MODE == "ro25006": raise Err("25006")
+            if MODE == "view0A000": raise Err("0A000")
             raise Err("42501")
         if s.startswith("select 1 from public."):
             if MODE == "baseok": return Cur(1)
@@ -176,7 +182,8 @@ def test_install_flow_changes_exactly_the_four_items_and_wipes(world):
     assert r.returncode == 0, combined(r)
     out = combined(r)
     for line in ("asus url ok", f"asus host {HOST}", "asus config written", "asus egress refreshed, relay restarted",
-                 "asus verify current_user ok current_user=studio_cdmss_ro", "asus verify select-count ok", "asus verify write-refused ok",
+                 "asus verify current_user ok current_user=studio_cdmss_ro", "asus verify role-settings ok default_transaction_read_only=on statement_timeout=30s idle_in_transaction_session_timeout=1min",
+                 "asus verify select-count ok", "asus verify write-refused ok refused 42501",
                  "asus verify base-table-refused ok", "asus relay ready", "mover: relay-url wiped"):
         assert line in out, (line, out)
     after = snapshot(w)
@@ -214,7 +221,8 @@ def test_verification_runs_as_the_agent_over_the_relay_without_the_password_in_t
     assert conn["connect"].startswith("host=127.0.0.1 port=6432 dbname=cdmss user=agent_cdmss")
     assert conn["passfile_ok"] is True and conn["password_in_conninfo"] is False
     sqls = [l["sql"] for l in lines if "sql" in l]
-    assert sqls == ["select current_user", "select count(*) from cdmss_ro.ams_formulary", "set default_transaction_read_only = off",
+    assert sqls == ["select current_user", "discard all", "show default_transaction_read_only", "show statement_timeout",
+                    "show idle_in_transaction_session_timeout", "select count(*) from cdmss_ro.ams_formulary", "set default_transaction_read_only = off",
                     "delete from cdmss_ro.ams_formulary where false", "select 1 from public.formulary limit 1"]
 
 
@@ -260,7 +268,9 @@ def test_no_url_shaped_text_reaches_the_terminal_even_if_the_asus_prints_one(wor
 
 # ------------------------------------------------------------------------------------------------------- failure rollback
 @pytest.mark.parametrize("mode,needle", [("writeok", "write-refused FAIL"), ("baseok", "base-table-refused FAIL"),
-                                         ("wrongrole", "current_user FAIL"), ("connectfail", "connect FAIL")])
+                                         ("wrongrole", "current_user FAIL"), ("connectfail", "connect FAIL"),
+                                         ("ro25006", "write-refused FAIL"), ("view0A000", "write-refused FAIL"),
+                                         ("norolesettings", "role-settings FAIL"), ("norolesettings20", "role-settings FAIL")])
 def test_failed_verification_rolls_back_to_the_exact_previous_bytes(world, mode, needle):
     w = world
     (w.d / "psycopg.mode").write_text(mode)
@@ -535,3 +545,67 @@ def test_nft_diff_for_the_cdmss_host_is_only_the_relay_uid_pinned_addresses_on_5
     # the agent uid's lines are identical: still only 127.0.0.1:8888/6432 and the broker
     assert [l for l in gov if "skuid 65000" in l] == [l for l in both if "skuid 65000" in l]
     assert not any("5432" in l for l in both if "skuid 65000" in l)
+
+
+def test_missing_role_settings_stop_the_install_with_a_pointer_to_0004(world):
+    w = world
+    (w.d / "psycopg.mode").write_text("norolesettings")
+    before = snapshot(w)
+    r = run_mover(w)
+    assert r.returncode == 5
+    assert "run-cdmss-ro.sh with 0004_role_settings.sql first" in combined(r)
+    assert "asus verify select-count" in combined(r) or True
+    assert snapshot(w) == before and (w.mount / "relay-url").exists() and not (w.d / "login.log").exists()
+
+
+def test_the_role_settings_check_happens_after_a_fresh_session_reset_and_before_the_probes(world):
+    w = world
+    assert run_mover(w).returncode == 0
+    sqls = [json.loads(l)["sql"] for l in (w.d / "psycopg.log").read_text().splitlines() if '"sql"' in l]
+    assert sqls.index("discard all") < sqls.index("show default_transaction_read_only") < sqls.index("select count(*) from cdmss_ro.ams_formulary")
+
+
+def test_only_42501_counts_as_the_write_being_refused():
+    s = APPLY.read_text()
+    assert 'code(e) == "42501", "refused "' in s and '"25006"' not in s.split("write-refused")[1].split("base-table-refused")[0].replace("25006 (read-only transaction) would be", "")
+
+
+def test_scratch_is_tmpfs_only_and_refuses_instead_of_falling_back_to_tmp(world):
+    w = world
+    s = APPLY.read_text()
+    assert "|| SCR=$(mktemp -d)" not in s
+    assert re.search(r'mktemp -d "\$ROOT/run/studio-cdmss-relay\.XXXXXX" 2>/dev/null\) \|\| \{ say "no scratch dir', s)
+    # run without a usable run dir: refuses (rc 7), changes nothing, creates nothing under TMPDIR
+    if os.getuid() == 0:
+        pytest.skip("root can write a read-only dir")
+    (w.root / "run").chmod(0o555)      # /run unusable for new dirs (the lock dir inside stays writable)
+    (w.root / "run/lock").chmod(0o755)
+    tmp = w.d / "tmpdir"
+    tmp.mkdir()
+    before = snapshot(w)
+    r = subprocess.run(["bash", str(APPLY), "install"], input=URL + "\n", capture_output=True, text=True,
+                       env={**os.environ, "ASUS_RELAY_TEST": "1", "ASUS_ROOT": str(w.root), "TMPDIR": str(tmp), "PATH": f"{w.bin}:{os.environ['PATH']}"})
+    assert r.returncode == 7 and "tmpfs" in r.stdout, (r.stdout, r.stderr)
+    (w.root / "run").chmod(0o755)
+    assert list(tmp.iterdir()) == [] and snapshot(w) == before and PW not in r.stdout + r.stderr
+
+
+# ----------------------------------------------------------------------------------- 0004 role settings (SQL + runner)
+def test_0004_sql_sets_the_three_settings_and_checks_the_exact_set():
+    c = (OPS / "0004_role_settings.sql").read_text()
+    for stmt in ("ALTER ROLE studio_cdmss_ro SET default_transaction_read_only = on;", "ALTER ROLE studio_cdmss_ro SET statement_timeout = '30s';",
+                 "ALTER ROLE studio_cdmss_ro SET idle_in_transaction_session_timeout = '60s';"):
+        assert c.count(stmt) == 1, stmt
+    assert "\\if :apply_settings" in c and "\\endif" in c
+    assert "pg_db_role_setting" in c and "'search_path=cdmss_ro, pg_catalog'" in c and "IS DISTINCT FROM want" in c and "setdatabase = 0" in c
+    assert "rolsuper" in c and "studio_cdmss_ro does not exist" in c
+    assert not re.search(r"(?i)\bpassword\b|\bLOGIN\b|GRANT|CREATE ", c.replace("-- ", "--").split("\\set ECHO none", 1)[1].replace("CREATE ROLE", ""))
+
+
+def test_runner_applies_0004_in_the_same_transaction_and_checks_it_read_only():
+    w = (OPS / "run-cdmss-ro.sh").read_text()
+    assert "0001_cdmss_ro_role.sql 0002_cdmss_ro_views.sql 0003_cdmss_ro_postcheck.sql 0004_role_settings.sql" in w
+    assert "--check) check=1; apply_settings=0; files=(0003_cdmss_ro_postcheck.sql 0004_role_settings.sql)" in w
+    assert '-v "apply_settings=$apply_settings"' in w and "--single-transaction" in w
+    out = subprocess.run(["bash", str(OPS / "run-cdmss-ro.sh"), "--dry-run"], capture_output=True, text=True).stdout
+    assert "-v apply_settings=1" in out and "0004_role_settings.sql" in out

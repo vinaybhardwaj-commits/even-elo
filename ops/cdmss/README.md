@@ -7,7 +7,8 @@ No real password is ever handled over SQL: roles are created by SQL (NOLOGIN); *
 |---|---|
 | `0000_cdmss_ro_precheck.sql` | read-only: every base column the views read must exist live (lists all missing, applies nothing) |
 | `0001_cdmss_ro_role.sql`, `0002_cdmss_ro_views.sql`, `0003_cdmss_ro_postcheck.sql` | role, 16 column-scoped views, post-check (exact ACLs, column allowlist, privilege fence) |
-| `run-cdmss-ro.sh` | applies 0000 to 0003 (`--precheck`, `--check`, `--dry-run`); already applied live |
+| `0004_role_settings.sql` | role-level `default_transaction_read_only=on`, `statement_timeout=30s`, `idle_in_transaction_session_timeout=60s` (these survive pgbouncer's `DISCARD ALL`) + exact `pg_db_role_setting` post-check; **apply it before the relay step** |
+| `run-cdmss-ro.sh` | applies 0000 to 0004 (`--precheck`, `--check` runs the 0003/0004 post-checks read-only, `--dry-run`); 0001-0003 already applied live, so run it again to add 0004 (idempotent) |
 | `run-login-mini.sh` | the LOGIN step, run on the Mac Mini (this runbook) |
 | `relay-install.sh`, `asus-relay-apply.sh` | the RELAY step: Mini mover + its Asus half (section "Relay to the Asus") |
 
@@ -53,7 +54,8 @@ Separately, `ops/neon/run-roles.sh` refuses `CDMSS_POSTCHECK_SQL` unless `CDMSS_
 
 How the agent reaches Neon today: **Postgres does not pass Squid.** The agent only talks to the pgbouncer relay on `127.0.0.1:6432` (aliases `gov`, `studio`; local passwords); the relay (uid `studio-pgrelay`) is the only process that reaches Neon, on `:5432` to the pinned addresses of the `--neon-host` names (nft + `IPAddressAllow`), TLS `verify-full`. The Squid allowlist stays exactly `bedrock-runtime.ap-south-1.amazonaws.com` and `api.typesafe.ai`. CDMSS mirrors that: a third alias `cdmss`, the endpoint host pinned like a `--neon-host`, nothing else.
 
-Prerequisite (a normal release step, not this mover): run `install-studio-agent.sh` from `gov/cdmss-relay` on the Asus once, so `/usr/local/sbin/studio-pgrelay-render` and `studio-agent-egress-refresh` know the cdmss alias and `/etc/studio-agent/neon-hosts.extra`. The mover refuses (rc 5, "predate CDMSS support", nothing changed) otherwise.
+Prerequisite 1: `0004_role_settings.sql` applied (via `run-cdmss-ro.sh`), or the Asus verification fails at `role-settings` (fresh relay session after `DISCARD ALL`: read-only on, 30s, 1min must come from the role) and the install rolls back. The write probe passes only on SQLSTATE `42501`.
+Prerequisite 2 (a normal release step, not this mover): run `install-studio-agent.sh` from `gov/cdmss-relay` on the Asus once, so `/usr/local/sbin/studio-pgrelay-render` and `studio-agent-egress-refresh` know the cdmss alias and `/etc/studio-agent/neon-hosts.extra`. The mover refuses (rc 5, "predate CDMSS support", nothing changed) otherwise.
 
 ```bash
 /usr/bin/env -i HOME=$HOME PATH=/usr/bin:/bin /bin/bash --noprofile --norc ops/cdmss/relay-install.sh             # move, install, verify, then run-login-mini.sh --detach
@@ -65,4 +67,4 @@ The URL is streamed from `/Volumes/cdmssloginram/relay-url` as ssh stdin (never 
 3. `/etc/studio-agent/env` (0600 root:studio-agent): `CDMSS_RO_DATABASE_URL=postgresql://agent_cdmss:<pw>@127.0.0.1:6432/cdmss?sslmode=disable`. Read at the agent's next start; the agent is NOT restarted and no tool uses it yet.
 4. `/etc/studio-agent/neon-hosts.extra` (0644): the DSN's host (direct `read_write` endpoint, port 5432). The refresh pins it; nft lets the relay uid also reach its IPs on `:5432`.
 5. Runs `studio-agent-egress-refresh` and restarts `studio-pgrelay` (gov and studio pools reconnect briefly).
-Then, as `studio-agent` through the relay with the agent venv's psycopg: `current_user=studio_cdmss_ro`, `SELECT count(*)` on `cdmss_ro.ams_formulary`, a `DELETE` refused with the session read-only default switched off (the ROLE must refuse), `SELECT` on base table `public.formulary` refused. Only then `run-login-mini.sh --detach` wipes the Mini copy. The pool is read-only too: `connect_query` sets `default_transaction_read_only=on` and `statement_timeout=30000` per new server connection, and `studio_db.connect_cdmss_read_only()` sets them per agent connection (pgbouncer's `DISCARD ALL` undoes the pool-level ones when a client leaves); suggested follow-up on Neon (not done here): `ALTER ROLE studio_cdmss_ro SET default_transaction_read_only = on, statement_timeout = '30s'`.
+Then, as `studio-agent` through the relay with the agent venv's psycopg: `current_user=studio_cdmss_ro`, `SELECT count(*)` on `cdmss_ro.ams_formulary`, a `DELETE` refused with the session read-only default switched off (the ROLE must refuse), `SELECT` on base table `public.formulary` refused. Only then `run-login-mini.sh --detach` wipes the Mini copy. The pool is read-only too: `connect_query` sets `default_transaction_read_only=on` and `statement_timeout=30000` per new server connection, and `studio_db.connect_cdmss_read_only()` sets them per agent connection (pgbouncer's `DISCARD ALL` undoes the pool-level ones when a client leaves); the role-level settings in `0004_role_settings.sql` are the ones that survive.
