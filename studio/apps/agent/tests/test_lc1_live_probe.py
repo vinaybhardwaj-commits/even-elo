@@ -19,7 +19,7 @@ psycopg = pytest.importorskip("psycopg")
 DSN = os.environ.get("GOV_RO_DATABASE_URL", "")
 pytestmark = pytest.mark.skipif(not DSN, reason="GOV_RO_DATABASE_URL not set (live L-C1 probe)")
 
-GOV_TABLES = ("physicians", "physician_engagements", "hospitals", "gov_signal_snapshots", "gov_interventions", "incidents")
+GOV_TABLES = ("physicians", "physician_engagements", "hospitals", "gov_signal_snapshots", "gov_interventions")
 # Column-scoped views (ops/neon/0003_studio_views.sql). EXACT column lists: a new column is a test failure until reviewed.
 BASE_VIEW_COLUMNS = {
     "physician_privileges": ("privilege_id", "physician_id", "hospital_code", "procedure_or_specialty", "is_core", "basis", "granted_date", "expires_at", "withdrawn_date", "created_at"),
@@ -44,9 +44,12 @@ DOCAUDIT_VIEW_COLUMNS = {
     "document_audit_list": ("audit_id", "external_ref", "hospital_code", "physician_id", "doc_type", "doc_day", "ingested_at", "last_synced_at", "triage_routed_at", "doc_class", "has_pdf", "pdf_url", "source", "created_at"),
     "document_audit_finding_list": ("finding_id", "audit_id", "physician_id", "finding_label", "finding_body", "evidence_excerpt", "severity", "status", "authored_by_name", "author_confirmed", "authored_at", "recurrence_count", "portal_visible", "response_owner", "signal_reference", "signal_type", "doc_class", "cdmss_routed", "response_verb", "response_comment", "responded_at", "sync_state", "sync_attempts", "sync_permanent", "created_at"),
 }
+# Incident view (ops/neon/0009_incidents_grant.sql), EXACT columns; installed by a third owner step. public.incidents itself is denied.
+INCIDENT_VIEW_COLUMNS = {"incident_register": ("status", "polarity", "severity", "submitted_at")}
+INCIDENT_BASE_TABLES = ("incidents",)
 DOCAUDIT_BASE_TABLES = ("document_audits", "document_audit_findings")
-ALL_VIEW_COLUMNS = {**VIEW_COLUMNS, **DOCAUDIT_VIEW_COLUMNS}
-VIEW_BASE_TABLES = ("privileges", "oppe_reviews", "clinical_metrics_monthly", "qualifications", "gov_capture_gaps", "incident_replies") + DOCAUDIT_BASE_TABLES
+ALL_VIEW_COLUMNS = {**VIEW_COLUMNS, **DOCAUDIT_VIEW_COLUMNS, **INCIDENT_VIEW_COLUMNS}
+VIEW_BASE_TABLES = ("privileges", "oppe_reviews", "clinical_metrics_monthly", "qualifications", "gov_capture_gaps", "incident_replies") + DOCAUDIT_BASE_TABLES + INCIDENT_BASE_TABLES
 FREE_TEXT_COLUMNS = (
     "packet_jsonb", "granted_by", "reviewer_id", "source_file", "uploaded_by",
     "file_data", "verified_by", "replied_by_profile_id", "replied_by_physician_id",

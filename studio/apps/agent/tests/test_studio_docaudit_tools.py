@@ -264,6 +264,7 @@ async def test_detail_returns_finding_text_evidence_comment_author_and_pdf(live)
 def test_views_expose_no_free_text_column_and_no_name_regex_hit(live):
     cols = [r["column_name"] for r in live.execute(
         "SELECT table_name || '.' || column_name AS column_name FROM information_schema.columns WHERE table_schema = 'studio_ro'").fetchall()]
+    cols = [c for c in cols if not c.startswith("incident_register.")]  # 0009's view, installed by the shared real-schema fixture
     assert cols
     # the migration's post-check is an explicit allowlist (a renamed note_class/note_date would have slipped past a name regex)
     from tests.test_lc1_live_probe import DOCAUDIT_VIEW_COLUMNS

@@ -23,6 +23,7 @@ from tests.test_lc1_live_probe import (
 SQL_VIEWS = OPS / "0003_studio_views.sql"
 SQL_DOCAUDIT = OPS / "0007_docaudits_views.sql"
 SQL_UNGATE = OPS / "0008_ungate_views.sql"
+SQL_INCIDENTS = OPS / "0009_incidents_grant.sql"
 STAFF = "11111111-1111-4111-8111-111111111111"
 CFG = {"configurable": {studio_tools.STAFF_KEY: STAFF}}
 VIEW_TOOLS = {
@@ -98,6 +99,8 @@ def world(cluster, tmp_path):
     assert d.returncode == 0, d.stderr
     u, _ = run_roles(cluster, tmp_path, sql_file=SQL_UNGATE, tag="ungate-views")  # appends the text columns (after 0003)
     assert u.returncode == 0, u.stderr
+    n, _ = run_roles(cluster, tmp_path, sql_file=SQL_INCIDENTS, tag="incidents-grant")  # incident_register view + REVOKE on incidents
+    assert n.returncode == 0, n.stderr
     i = ids()
     s = lambda q, *a: cluster.su_exec(q % a if a else q, db="neondb")
     s(f"INSERT INTO hospitals (id, code, name) VALUES ('{i['h1']}', 'T1', 'Hosp One'), ('{i['h2']}', 'T2', 'Hosp Two')")
