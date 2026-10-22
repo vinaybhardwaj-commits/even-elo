@@ -164,16 +164,22 @@ describe("Studio overview: copilotkit request storm", () => {
     fireEvent.change(input, { target: { value: "How many e-IRIS incidents in the last 30 days, top categories?" } });
     fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
     await wait(1500);
-    for (let i = 0; i < 4; i++) {
+    // Every agent/run attempt, including those the guard answers locally.
+    const guardTrace = (window as unknown as { __studioCopilotGuard: Record<string, { calls: number }> }).__studioCopilotGuard;
+    const attempts: number[] = [];
+    for (let i = 0; i < 6; i++) {
       offset += 11_000;
       fireEvent.click(screen.getByRole("button", { name: /hide assistant/i }));
       await wait(20);
       fireEvent.click(screen.getByRole("button", { name: /ask the assistant/i }));
       await wait(1000);
+      attempts.push(guardTrace["agent/run"].calls);
     }
     // 1 question + at most 8 follow-ups ever reach the network; the 9th is answered locally with the stop message.
     expect(runtimePosts("agent/run").length).toBeLessThanOrEqual(1 + 8);
     expect(screen.getByText(/stopped this answer after 8 automatic tool steps/i)).toBeInTheDocument();
+    // Once stopped, a reopen replays the thread with the dangling tool call answered locally: nothing re-executes it.
+    expect(attempts.at(-1)).toBe(attempts[1]);
   }, 30000);
 
   // Live (bef701b): rmo-inbox, feedback, admin/users and admin/resignations each showed 10 runtime POSTs on load.

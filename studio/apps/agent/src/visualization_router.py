@@ -179,45 +179,64 @@ async def aroute(context):
         ) from None
 
 
-def rendered_this_turn(messages) -> bool:
-    """True once a rendering tool returned (without error) after the latest human message.
+MAX_RENDERS_PER_TURN = 3
 
-    Rendering tools run in the browser; each result starts a follow-up run of the same turn. Without this check the
-    routing note below would tell the model to render again on every follow-up, and the browser would loop."""
+
+def render_budget(messages) -> tuple[int, bool]:
+    """(successful renders, any repeat) for the rendering tool calls after the latest human message.
+
+    Rendering tools run in the browser; each result starts a follow-up run of the same turn. Distinct sections or a
+    specific correction may take more than one render (prompt.py), so up to MAX_RENDERS_PER_TURN successful renders are
+    allowed. A successful render whose name and args equal an earlier render call of the turn is a repeat."""
     last_human = max((i for i, m in enumerate(messages) if m.type == "human"), default=-1)
     turn = messages[last_human + 1 :]
-    names = {
-        call["id"]: call["name"]
+    calls = [
+        call
         for m in turn
         if m.type == "ai"
         for call in (getattr(m, "tool_calls", None) or [])
-    }
-    return any(
-        m.type == "tool"
-        and names.get(m.tool_call_id) in RENDER_TOOLS
+        if call["name"] in RENDER_TOOLS
+    ]
+    succeeded = {
+        m.tool_call_id
+        for m in turn
+        if m.type == "tool"
         and getattr(m, "status", "success") != "error"
         and not message_text(m).startswith("Error:")
-        for m in turn
-    )
+    }
+    seen, renders, repeat = set(), 0, False
+    for call in calls:
+        key = (call["name"], json.dumps(call.get("args"), sort_keys=True, default=str))
+        if call["id"] in succeeded:
+            renders += 1
+            repeat = repeat or key in seen
+        seen.add(key)
+    return renders, repeat
+
+
+def with_note(request, note, tools):
+    content = request.system_message.content if request.system_message else ""
+    if isinstance(content, list):
+        content = [*content, {"type": "text", "text": note}]
+    else:
+        content += note
+    return request.override(tools=tools, system_message=SystemMessage(content=content))
 
 
 def routed_request(request):
     decision = request.state.get("visualization_decision")
     if not decision:
         return request
-    if rendered_this_turn(request.messages):
+    renders, repeat = render_budget(request.messages)
+    if repeat or renders >= MAX_RENDERS_PER_TURN:
         tools = [
             t
             for t in request.tools
             if (t.get("name") if isinstance(t, dict) else t.name) not in RENDER_TOOLS
         ]
-        note = "\n\nThe rendering tool already returned in this user turn: the UI is on screen. Do not render it again. Finish with a short text answer that helps the user read it."
-        content = request.system_message.content if request.system_message else ""
-        if isinstance(content, list):
-            content = [*content, {"type": "text", "text": note}]
-        else:
-            content += note
-        return request.override(tools=tools, system_message=SystemMessage(content=content))
+        reason = "repeated an earlier render" if repeat else f"returned {renders} times"
+        note = f"\n\nThe rendering tool already {reason} in this user turn: the UI is on screen. Do not render it again. Finish with a short text answer that helps the user read it."
+        return with_note(request, note, tools)
     renderer = decision["renderer"]
     allowed = {
         "a2ui": {"render_a2ui", "send_a2ui_json_to_client", "generate_a2ui"},
@@ -230,17 +249,16 @@ def routed_request(request):
         if (t.get("name") if isinstance(t, dict) else t.name)
         not in RENDER_TOOLS - allowed
     ]
-    note = f"\n\nCRITICAL: Jev presentation decision for this user turn: renderer={renderer}; visualization={decision['visualization']}. Use this presentation when answering; do not substitute another rendering tool. If required data is unavailable, ask a concise clarification instead of fabricating it."
+    if renders:
+        # Not "use X" again: the earlier render is on screen and each result starts another follow-up run.
+        note = f"\n\nJev presentation decision for this user turn: renderer={renderer}; visualization={decision['visualization']}. {renders} render(s) already returned in this user turn and are on screen. Render again only for a distinct requested section or a specific correction, never the same content, at most {MAX_RENDERS_PER_TURN} per turn; otherwise finish with a short text answer that helps the user read it."
+    else:
+        note = f"\n\nCRITICAL: Jev presentation decision for this user turn: renderer={renderer}; visualization={decision['visualization']}. Use this presentation when answering; do not substitute another rendering tool. If required data is unavailable, ask a concise clarification instead of fabricating it."
     if renderer == "a2ui":
         note += '\nUse the A2UI Table component from catalog copilotkit://open-generative-ui-tables. Its title, columns (string array), rows (array of string arrays, same width as columns), and source (honest data provenance) are required. When render_a2ui is available, call it with surfaceId (a unique string), catalogId="copilotkit://open-generative-ui-tables", and components as a flat array containing {"id":"root","component":"Table","title":...,"columns":[...],"rows":[[...]],"source":...}. The Table is the root for this custom catalog. Pass these structured arguments directly, not serialized operations or a2ui_json. If another A2UI tool is available instead, follow its advertised argument schema and use this same catalog and Table component. No HTML or scripts.'
-    elif renderer == "open_generative_ui":
+    elif renderer == "open_generative_ui" and not renders:
         note += "\nUse generateSandboxedUi. Choose an appropriate simple library or SVG for this visualization; label axes, units and assumptions."
-    content = request.system_message.content if request.system_message else ""
-    if isinstance(content, list):
-        content = [*content, {"type": "text", "text": note}]
-    else:
-        content += note
-    return request.override(tools=tools, system_message=SystemMessage(content=content))
+    return with_note(request, note, tools)
 
 
 class JevVisualizationMiddleware(AgentMiddleware):
