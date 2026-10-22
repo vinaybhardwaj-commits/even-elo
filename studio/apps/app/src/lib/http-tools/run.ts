@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { canUseTool, hasAnyRole } from "@/lib/zone/access";
 import { fetchAgent } from "@/lib/agent-fetch";
 import { agentHeaders } from "@/lib/zone/actor-token";
 import { HTTP_TOOL_PARAMS, type HttpToolName, type SourceTablePayload } from "@/lib/screens/tool-schema";
@@ -16,8 +17,6 @@ import { boundMs, incidentRows, toDetailPayload, toIncidentsPayload, toSignalsPa
 // plus the agent pair the other screen reads already use (AGENT_URL, STUDIO_SERVICE_TOKEN, STUDIO_ACTOR_SECRET).
 // Read-only: only GET requests are made. Error bodies carry fixed codes only, never upstream text.
 
-/** Same predicate as even-elo's /api/safety proxy: super_admin or SGC member. The Studio zone admits super_admin only today. */
-export const SAFETY_ROLES: ReadonlySet<string> = new Set(["super_admin", "sgc_member"]);
 const UPSTREAM_TIMEOUT_MS = 10_000;
 const AUDIT_TIMEOUT_MS = 8_000;
 
@@ -71,7 +70,7 @@ function incidentApi(role: string) {
   const base = process.env.INCIDENT_API_BASE;
   const token = process.env.INCIDENT_API_TOKEN;
   if (!base || !token) return null;
-  return { base: trimBase(base), headers: { Authorization: `Bearer ${token}`, "x-actor-super": role === "super_admin" ? "1" : "0", "x-actor-sgc": role === "sgc_member" ? "1" : "0" } };
+  return { base: trimBase(base), headers: { Authorization: `Bearer ${token}`, "x-actor-super": hasAnyRole(role, ["super_admin"]) ? "1" : "0", "x-actor-sgc": hasAnyRole(role, ["sgc_member"]) ? "1" : "0" } };
 }
 
 function cdmssApi() {
@@ -211,8 +210,8 @@ async function audit(
  */
 export async function runHttpTool(tool: HttpToolName, rawParams: unknown, actor: { staffId: string; role: string }): Promise<HttpToolResult> {
   if (!actor.staffId || !actor.role) return fail(401, "unauthorized");
-  // Every tool here reads incident or physician-governance data the SGC/super_admin pages gate the same way.
-  if (!SAFETY_ROLES.has(actor.role)) return fail(403, "forbidden");
+  // Per-tool predicate = the source page's access (zone/access.ts): e-IRIS super_admin|sgc, audit findings super|SMH|sgc.
+  if (!canUseTool(actor.role, tool)) return fail(403, "forbidden");
   const parsed = HTTP_TOOL_PARAMS[tool].safeParse(rawParams ?? {});
   if (!parsed.success) return fail(422, "bad_params");
   const params = parsed.data as Record<string, unknown>;

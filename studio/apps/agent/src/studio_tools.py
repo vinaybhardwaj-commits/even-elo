@@ -39,6 +39,8 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
+from src.studio_access import can_use_tool
+
 from src import studio_audit
 from src.studio_db import connect_read_only
 from src.studio_pins import PinError
@@ -46,6 +48,8 @@ from src.studio_pins import PinError
 logger = logging.getLogger("studio.tools")
 
 STAFF_KEY = "studio_staff_id"
+# The verified actor's roles (from the actor JWT), set on the graph config by the server, never by model output.
+ROLES_KEY = "studio_roles"
 # Inside src/ so the kill switch works in a deploy image that ships no tests/ directory.
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures"
 MAX_LIMIT = 200
@@ -606,3 +610,52 @@ VIEW_TOOL_NAMES = tuple(t.name for t in VIEW_TOOLS)
 
 GOVERNANCE_TOOLS = [list_physicians, physician_profile, signal_snapshots, interventions, incident_summary, overview_counts, *VIEW_TOOLS]
 GOVERNANCE_TOOL_NAMES = [t.name for t in GOVERNANCE_TOOLS]
+
+
+def _roles_from_run() -> frozenset[str]:
+    """The actor's roles for the run in progress; empty (= nothing allowed) when they cannot be read."""
+    try:
+        from langgraph.config import get_config
+
+        roles = ((get_config() or {}).get("configurable") or {}).get(ROLES_KEY)
+    except Exception:
+        return frozenset()
+    return frozenset(r for r in roles if isinstance(r, str)) if isinstance(roles, (list, tuple, set, frozenset)) else frozenset()
+
+
+_REFUSED = "This tool is not available to your role."
+
+
+class RoleToolGate(AgentMiddleware):
+    """Chat tools follow the actor's role (studio_access.py): a tool the role may not use is not offered to the model
+    AND a call to it is refused here even if the model asks anyway. Tools outside the governance families (the
+    built-in planning and file tools) pass through; a tool that IS in a family but is not allowed never does."""
+
+    @staticmethod
+    def _gated(name: str) -> bool:
+        from src.studio_access import screen_for_tool
+
+        return screen_for_tool(name) is not None
+
+    def _filter(self, request):
+        roles = _roles_from_run()
+        keep = [t for t in request.tools if not self._gated(getattr(t, "name", None) or (t.get("name") if isinstance(t, dict) else "") or "") or can_use_tool(roles, getattr(t, "name", None) or t.get("name"))]
+        return request.override(tools=keep)
+
+    async def awrap_model_call(self, request, handler):
+        return await handler(self._filter(request))
+
+    def wrap_model_call(self, request, handler):
+        return handler(self._filter(request))
+
+    def _refuse(self, request):
+        name = request.tool_call["name"]
+        if self._gated(name) and not can_use_tool(_roles_from_run(), name):
+            return ToolMessage(content=_REFUSED, name=name, tool_call_id=request.tool_call["id"], status="error")
+        return None
+
+    async def awrap_tool_call(self, request, handler):
+        return self._refuse(request) or await handler(request)
+
+    def wrap_tool_call(self, request, handler):
+        return self._refuse(request) or handler(request)

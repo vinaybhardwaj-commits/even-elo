@@ -71,7 +71,7 @@ def test_staff_id_and_scoped_thread_reach_the_graph_config(main):
     r = c.post("/agent", json=BODY, headers=headers(sub="staff-9"))
     assert r.status_code == 200
     config, thread = fake.runs[0]
-    assert config == {"configurable": {"studio_staff_id": "staff-9"}}
+    assert config == {"configurable": {"studio_staff_id": "staff-9", "studio_roles": ["super_admin"]}}
     assert thread == "staff-9:t1"
     # A client echoing the scoped id back does not double-prefix; someone else's id cannot be reused.
     c.post("/agent", json={**BODY, "threadId": "staff-9:t1"}, headers=headers(sub="staff-9"))
@@ -85,7 +85,7 @@ def test_forwardedprops_cannot_inject_a_staff_id(main):
     main.app.state.studio_agent = fake
     body = {**BODY, "forwardedProps": {"studio_staff_id": "attacker", "configurable": {"studio_staff_id": "attacker"}}}
     TestClient(main.app).post("/agent", json=body, headers=headers(sub="staff-1"))
-    assert fake.runs[0][0] == {"configurable": {"studio_staff_id": "staff-1"}}
+    assert fake.runs[0][0] == {"configurable": {"studio_staff_id": "staff-1", "studio_roles": ["super_admin"]}}
 
 
 def test_unauthenticated_post_never_reaches_the_graph(main):

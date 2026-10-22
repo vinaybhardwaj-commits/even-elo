@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ACTOR_ID_HEADER, ACTOR_ROLE_HEADER, authorizeStudioRequest, isForbiddenClientHeader } from "@/lib/zone/authorize";
+import { FALLBACK_SCREEN_PATH } from "@/lib/zone/access";
 import { loadLiveStaff } from "@/lib/zone/live-staff";
 
 // Runs on EVERY studio request (pages, assets, API). The matcher excludes nothing; basePath
@@ -16,6 +17,7 @@ export async function proxy(request: NextRequest) {
       host: request.headers.get("host"),
       forwardedHost: request.headers.get("x-forwarded-host")?.split(",")[0] ?? null,
       origin: request.headers.get("origin"),
+      pathname: request.nextUrl.pathname,
       cookies,
     },
     {
@@ -28,6 +30,15 @@ export async function proxy(request: NextRequest) {
   );
 
   if (!decision.ok) {
+    // A signed-in staff member opening a page their role does not reach lands on Overview (open to every active
+    // staff member). APIs, and everything else, answer with the fixed code.
+    const p = request.nextUrl.pathname;
+    if (decision.reason === "role" && (request.method === "GET" || request.method === "HEAD") && !p.startsWith("/api/") && p !== FALLBACK_SCREEN_PATH) {
+      const url = request.nextUrl.clone();
+      url.pathname = FALLBACK_SCREEN_PATH;
+      url.search = "";
+      return NextResponse.redirect(url, 307);
+    }
     // Reason is a fixed code, never request content.
     return NextResponse.json({ ok: false, error: decision.reason }, { status: decision.status });
   }

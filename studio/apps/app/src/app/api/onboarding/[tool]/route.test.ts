@@ -35,9 +35,8 @@ describe("/studio/api/onboarding", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("403 for a role outside the source gate on reads and writes", async () => {
+  it("a role outside the source write gate gets 403 on writes; reads are open (even-elo returns its own empty list)", async () => {
     const h = { ...AUTH, "studio-internal-staff-role": "sgc_member" };
-    expect((await read("onboarding_pipeline", {}, h)).status).toBe(403);
     expect((await write("prescreen_create", {}, h)).status).toBe(403);
     expect(fetchMock).not.toHaveBeenCalled();
   });

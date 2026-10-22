@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { screenForPage } from "@/lib/zone/access";
+import { useAccess } from "@/lib/zone/access-context";
 
 // Paths are relative to the /studio basePath (next/link and usePathname add and strip it).
 export const NAV_ITEMS = [
@@ -26,11 +28,16 @@ export function isActive(pathname: string | null, href: string): boolean {
 
 export function StudioNav() {
   const pathname = usePathname();
+  const { canScreen } = useAccess();
+  const items = NAV_ITEMS.filter((item) => {
+    const screen = screenForPage(item.href);
+    return screen === null || canScreen(screen);
+  });
   return (
     <nav className="studio-nav" aria-label="Studio sections">
       <span className="studio-nav-brand">Even Studio</span>
       <ul>
-        {NAV_ITEMS.map((item) => (
+        {items.map((item) => (
           <li key={item.href}>
             <Link href={item.href} aria-current={isActive(pathname, item.href) ? "page" : undefined}>
               {item.label}

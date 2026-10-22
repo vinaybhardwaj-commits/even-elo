@@ -155,11 +155,11 @@ def test_query_hashes_differ_per_tool():
 
 @pytest.mark.anyio
 async def test_screen_door_runs_a_docaudit_tool(rec):
-    status, body = await studio_screen.run_screen_tool("document_audit_headline", {}, STAFF)
+    status, body = await studio_screen.run_screen_tool("document_audit_headline", {}, STAFF, ["super_admin"])
     assert status == 200 and body["source"]["tool"] == "document_audit_headline"
-    status, _ = await studio_screen.run_screen_tool("document_audit_detail", {"audit_id": "x"}, STAFF)
+    status, _ = await studio_screen.run_screen_tool("document_audit_detail", {"audit_id": "x"}, STAFF, ["super_admin"])
     assert status == 422
-    status, _ = await studio_screen.run_screen_tool("list_document_audits", {"sql": "select 1"}, STAFF)
+    status, _ = await studio_screen.run_screen_tool("list_document_audits", {"sql": "select 1"}, STAFF, ["super_admin"])
     assert status == 422
 
 

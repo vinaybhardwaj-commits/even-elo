@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { fetchAgent } from "@/lib/agent-fetch";
 import { agentHeaders } from "@/lib/zone/actor-token";
+import { hasAnyRole } from "@/lib/zone/access";
 import { SESSION_COOKIE } from "@/lib/zone/authorize";
 import {
   ADMIN_PARAMS,
@@ -154,7 +155,7 @@ async function audit(actor: Actor, tool: string, params: Record<string, unknown>
 
 export async function runAdmin(op: AdminOp, rawParams: unknown, actor: Actor, deps: AdminDeps = {}): Promise<AdminResult> {
   if (!actor.staffId || !actor.role) return fail(401, "unauthorized");
-  if (!ADMIN_ROLES.has(actor.role)) return fail(403, "forbidden");
+  if (!hasAnyRole(actor.role, ADMIN_ROLES)) return fail(403, "forbidden");
   const secondFactorOk = deps.secondFactorOk ?? noSecondFactorYet;
   return isAdminWriteOp(op) ? runWrite(op, rawParams, actor, secondFactorOk) : runRead(op, rawParams, actor, secondFactorOk);
 }

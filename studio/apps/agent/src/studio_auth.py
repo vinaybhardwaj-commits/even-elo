@@ -3,7 +3,7 @@
 A request is served only when ALL of these hold:
   1. X-Studio-Service-Token equals env STUDIO_SERVICE_TOKEN (constant-time compare);
   2. X-Studio-Actor is an HS256 JWT signed with env STUDIO_ACTOR_SECRET with aud
-     "studio-agent", a role in ALLOWED_ROLES, exp not passed, exp - iat <= 60 s, and
+     "studio-agent", a role claim made of known roles, exp not passed, exp - iat <= 60 s, and
      iat not more than 5 s in the future;
   3. the staff id is within its token bucket (env STUDIO_RATE_PER_MIN, default 30; screen reads under
      /agent/tools/ have their own bucket, env STUDIO_SCREEN_RATE_PER_MIN, default 60), checked before
@@ -26,12 +26,13 @@ from typing import Awaitable, Callable, Optional, Protocol
 
 import jwt
 
+from src.studio_access import parse_roles
+
 logger = logging.getLogger("studio.auth")
 
 AUDIENCE = "studio-agent"
 MAX_LIFETIME_S = 60
 IAT_SKEW_S = 5
-ALLOWED_ROLES = frozenset({"super_admin"})  # M0-S2: super_admin only
 HEALTH_PATH = "/agent/health"
 SCREEN_PREFIX = "/agent/tools/"
 STATE_KEY = "studio_actor"
@@ -176,7 +177,9 @@ def verify_actor(token: Optional[str], secret: Optional[str], now: Optional[floa
         raise Denied(401, "lifetime")
     if not isinstance(claims["sub"], str) or not claims["sub"] or not isinstance(claims["jti"], str) or not claims["jti"]:
         raise Denied(401, "bad_actor")
-    if claims.get("role") not in ALLOWED_ROLES:
+    # Any active staff member is admitted; the claim must be a list of known roles. Which tools they get is decided
+    # per tool (studio_access.py), at the screen door and in the chat graph.
+    if parse_roles(claims.get("role")) is None:
         raise Denied(403, "role")
     return claims
 
@@ -218,7 +221,7 @@ class StudioAuthMiddleware:
         except Exception:  # nonce store / unexpected failure: fail closed
             logger.warning("auth failure: nonce store unavailable")
             return await self._reject(send, 503, "auth_unavailable")
-        scope.setdefault("state", {})[STATE_KEY] = {"staff_id": claims["sub"], "role": claims["role"], "jti": claims["jti"]}
+        scope.setdefault("state", {})[STATE_KEY] = {"staff_id": claims["sub"], "role": claims["role"], "roles": sorted(parse_roles(claims["role"])), "jti": claims["jti"]}
         return await self.app(scope, receive, send)
 
     async def _authenticate(self, scope) -> dict:

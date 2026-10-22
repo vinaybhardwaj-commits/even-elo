@@ -3,7 +3,8 @@ import { fetchAgent } from "@/lib/agent-fetch";
 import { agentHeaders } from "@/lib/zone/actor-token";
 import { SESSION_COOKIE } from "@/lib/zone/authorize";
 import { FEEDBACK_ITEM_COLUMNS, FEEDBACK_LIST_PARAMS, FEEDBACK_WRITE_PARAMS, type FeedbackOp, type FeedbackPayload } from "@/lib/screens/feedback-schema";
-import { SAFETY_ROLES, liveReadsEnabled } from "./run";
+import { canUseTool, hasAnyRole } from "@/lib/zone/access";
+import { liveReadsEnabled } from "./run";
 
 // Patient feedback (M3): the governance `incidents` table, read and retracted through even-elo's existing
 // /api/incidents routes (the page's own source) with the caller's epi_session forwarded, so even-elo applies its
@@ -114,7 +115,7 @@ async function audit(actor: Actor, tool: string, params: Record<string, unknown>
 
 export async function runFeedback(op: FeedbackOp, rawParams: unknown, actor: Actor, deps: FeedbackDeps = {}): Promise<FeedbackResult> {
   if (!actor.staffId || !actor.role) return fail(401, "unauthorized");
-  if (!SAFETY_ROLES.has(actor.role)) return fail(403, "forbidden");
+  if (!canUseTool(actor.role, "patient_feedback")) return fail(403, "forbidden");
   const secondFactorOk = deps.secondFactorOk ?? noSecondFactorYet;
   return op === "list" ? runList(rawParams, actor, secondFactorOk) : runRetract(rawParams, actor, secondFactorOk);
 }
@@ -145,7 +146,7 @@ async function runList(rawParams: unknown, actor: Actor, secondFactorOk: (a: Act
     });
     if (res.status === 401) failure = { status: 401, error: "unauthorized" };
     else if (res.ok) {
-      payload = toFeedbackPayload(await res.json().catch(() => null), RETRACT_ROLES.has(actor.role) && (await secondFactorOk(actor).catch(() => false)));
+      payload = toFeedbackPayload(await res.json().catch(() => null), hasAnyRole(actor.role, RETRACT_ROLES) && (await secondFactorOk(actor).catch(() => false)));
       if (!payload) failure = { status: 502, error: "bad_payload" };
     }
   } catch {
@@ -169,7 +170,7 @@ const ERROR_CODE: Record<string, string> = {
 async function runRetract(rawParams: unknown, actor: Actor, secondFactorOk: (a: Actor) => Promise<boolean>): Promise<FeedbackResult> {
   const parsed = FEEDBACK_WRITE_PARAMS.retract.safeParse(rawParams ?? {});
   if (!parsed.success) return fail(422, "bad_params");
-  if (!RETRACT_ROLES.has(actor.role)) return fail(403, "forbidden");
+  if (!hasAnyRole(actor.role, RETRACT_ROLES)) return fail(403, "forbidden");
   if (!(await secondFactorOk(actor).catch(() => false))) return fail(403, "second_factor_required");
   const up = upstream(actor);
   if (!up) return fail(503, "upstream_not_configured");

@@ -241,8 +241,8 @@ describe("surgical tools", () => {
       expect(actions.map((a) => a.name).sort()).toEqual([...SURGICAL_READ_NAMES].sort());
       const vcs = actions.find((a) => a.name === "surgical_vcs")!;
       expect((await vcs.handler({})) as SourceTablePayload).toMatchObject({ source: { tool: "surgical_vcs" } });
-      const denied = buildSurgicalActions({ ...ACTOR, role: "sgc_member" }) as unknown as typeof actions;
-      expect(await denied[0].handler({})).toEqual({ ok: false, error: "forbidden" });
+      // A role that may not open the Surgical screen is not offered the tools at all.
+      expect(buildSurgicalActions({ ...ACTOR, role: "staff,sgc_member" })).toEqual([]);
     });
   });
 

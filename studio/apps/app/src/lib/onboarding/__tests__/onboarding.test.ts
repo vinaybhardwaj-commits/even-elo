@@ -30,11 +30,13 @@ describe("onboarding tools", () => {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   let auditStatus = 200;
   let upstreamStatus = 200;
+  let listEmpty = false;
 
   beforeEach(() => {
     calls.length = 0;
     auditStatus = 200;
     upstreamStatus = 200;
+    listEmpty = false;
     process.env.EVEN_ELO_API_BASE = "https://elo.invalid";
     process.env.AGENT_URL = "https://agent.invalid/agent";
     process.env.STUDIO_SERVICE_TOKEN = "svc";
@@ -48,7 +50,7 @@ describe("onboarding tools", () => {
       if (init?.method && init.method !== "GET") return json({ ok: true });
       if (url.includes("/observations")) return json(OBS);
       if (url.includes("/api/vc-onboarding/prescreens/")) return json(DETAIL);
-      if (url.includes("/api/vc-onboarding/prescreens")) return json(LIST);
+      if (url.includes("/api/vc-onboarding/prescreens")) return json(listEmpty ? { ok: true, counts: {}, total: 0, rows: [] } : LIST);
       if (url.includes("/api/admin/qualifications/pending")) return json(PENDING);
       if (url.includes("/api/hospitals")) return json(HOSPITALS);
       return json({}, 500);
@@ -59,9 +61,18 @@ describe("onboarding tools", () => {
   const auditCalls = () => calls.filter((c) => c.url.startsWith("https://agent.invalid"));
 
   describe("role gates (equal to the source pages) and session", () => {
-    it.each(["sgc_member", "doctor", ""])("refuses role %j on the gated reads before any fetch", async (role) => {
-      for (const t of ["onboarding_overview", "onboarding_pipeline"] as const) expect((await runOnboardingRead(t, {}, { ...ACTOR, role })).status).toBe(role ? 403 : 401);
-      expect((await runOnboardingRead("onboarding_prescreen", { prescreen_id: PS }, { ...ACTOR, role })).status).toBe(role ? 403 : 401);
+    it.each(["staff", "staff,sgc_member", "staff,hr"])("role %j opens the screen: reads are forwarded and even-elo's own empty list comes back (not a 403)", async (role) => {
+      listEmpty = true; // what even-elo's prescreens route returns to staff without super_admin / SMH / HR
+      for (const t of ["onboarding_overview", "onboarding_pipeline"] as const) {
+        const r = await runOnboardingRead(t, {}, { ...ACTOR, role });
+        expect(r.status, t).toBe(200);
+      }
+      const pipeline = await runOnboardingRead("onboarding_pipeline", {}, { ...ACTOR, role });
+      expect((pipeline.body as { row_count: number }).row_count).toBe(0);
+      expect(upstreamCalls().length).toBeGreaterThan(0); // the user's own session decides, not a Studio-side 403
+    });
+    it("an empty role string is still refused (401), before any fetch", async () => {
+      for (const t of ["onboarding_overview", "onboarding_pipeline", "onboarding_prescreen"] as const) expect((await runOnboardingRead(t, { prescreen_id: PS }, { ...ACTOR, role: "" })).status).toBe(401);
       expect(calls).toHaveLength(0);
     });
     it.each(["site_medical_head", "hr"])("%s may read the pipeline; credentials and hospitals need only a signed-in role", async (role) => {

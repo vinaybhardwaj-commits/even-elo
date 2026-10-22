@@ -64,7 +64,7 @@ def h(token=None, service=SERVICE):
 def test_valid_request_reaches_the_app_with_actor_in_scope():
     client, seen = make_client()
     r = client.post("/agent", headers=h(actor()))
-    assert r.status_code == 200 and seen == [{"staff_id": "staff-1", "role": "super_admin", "jti": seen[0]["jti"]}]
+    assert r.status_code == 200 and seen == [{"staff_id": "staff-1", "role": "super_admin", "roles": ["super_admin"], "jti": seen[0]["jti"]}]
 
 
 def test_no_token_at_all():

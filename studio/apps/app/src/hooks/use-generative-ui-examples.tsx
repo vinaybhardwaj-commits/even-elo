@@ -17,9 +17,11 @@ import { PlanCard } from "@/components/generative-ui/plan-card";
 import { HTTP_TOOL_NAMES } from "@/lib/screens/tool-schema";
 import { HTTP_TOOL_CLIENT_PARAMS, HTTP_TOOL_DESCRIPTIONS, callHttpTool } from "@/lib/http-tools/client";
 import { FAMILY_CHAT_TOOLS, callFamilyTool } from "@/lib/http-tools/client-families";
+import { useAccess } from "@/lib/zone/access-context";
 import { GOVERNANCE_TOOL_NAMES, SourceTable } from "@/components/generative-ui/source-table";
 
 export const useGenerativeUIExamples = () => {
+  const { canTool } = useAccess();
   const { theme, setTheme } = useTheme();
 
   // ------------------
@@ -73,6 +75,7 @@ export const useGenerativeUIExamples = () => {
   // The list is fixed, so these hook calls run in the same order on every render.
   // --------------------------
   for (const name of GOVERNANCE_TOOL_NAMES) {
+    if (!canTool(name)) continue; // the role is fixed for the session, so the hook order stays stable
     // eslint-disable-next-line react-hooks/rules-of-hooks
     useRenderTool({
       name,
@@ -88,6 +91,7 @@ export const useGenerativeUIExamples = () => {
   // audit stay in that route) and the result renders as the same typed SourceTable.
   // --------------------------
   for (const name of HTTP_TOOL_NAMES) {
+    if (!canTool(name)) continue;
     // eslint-disable-next-line react-hooks/rules-of-hooks
     useFrontendTool({
       name,
@@ -101,6 +105,7 @@ export const useGenerativeUIExamples = () => {
 
   // Surgical and Onboarding reads: same pattern, different same-origin route (the route gates, audits and types them).
   for (const tool of FAMILY_CHAT_TOOLS) {
+    if (!canTool(tool.name)) continue;
     // eslint-disable-next-line react-hooks/rules-of-hooks
     useFrontendTool({
       name: tool.name,

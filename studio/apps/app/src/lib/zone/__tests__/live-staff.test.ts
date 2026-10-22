@@ -16,8 +16,8 @@ describe("loadLiveStaff", () => {
   });
 
   it("maps the row", async () => {
-    expect(await loadLiveStaff("p", async () => [{ status: "active", is_super_admin: true, must_change_pin: false }])).toEqual({ status: "active", is_super_admin: true, must_change_pin: false });
-    expect(await loadLiveStaff("p", async () => [{ status: "active", is_super_admin: null, must_change_pin: true }])).toEqual({ status: "active", is_super_admin: false, must_change_pin: true });
+    expect(await loadLiveStaff("p", async () => [{ status: "active", is_super_admin: true, must_change_pin: false }])).toEqual({ status: "active", is_super_admin: true, is_sgc_member: false, is_site_medical_head: false, is_hr: false, must_change_pin: false });
+    expect(await loadLiveStaff("p", async () => [{ status: "active", is_super_admin: null, must_change_pin: true }])).toEqual({ status: "active", is_super_admin: false, is_sgc_member: false, is_site_medical_head: false, is_hr: false, must_change_pin: true });
     // An unreadable PIN flag fails closed.
     expect((await loadLiveStaff("p", async () => [{ status: "active", is_super_admin: true, must_change_pin: null }]))?.must_change_pin).toBe(true);
   });

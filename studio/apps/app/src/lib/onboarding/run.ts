@@ -2,6 +2,7 @@
 import { createHash } from "node:crypto";
 import { fetchAgent } from "@/lib/agent-fetch";
 import { agentHeaders } from "@/lib/zone/actor-token";
+import { hasAnyRole } from "@/lib/zone/access";
 import type { SourceTablePayload } from "@/lib/screens/tool-schema";
 import {
   ONBOARDING_READ_PARAMS,
@@ -22,26 +23,28 @@ import { hospitalsPayload, observationsPayload, overviewPayload, pendingCredenti
 // never upstream text.
 
 /**
- * Role gates, equal to the source. GET /api/vc-onboarding/prescreens shows rows only to super_admin, Site Medical
- * Head and HR (others get an empty list); pre-screen POST has the same gate; the decision POST is super_admin or
- * Site Medical Head (even-elo then narrows to the prescreen's hospital). The detail GET has no role check in
- * even-elo; here it takes the stricter list gate. Pending credentials, hospitals and observation POST need only a
- * signed-in staff member, as in even-elo. The Studio zone admits only super_admin today, so the others are latent.
+ * Role gates, equal to the source. READS are open to any signed-in staff member and carry the user's own even-elo
+ * session, so even-elo decides what they see exactly as on its page: GET /api/vc-onboarding/prescreens returns rows
+ * only to super_admin, Site Medical Head and HR (everyone else gets an EMPTY list, not a 403); the detail GET has no
+ * role check there. Pending credentials, hospitals and observation POST need only a signed-in staff member. WRITES
+ * keep the source gate here too: pre-screen POST is super_admin, Site Medical Head or HR; the decision POST is
+ * super_admin or Site Medical Head (even-elo then narrows to the prescreen's hospital). The role string lists every
+ * flag the person holds (zone/access.ts), so any one match grants.
  */
 const LIST_ROLES: ReadonlySet<string> = new Set(["super_admin", "site_medical_head", "hr"]);
 const DECISION_ROLES: ReadonlySet<string> = new Set(["super_admin", "site_medical_head"]);
-const anyStaff = (role: string) => role.length > 0;
+const anyStaff = (role: string) => role.length > 0; // the zone only ever hands over known roles (access.ts parseRoles)
 
 const READ_GATE: Record<OnboardingReadName, (role: string) => boolean> = {
-  onboarding_overview: (r) => LIST_ROLES.has(r),
-  onboarding_pipeline: (r) => LIST_ROLES.has(r),
-  onboarding_prescreen: (r) => LIST_ROLES.has(r),
+  onboarding_overview: anyStaff,
+  onboarding_pipeline: anyStaff,
+  onboarding_prescreen: anyStaff,
   onboarding_pending_credentials: anyStaff,
   onboarding_hospitals: anyStaff,
 };
 const WRITE_GATE: Record<OnboardingWriteName, (role: string) => boolean> = {
-  prescreen_create: (r) => LIST_ROLES.has(r),
-  prescreen_decision: (r) => DECISION_ROLES.has(r),
+  prescreen_create: (r) => hasAnyRole(r, LIST_ROLES),
+  prescreen_decision: (r) => hasAnyRole(r, DECISION_ROLES),
   observation_add: anyStaff,
 };
 const UPSTREAM_TIMEOUT_MS = 10_000;

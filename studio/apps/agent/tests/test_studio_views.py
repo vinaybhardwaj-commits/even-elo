@@ -25,6 +25,7 @@ SQL_DOCAUDIT = OPS / "0007_docaudits_views.sql"
 SQL_UNGATE = OPS / "0008_ungate_views.sql"
 SQL_INCIDENTS = OPS / "0009_incidents_view.sql"
 SQL_INCIDENTS_REVOKE = OPS / "0010_incidents_revoke.sql"
+SQL_ROLE_FLAGS = OPS / "0011_profiles_role_flags.sql"
 STAFF = "11111111-1111-4111-8111-111111111111"
 CFG = {"configurable": {studio_tools.STAFF_KEY: STAFF}}
 VIEW_TOOLS = {
@@ -104,6 +105,8 @@ def world(cluster, tmp_path):
     assert n.returncode == 0, n.stderr
     n10, _ = run_roles(cluster, tmp_path, sql_file=SQL_INCIDENTS_REVOKE, tag="incidents-revoke")  # after the agent deploy
     assert n10.returncode == 0, n10.stderr
+    n11, _ = run_roles(cluster, tmp_path, sql_file=SQL_ROLE_FLAGS, tag="role-flags")  # live staff role flags (after 0001)
+    assert n11.returncode == 0, n11.stderr
     i = ids()
     s = lambda q, *a: cluster.su_exec(q % a if a else q, db="neondb")
     s(f"INSERT INTO hospitals (id, code, name) VALUES ('{i['h1']}', 'T1', 'Hosp One'), ('{i['h2']}', 'T2', 'Hosp Two')")
