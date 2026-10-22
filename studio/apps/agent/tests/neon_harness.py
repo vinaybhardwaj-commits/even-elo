@@ -37,6 +37,7 @@ PROJECT, BRANCH = "proj-quiet-1234", "br-main-5678"
 # A second Neon project (the CDMSS database): a default branch + a non-default one, each with a read_write endpoint.
 CDMSS_PROJECT, CDMSS_BRANCH, CDMSS_BRANCH_DEV = "proj-cdmss-9999", "br-cdmss-main-1111", "br-cdmss-dev-2222"
 CDMSS_HOST = "ep-cdmss-main-1.ap-south-1.aws.neon.tech"
+GOV_HOST = "ep-gov-main-1.ap-south-1.aws.neon.tech"  # the governance project's read_write endpoint (branch BRANCH)
 API_KEY = "napi_KEY_do_not_leak_0123456789abcdef"
 
 needs_pg = pytest.mark.skipif(importlib.util.find_spec("pgserver") is None or not OPS.exists(), reason="needs pgserver and ops/neon")
@@ -62,7 +63,7 @@ class Cluster:
             c.execute("ALTER SYSTEM SET password_encryption = 'scram-sha-256'")
             c.execute("ALTER SYSTEM SET log_statement = 'all'")
             c.execute("ALTER SYSTEM SET log_min_error_statement = 'error'")
-            hba.write_text("local all studio_gov_ro,studio_app scram-sha-256\n" + hba.read_text())
+            hba.write_text("local all studio_gov_ro,studio_app,studio_dw_writer scram-sha-256\n" + hba.read_text())
             c.execute("SELECT pg_reload_conf()")
         self.log = self.pgdata / "log"
         self.owner_url = self.url("neondb_owner", "neondb")
@@ -152,6 +153,7 @@ class MockNeon:
 
     def __init__(self, cluster=None):
         self.cluster, self.requests, self.hidden, self.add_superuser_on_reset = cluster, [], set(), False
+        self.projects_fail_reason = None
         self.issued = {}
         self.reset_delay = 0.0  # seconds to hold the response AFTER the server-side rotation (kill tests)
         outer = self
@@ -178,6 +180,13 @@ class MockNeon:
                 mp = re.match(r"/api/v2/projects/([^/]+)/branches/([^/]+)/roles", path)
                 pair = (mp.group(1), mp.group(2)) if mp else None
                 base = f"/api/v2/projects/{pair[0]}/branches/{pair[1]}" if pair in ((PROJECT, BRANCH), (CDMSS_PROJECT, CDMSS_BRANCH), (CDMSS_PROJECT, CDMSS_BRANCH_DEV)) else f"/api/v2/projects/{PROJECT}/branches/{BRANCH}"
+                if self.command == "GET" and path == "/api/v2/projects" and outer.projects_fail_reason:
+                    self.send_response(500, outer.projects_fail_reason)
+                    self.send_header("content-length", "0")
+                    self.end_headers()
+                    return
+                if self.command == "GET" and path == f"/api/v2/projects/{PROJECT}/endpoints":
+                    return self._send(200, {"endpoints": [{"id": "ep-gov-main-1", "branch_id": BRANCH, "type": "read_write", "host": GOV_HOST}]})
                 if self.command == "GET" and path == "/api/v2/projects":
                     return self._send(200, {"projects": [{"id": PROJECT, "name": "Even Studio", "region_id": "aws-ap-south-1", "owner": {"email": "x@y"}},
                                                           {"id": CDMSS_PROJECT, "name": "Even CDMSS", "region_id": "aws-ap-south-1", "owner": {"email": "x@y"}}]})
@@ -193,7 +202,7 @@ class MockNeon:
                 if self.command == "GET" and path == f"{base}/roles":
                     names = ["neondb_owner"]
                     if outer.cluster:
-                        names = [r[0] for r in outer.cluster.su_exec("SELECT rolname FROM pg_roles WHERE rolname IN ('neondb_owner','studio_gov_ro','studio_app','studio_cdmss_ro') ORDER BY 1")]
+                        names = [r[0] for r in outer.cluster.su_exec("SELECT rolname FROM pg_roles WHERE rolname IN ('neondb_owner','studio_gov_ro','studio_app','studio_cdmss_ro','studio_dw_writer') ORDER BY 1")]
                     return self._send(200, {"roles": [{"name": x, "password": "LISTED-PW"} for x in names if x not in outer.hidden]})
                 m = re.fullmatch(re.escape(base) + r"/roles/([a-z_0-9]+)/reset_password", path)
                 if self.command == "POST" and m:

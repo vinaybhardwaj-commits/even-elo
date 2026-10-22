@@ -13,7 +13,8 @@
 #   the role's live sessions (NOLOGIN only stops new connections); if that is denied the exit code is 5.
 #
 #   --role studio_gov_ro (default, governance DB: 0001_roles.sql) | studio_app (studio DB: 0002_studio_app_role.sql;
-#   its table grants come from apply_migration.py, run before step 3) | studio_cdmss_ro (CDMSS Neon database: only --login and
+#   its table grants come from apply_migration.py, run before step 3) | studio_dw_writer (governance DB: 0012_studio_dw.sql; password + LOGIN
+#   on the Mini via ops/neon/run-dw-writer-login-mini.sh) | studio_cdmss_ro (CDMSS Neon database: only --login and
 #   --nologin here; its setup is ops/cdmss/run-cdmss-ro.sh. --login also runs ops/cdmss/0003_cdmss_ro_postcheck.sql in the same
 #   transaction, so LOGIN is never enabled while the fence is broken. Password: neon-role.sh with PROJECT=@even-cdmss env file)
 #   --nologin                          set the role NOLOGIN in its own committed statement, then END its live
@@ -50,8 +51,9 @@ done
 case $role in
   studio_gov_ro) setup_sql=0001_roles.sql; probe_table=physicians; probe_priv=SELECT ;;
   studio_app) setup_sql=0002_studio_app_role.sql; probe_table=studio_audit; probe_priv=INSERT ;;
+  studio_dw_writer) setup_sql=0012_studio_dw.sql; probe_table=studio_dw.extract_runs; probe_priv=INSERT ;;
   studio_cdmss_ro) setup_sql=; probe_table=cdmss_ro.site_dim; probe_priv=SELECT; extra_login_sql=$here/../cdmss/0003_cdmss_ro_postcheck.sql ;;
-  *) echo "--role must be studio_gov_ro, studio_app or studio_cdmss_ro" >&2; exit 2 ;;
+  *) echo "--role must be studio_gov_ro, studio_app, studio_dw_writer or studio_cdmss_ro" >&2; exit 2 ;;
 esac
 extra_login_sql=${extra_login_sql:-}
 # CDMSS_POSTCHECK_SQL swaps the post-check that fences studio_cdmss_ro: TEST ONLY, refused unless CDMSS_ALLOW_TEST_POSTCHECK=1.
@@ -78,7 +80,7 @@ if [[ $dry -eq 1 ]]; then
   exit 0
 fi
 
-[[ $# -eq 1 ]] || { echo "usage: $0 [--allow-disk-tmp] [--login|--nologin] [--role studio_gov_ro|studio_app|studio_cdmss_ro] OWNER_URL_FILE | --dry-run" >&2; exit 2; }
+[[ $# -eq 1 ]] || { echo "usage: $0 [--allow-disk-tmp] [--login|--nologin] [--role studio_gov_ro|studio_app|studio_dw_writer|studio_cdmss_ro] OWNER_URL_FILE | --dry-run" >&2; exit 2; }
 owner_file=$1
 [[ -f $owner_file && -r $owner_file ]] || { echo "owner url file not readable" >&2; exit 2; }
 
