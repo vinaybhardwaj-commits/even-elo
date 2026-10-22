@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import fcntl
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -57,10 +58,33 @@ TUNNEL_HOST = "gov-studio-ada"
 APP_NAME = "gov-studio-extract"
 
 
-def ssh_config(env: dict, port: int) -> str:
-    """ssh -F config: host, user, key PATH and the one forward live here, not on argv. No password exists on this hop."""
+class AgentLoadFailed(RuntimeError):
+    """The private ssh-agent could not be started or the key could not be loaded into it (class only, no ssh-add output)."""
+
+
+class TunnelExited(RuntimeError):
+    """ssh exited before the forward came up (class only, no ssh stderr)."""
+
+
+class TunnelTimeout(RuntimeError):
+    """ssh stayed up but the forward never accepted connections."""
+
+
+def passphrase_file() -> Path | None:
+    """~/.config/hrag/ada.passphrase (override ADA_PASSPHRASE_FILE). None if absent (unencrypted key: old behaviour);
+    refuses (SystemExit, name only) if present but not 0600."""
+    p = Path(os.environ.get("ADA_PASSPHRASE_FILE") or HOME / ".config/hrag/ada.passphrase")
+    if not p.exists():
+        return None
+    private_file(p)
+    return p
+
+
+def ssh_config(env: dict, port: int, agent_sock: str | None = None) -> str:
+    """ssh -F config: host, user, key PATH, the agent socket and the one forward live here, not on argv. No password on this hop."""
     return "\n".join([
         f"Host {TUNNEL_HOST}", f"  HostName {env['ADA_HOST']}", f"  User {env['SSH_USER']}", f"  IdentityFile {env['SSH_KEY']}",
+        *([f"  IdentityAgent {agent_sock}"] if agent_sock else []),
         "  IdentitiesOnly yes", "  BatchMode yes", "  ExitOnForwardFailure yes", "  StrictHostKeyChecking yes",
         "  ServerAliveInterval 15",
         f"  LocalForward 127.0.0.1:{port} {env['PG_HOST']}:{env['PG_PORT']}", ""])
@@ -70,16 +94,66 @@ def tunnel_argv(cfg: Path) -> list[str]:
     return ["ssh", "-N", "-F", str(cfg), TUNNEL_HOST]
 
 
+def _clean_env() -> dict:
+    """Never the user's agent: drop SSH_AUTH_SOCK / SSH_AGENT_PID from what ssh, ssh-add and ssh-agent inherit."""
+    return {k: v for k, v in os.environ.items() if k not in ("SSH_AUTH_SOCK", "SSH_AGENT_PID")}
+
+
+def start_agent(tmp: Path, key: str, pass_file: Path):
+    """A PRIVATE ssh-agent whose socket lives in the 0700 per-run dir, with the key loaded through an askpass helper that
+    cats the passphrase file itself: the passphrase is never in argv, in any environment value, in a log or in this process."""
+    sock = tmp / "agent.sock"
+    if len(str(sock)) > 100:  # AF_UNIX limit is 104 (macOS) / 108 (Linux) bytes
+        raise AgentLoadFailed("agent socket path too long")
+    out = subprocess.run(["ssh-agent", "-a", str(sock)], env=_clean_env(), stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=15)
+    m = re.search(r"SSH_AGENT_PID=(\d+)", out.stdout)
+    if out.returncode != 0 or not m:
+        raise AgentLoadFailed("agent did not start")
+    pid = int(m.group(1))
+    try:
+        helper = tmp / "askpass.sh"
+        fd = os.open(helper, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o700)
+        with os.fdopen(fd, "w") as f:
+            f.write(f"#!/bin/sh\nexec cat -- {shlex.quote(str(pass_file))}\n")
+        env = {**_clean_env(), "SSH_AUTH_SOCK": str(sock), "SSH_ASKPASS": str(helper), "SSH_ASKPASS_REQUIRE": "force", "DISPLAY": "gov-studio:0"}
+        r = subprocess.run(["ssh-add", "-t", "3600", key], env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, timeout=30)
+        if r.returncode != 0:
+            raise AgentLoadFailed("key not loaded")
+    except BaseException:
+        kill_agent(pid, sock)
+        raise
+    return sock, pid
+
+
+def kill_agent(pid: int, sock):
+    """`ssh-agent -k` (it reads SSH_AGENT_PID); falls back to a signal. The socket dies with the per-run dir."""
+    try:
+        subprocess.run(["ssh-agent", "-k"], env={**_clean_env(), "SSH_AGENT_PID": str(pid), "SSH_AUTH_SOCK": str(sock)},
+                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+    except Exception:
+        pass
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        pass
+
+
 PROBE_ATTEMPTS = 10
 
 
 @contextmanager
 def tunnel(env: dict):
-    """ONE ssh port-forward to ada. Command line holds no host, user or password. Cleanup (child terminated, 0600
-    config removed) runs on every exit path, including SIGTERM/SIGHUP/SIGINT (they raise job.Killed)."""
+    """ONE ssh port-forward to ada, authenticated by a private per-run ssh-agent when ada.passphrase exists. Cleanup (ssh
+    child ended, agent killed, 0600 config / askpass helper / socket removed) runs on every exit path, including
+    SIGTERM/SIGHUP/SIGINT (they raise job.Killed). Failures are classes: AgentLoadFailed, TunnelExited, TunnelTimeout."""
     p = None
-    tmp = tempfile.mkdtemp(prefix="gov-studio-ssh-")  # 0700; holds the 0600 ssh config
+    agent = None
+    tmp = tempfile.mkdtemp(prefix="gov-studio-ssh-")  # 0700; holds the ssh config, agent socket, askpass helper
     try:
+        pass_file = passphrase_file()
+        if pass_file is not None:
+            agent = start_agent(Path(tmp), env["SSH_KEY"], pass_file)
         s = socket.socket()
         s.bind(("127.0.0.1", 0))
         port = s.getsockname()[1]
@@ -87,12 +161,12 @@ def tunnel(env: dict):
         cfg = Path(tmp) / "config"
         fd = os.open(cfg, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "w") as f:
-            f.write(ssh_config(env, port))
-        p = subprocess.Popen(tunnel_argv(cfg), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            f.write(ssh_config(env, port, str(agent[0]) if agent else None))
+        p = subprocess.Popen(tunnel_argv(cfg), env=_clean_env(), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         delay = 0.25
         for _ in range(PROBE_ATTEMPTS):  # at most 10 raw connects, with backoff
             if p.poll() is not None:
-                raise RuntimeError("tunnel exited")
+                raise TunnelExited("tunnel exited")
             try:
                 socket.create_connection(("127.0.0.1", port), 0.5).close()
                 break
@@ -100,7 +174,7 @@ def tunnel(env: dict):
                 time.sleep(delay)
                 delay = min(delay * 2, 4)
         else:
-            raise RuntimeError("tunnel timeout")
+            raise TunnelTimeout("tunnel timeout")
         yield port
     finally:
         if p is not None:
@@ -109,25 +183,31 @@ def tunnel(env: dict):
                 p.wait(10)
             except subprocess.TimeoutExpired:
                 p.kill()
+        if agent is not None:
+            kill_agent(agent[1], agent[0])
         shutil.rmtree(tmp, ignore_errors=True)
 
 
 def sweep_stale():
     """With the run lock held: remove what a SIGKILLed run leaves behind (spill files, ssh config dirs, an orphaned ssh)."""
     sweep_spill(job.SPILL_ROOT)
-    for d in Path(tempfile.gettempdir()).glob("gov-studio-ssh-*"):
-        shutil.rmtree(d, ignore_errors=True)
     try:
         ps = subprocess.run(["ps", "-eo", "pid=,args="], capture_output=True, text=True, timeout=10).stdout
     except Exception:
-        return
+        ps = ""
     for line in ps.splitlines():
         pid, _, args = line.strip().partition(" ")
-        if pid.isdigit() and int(pid) != os.getpid() and args.startswith("ssh -N -F ") and "/gov-studio-ssh-" in args:
+        if not pid.isdigit() or int(pid) == os.getpid() or "/gov-studio-ssh-" not in args:
+            continue
+        head = [os.path.basename(x) for x in args.split()[:2]]
+        # orphaned tunnel (ssh -N -F <dir>/config) or orphaned private agent (ssh-agent -a <dir>/agent.sock)
+        if args.startswith("ssh -N -F ") or ("ssh-agent" in head and "-a" in args.split()):
             try:
                 os.kill(int(pid), signal.SIGTERM)
             except OSError:
                 pass
+    for d in Path(tempfile.gettempdir()).glob("gov-studio-ssh-*"):  # after the kills: the sockets live in these dirs
+        shutil.rmtree(d, ignore_errors=True)
 
 
 def install_signal_handlers():

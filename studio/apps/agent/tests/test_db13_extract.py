@@ -135,6 +135,11 @@ def apply_0012(c):
 
 
 @pytest.fixture(autouse=True)
+def no_passphrase_file(monkeypatch, tmp_path):
+    monkeypatch.setenv("ADA_PASSPHRASE_FILE", str(tmp_path / "no-such-passphrase"))  # these tests exercise the unencrypted-key path
+
+
+@pytest.fixture(autouse=True)
 def spill_root(tmp_path, monkeypatch):
     root = tmp_path / "Library" / "Caches" / "gov-studio-extract"
     monkeypatch.setattr(job, "SPILL_ROOT", root)
