@@ -37,6 +37,7 @@ PROJECT, BRANCH = "proj-quiet-1234", "br-main-5678"
 # A second Neon project (the CDMSS database): a default branch + a non-default one, each with a read_write endpoint.
 CDMSS_PROJECT, CDMSS_BRANCH, CDMSS_BRANCH_DEV = "proj-cdmss-9999", "br-cdmss-main-1111", "br-cdmss-dev-2222"
 CDMSS_HOST = "ep-cdmss-main-1.ap-south-1.aws.neon.tech"
+GOV_HOST = "ep-gov-main-1.ap-south-1.aws.neon.tech"  # the governance project's read_write endpoint (branch BRANCH)
 API_KEY = "napi_KEY_do_not_leak_0123456789abcdef"
 
 needs_pg = pytest.mark.skipif(importlib.util.find_spec("pgserver") is None or not OPS.exists(), reason="needs pgserver and ops/neon")
@@ -62,7 +63,7 @@ class Cluster:
             c.execute("ALTER SYSTEM SET password_encryption = 'scram-sha-256'")
             c.execute("ALTER SYSTEM SET log_statement = 'all'")
             c.execute("ALTER SYSTEM SET log_min_error_statement = 'error'")
-            hba.write_text("local all studio_gov_ro,studio_app scram-sha-256\n" + hba.read_text())
+            hba.write_text("local all studio_gov_ro,studio_app,studio_dw_writer scram-sha-256\n" + hba.read_text())
             c.execute("SELECT pg_reload_conf()")
         self.log = self.pgdata / "log"
         self.owner_url = self.url("neondb_owner", "neondb")
@@ -152,6 +153,12 @@ class MockNeon:
 
     def __init__(self, cluster=None):
         self.cluster, self.requests, self.hidden, self.add_superuser_on_reset = cluster, [], set(), False
+        self.projects_fail_reason = None
+        self.visible_extra = set()
+        # Neon (live, 22 Oct): reset_password answers HTTP 422 for a NOLOGIN role (authentication_method "no_login"). Opt-in so the older
+        # primitive tests (reset before LOGIN) keep their meaning; the wrapper fixtures turn it on.
+        self.reject_reset_for_nologin, self.reset_422_message, self.passworded = False, "role has no login privilege", set()
+        self.force_reset_status, self.reset_log = None, []   # force_reset_status: answer reset_password with this HTTP status; reset_log: (role, can_login) per call
         self.issued = {}
         self.reset_delay = 0.0  # seconds to hold the response AFTER the server-side rotation (kill tests)
         outer = self
@@ -178,6 +185,13 @@ class MockNeon:
                 mp = re.match(r"/api/v2/projects/([^/]+)/branches/([^/]+)/roles", path)
                 pair = (mp.group(1), mp.group(2)) if mp else None
                 base = f"/api/v2/projects/{pair[0]}/branches/{pair[1]}" if pair in ((PROJECT, BRANCH), (CDMSS_PROJECT, CDMSS_BRANCH), (CDMSS_PROJECT, CDMSS_BRANCH_DEV)) else f"/api/v2/projects/{PROJECT}/branches/{BRANCH}"
+                if self.command == "GET" and path == "/api/v2/projects" and outer.projects_fail_reason:
+                    self.send_response(500, outer.projects_fail_reason)
+                    self.send_header("content-length", "0")
+                    self.end_headers()
+                    return
+                if self.command == "GET" and path == f"/api/v2/projects/{PROJECT}/endpoints":
+                    return self._send(200, {"endpoints": [{"id": "ep-gov-main-1", "branch_id": BRANCH, "type": "read_write", "host": GOV_HOST}]})
                 if self.command == "GET" and path == "/api/v2/projects":
                     return self._send(200, {"projects": [{"id": PROJECT, "name": "Even Studio", "region_id": "aws-ap-south-1", "owner": {"email": "x@y"}},
                                                           {"id": CDMSS_PROJECT, "name": "Even CDMSS", "region_id": "aws-ap-south-1", "owner": {"email": "x@y"}}]})
@@ -193,13 +207,19 @@ class MockNeon:
                 if self.command == "GET" and path == f"{base}/roles":
                     names = ["neondb_owner"]
                     if outer.cluster:
-                        names = [r[0] for r in outer.cluster.su_exec("SELECT rolname FROM pg_roles WHERE rolname IN ('neondb_owner','studio_gov_ro','studio_app','studio_cdmss_ro') ORDER BY 1")]
-                    return self._send(200, {"roles": [{"name": x, "password": "LISTED-PW"} for x in names if x not in outer.hidden]})
+                        names = [r[0] for r in outer.cluster.su_exec("SELECT rolname FROM pg_roles WHERE rolname IN (" + ",".join(f"'{n}'" for n in ['neondb_owner','studio_gov_ro','studio_app','studio_cdmss_ro','studio_dw_writer', *outer.visible_extra]) + ") ORDER BY 1")]
+                    return self._send(200, {"roles": [{"name": x, "password": "LISTED-PW", "authentication_method": outer.auth_method(x)} for x in names if x not in outer.hidden]})
                 m = re.fullmatch(re.escape(base) + r"/roles/([a-z_0-9]+)/reset_password", path)
                 if self.command == "POST" and m:
                     role = m.group(1)
                     if role in outer.hidden:
                         return self._send(404, {"message": "role not found"})
+                    if outer.cluster:
+                        outer.reset_log.append((role, outer.can_login(role)))
+                    if outer.force_reset_status:
+                        return self._send(outer.force_reset_status, {"code": "", "message": outer.reset_422_message})
+                    if outer.cluster and outer.reject_reset_for_nologin and not outer.can_login(role):
+                        return self._send(422, {"code": "", "message": outer.reset_422_message})
                     pw = "Is5ued/" + uuid.uuid4().hex + "+X@" + str(len(outer.issued))
                     outer.issued[role] = pw
                     if outer.cluster:
@@ -216,6 +236,18 @@ class MockNeon:
         self.server = HTTPServer(("127.0.0.1", 0), H)
         self.url = f"http://127.0.0.1:{self.server.server_address[1]}/api/v2"
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def can_login(self, role):
+        rows = self.cluster.su_exec(f"SELECT rolcanlogin FROM pg_roles WHERE rolname = '{role}'")
+        return bool(rows and rows[0][0])
+
+    def auth_method(self, role):
+        """What the API says about a role: no_login (NOLOGIN), else a password method once a password was issued, else no_password."""
+        if not self.cluster:
+            return "password"
+        if not self.can_login(role):
+            return "no_login"
+        return "scram-sha-256" if (role in self.issued or role in self.passworded) else "no_password"
 
     def stop(self):
         self.server.shutdown()

@@ -11,7 +11,8 @@
 # DIRECT url + NEON_PROJECT_ID pulled from the Vercel API (project even-cdmss, env DATABASE_URL_UNPOOLED / NEON_PROJECT_ID; token
 # from ~/Library/Application Support/com.vercel.cli/auth.json) straight into 0600 files on a RAM disk (python, no argv), Neon API
 # key read in place from ~/oc/gov-orch/secrets/neon-api-key (mode 600). A POOLED owner url is refused before anything runs.
-# Then: neon-role.sh reset-password ... ; run-roles.sh --role studio_cdmss_ro --login (LOGIN + the cdmss post-check, one txn).
+# Then (order fixed after Neon's HTTP 422 on a NOLOGIN role): role-auth must say no_login; run-roles.sh --role studio_cdmss_ro --login (LOGIN +
+# the cdmss post-check, one txn); neon-role.sh reset-password; run-roles.sh --login again as the re-check. A failure from LOGIN on contains NOLOGIN.
 # Every exit path (also HUP/INT/TERM) rm -P's the secrets and detaches the RAM disk, EXCEPT the relay URL on success, which stays on
 # the still-attached RAM disk until --detach. Detail goes to the log (filtered of URLs and "password"), never to the terminal.
 # The relay url's host is the branch's read_write endpoint from the API (--host auto), fixed in production.
@@ -152,9 +153,17 @@ fi
 
 DEV=
 KEEP_RELAY=0
+LOGIN_DONE=0
 cleanup() {
   local rc=$?
   trap - EXIT HUP INT TERM
+  set +x
+  # From the moment LOGIN is enabled (step a) any exit that is not the full success contains the role: NOLOGIN, sessions ended
+  # (run-roles.sh --nologin, which needs the owner url still on the RAM disk), and no relay url is left. Exit codes are unchanged.
+  if [[ $LOGIN_DONE -eq 1 && ! ( $rc -eq 0 && $KEEP_RELAY -eq 1 ) && -s $MOUNT/owner-url ]]; then
+    "$REPO/ops/neon/run-roles.sh" --role "$ROLE" --nologin "$MOUNT/owner-url" >/dev/null 2>&1 \
+      || echo "WARNING: could not confirm $ROLE NOLOGIN (or its sessions): run run-roles.sh --role $ROLE --nologin" >&2
+  fi
   if [[ -d $MOUNT ]]; then
     secure_rm "$MOUNT/owner-url" "$MOUNT/project.env" "$MOUNT/py.err"
     if [[ $rc -eq 0 && $KEEP_RELAY -eq 1 ]]; then
@@ -252,20 +261,44 @@ if [[ $MODE == nologin ]]; then
   echo "OK $ROLE set NOLOGIN (live sessions ended); RAM disk wiped and detached. Next: $0"; exit 0
 fi
 
+# ORDER (v6, after Neon answered 422 to reset_password on a NOLOGIN role): (pre) the role must be a NOLOGIN role with no password yet,
+# (a) LOGIN with every membership/grant check, (b) Neon issues the password, (c) the same checks again (reset may add neon_superuser).
+# A LOGIN role with no password cannot authenticate, so the window between (a) and (b) opens no door. Any failure from (a) on contains the
+# role to NOLOGIN (see cleanup) and leaves no url.
+method=$("$REPO/ops/neon/neon-role.sh" role-auth "$NEON_KEY" "@$MOUNT/project.env" auto "$ROLE" 2>"$MOUNT/py.err")
+rc=$?
+filter < "$MOUNT/py.err" >> "$LOG"; secure_rm "$MOUNT/py.err"
+if [[ $rc -ne 0 ]]; then
+  [[ $rc -eq 4 ]] && echo "Neon API cannot see $ROLE (SQL-created role): nothing changed; tell gov-orch" >&2
+  echo "role-auth FAILED rc=$rc (see $LOG)" >&2; exit "$rc"
+fi
+if [[ $method != no_login ]]; then
+  echo "$ROLE is not a password-less NOLOGIN role (Neon says authentication_method=$method): this is ROTATION, not a first login. Nothing was changed. Follow the rotation path in ops/cdmss/README.md" >&2
+  exit 6
+fi
+note "role-auth no_login"
+
+"$REPO/ops/neon/run-roles.sh" --role "$ROLE" --login "$MOUNT/owner-url" 2>&1 | filter | tail -20 >> "$LOG"
+rc=${PIPESTATUS[0]}
+if [[ $rc -ne 0 ]]; then echo "run-roles --login (a) FAILED rc=$rc, role contained NOLOGIN (see $LOG)" >&2; exit "$rc"; fi
+LOGIN_DONE=1
+note "login enabled (a)"
+
 host_flag=()
 case $HOSTMODE in auto|pooled) host_flag=(--host "$HOSTMODE") ;; esac
 "$REPO/ops/neon/neon-role.sh" reset-password "$NEON_KEY" "@$MOUNT/project.env" auto "$ROLE" "$MOUNT/relay-url" \
     --dsn-from "$MOUNT/owner-url" ${host_flag[@]+"${host_flag[@]}"} 2>&1 | filter | tail -20 >> "$LOG"
 rc=${PIPESTATUS[0]}
 if [[ $rc -ne 0 ]]; then
-  [[ $rc -eq 4 ]] && echo "Neon API cannot see $ROLE (SQL-created role): nothing changed; tell gov-orch" >&2
-  echo "reset-password FAILED rc=$rc (see $LOG)" >&2; exit "$rc"
+  [[ $rc -eq 4 ]] && echo "Neon API cannot see $ROLE (SQL-created role): tell gov-orch" >&2
+  echo "reset-password (b) FAILED rc=$rc, role contained NOLOGIN (see $LOG)" >&2; exit "$rc"
 fi
-note "reset-password ok"
+note "reset-password ok (b)"
 
 "$REPO/ops/neon/run-roles.sh" --role "$ROLE" --login "$MOUNT/owner-url" 2>&1 | filter | tail -20 >> "$LOG"
 rc=${PIPESTATUS[0]}
-if [[ $rc -ne 0 ]]; then echo "run-roles --login FAILED rc=$rc, role contained NOLOGIN (see $LOG)" >&2; exit "$rc"; fi
+if [[ $rc -ne 0 ]]; then echo "re-check (c) FAILED rc=$rc, role contained NOLOGIN, no url left (see $LOG)" >&2; exit "$rc"; fi
+note "re-check ok (c)"
 
 [[ -s $MOUNT/relay-url && $(stat -c '%a' "$MOUNT/relay-url") == 600 ]] || { echo "relay url file missing or not mode 600" >&2; exit 1; }
 KEEP_RELAY=1
