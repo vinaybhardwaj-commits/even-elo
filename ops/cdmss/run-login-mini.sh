@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash -p
 # CDMSS LOGIN step, run ON THE MAC MINI (macOS). Issues the studio_cdmss_ro password through the Neon API, enables LOGIN, and
 # leaves the password-bearing URL as ONE 0600 file on a RAM disk for the later relay lane (which moves it to the Asus).
 #
@@ -22,11 +22,70 @@
 # CURL_* and the proxy variables, PYTHON*, GIT_*, BASH_ENV, ENV, LD_*, DYLD_*. (HOME and PATH are not refused: the script needs them.)
 # The scan fails closed (compgen -e, every name validated); exported bash functions (BASH_FUNC_*), a newline inside any value and any
 # non-identifier variable name are refused too. git fetch/checkout output reaches the log only through the same filter.
+#
+# ENVIRONMENT ALLOWLIST (v5). The shebang is `/bin/bash -p` (privileged: SHELLOPTS, BASHOPTS, BASH_ENV, ENV and imported functions are
+# ignored at startup). The first thing the script does is note which variables it was started with (names only) and then
+# `exec /usr/bin/env -i` into a fresh `/bin/bash --noprofile --norc -p` with ONLY: PATH (fixed: gnubin:/opt/homebrew/bin:/usr/bin:/bin:
+# /usr/sbin:/sbin), HOME USER LOGNAME LANG TERM, and a re-exec marker (the PID, which exec keeps). In test mode (LOGIN_MINI_TEST=1) the
+# caller's PATH and the named test variables are carried as well, nothing else. Everything else is gone before any secret exists; the
+# second layer below then refuses what the first layer saw and dropped (SEEN), and still scans its own environment.
+# RESIDUAL: whoever invokes the script controls the startup of the bash that runs the first lines (`bash script` ignores the -p in the
+# shebang, so SHELLOPTS=xtrace PS4='$(cmd)' would run cmd before the first line). Invoke it as the README says:
+#   /usr/bin/env -i HOME=$HOME PATH=/usr/bin:/bin /bin/bash --noprofile --norc ops/cdmss/run-login-mini.sh
+if [ "${LOGIN_MINI_REEXEC:-}" != "$$" ]; then
+  set +x
+  _t=${LOGIN_MINI_TEST:-0}; _seen=; _bad=0; _fn=0; _odd=0
+  _names=$(compgen -e) || _bad=1
+  for _v in $_names; do
+    [[ $_v =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { _bad=1; continue; }
+    [ -n "${!_v:-}" ] && _seen="$_seen $_v"
+  done
+  [ -n "$(compgen -A function)" ] && _fn=1
+  _odd=$(env | grep -vc '^[A-Za-z_][A-Za-z0-9_]*=') || true
+  _args=("LOGIN_MINI_REEXEC=$$" "LOGIN_MINI_SEEN=$_seen" "LOGIN_MINI_SCAN=bad=$_bad odd=$_odd fn=$_fn")
+  if [ "$_t" = 1 ]; then
+    _args+=("LOGIN_MINI_TEST=1" "PATH=$PATH")
+    for _v in LOGIN_MINI_REPO LOGIN_MINI_SKIP_GIT LOGIN_MINI_MOUNT LOGIN_MINI_SECURE_RM LOGIN_MINI_AUTH_JSON LOGIN_MINI_NEON_KEY LOGIN_MINI_LOG \
+              LOGIN_MINI_RELAY_HOST LOGIN_MINI_NOT_MAC VERCEL_API_BASE NEON_API_BASE SQL_FILE PSQL CDMSS_POSTCHECK_SQL CDMSS_ALLOW_TEST_POSTCHECK \
+              STUDIO_ROLES_SHM XDG_RUNTIME_DIR; do
+      [ -n "${!_v:-}" ] && _args+=("$_v=${!_v}")
+    done
+  else
+    _args+=("PATH=/opt/homebrew/opt/coreutils/libexec/gnubin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin")
+  fi
+  for _v in HOME USER LOGNAME LANG TERM; do [ -n "${!_v:-}" ] && _args+=("$_v=${!_v}"); done
+  exec /usr/bin/env -i "${_args[@]}" /bin/bash --noprofile --norc -p "$0" "$@"
+fi
+set +x
 set -uo pipefail
 umask 077
+SEEN=${LOGIN_MINI_SEEN:-}; SCAN=${LOGIN_MINI_SCAN:-bad=1 odd=0 fn=0}
+unset LOGIN_MINI_REEXEC LOGIN_MINI_SEEN LOGIN_MINI_SCAN
 
 TEST=${LOGIN_MINI_TEST:-0}
 if [[ $TEST != 1 ]]; then
+  # layer 2a: what the first layer saw and dropped
+  for v in $SEEN; do
+    [[ $v =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { echo "environment holds an odd variable name: refusing" >&2; exit 2; }
+    case $v in
+      LOGIN_MINI_*|VERCEL_API_BASE|NEON_API_BASE|SQL_FILE|PSQL|CDMSS_POSTCHECK_SQL|CDMSS_ALLOW_TEST_POSTCHECK|STUDIO_ROLES_SHM|XDG_RUNTIME_DIR|BASH_ENV|ENV)
+        [[ $v == LOGIN_MINI_TEST ]] || { echo "$v is a test-only override: refusing (set LOGIN_MINI_TEST=1 only in tests)" >&2; exit 2; } ;;
+      SHELLOPTS|BASHOPTS|PS4|BASH_XTRACEFD|PROMPT_COMMAND)
+        echo "$v (shell tracing/startup control) was in the environment: refusing" >&2; exit 2 ;;
+      PG[A-Z]*|CURL_*|*_proxy|*_PROXY|PYTHON[A-Z]*|GIT_*|LD_*|DYLD_*)
+        echo "$v redirects a host, file or binary: refusing (unset it)" >&2; exit 2 ;;
+    esac
+  done
+  case $SCAN in
+    *"bad=0"*) ;; *) echo "cannot enumerate the environment cleanly: refusing" >&2; exit 2 ;;
+  esac
+  case $SCAN in *"fn=0"*) ;; *) echo "exported bash functions are in the environment (they can replace any command): refusing" >&2; exit 2 ;; esac
+  case $SCAN in *"odd=0 "*) ;; *) echo "environment holds odd entries (newline in a value, or a non-identifier name): refusing" >&2; exit 2 ;; esac
+  # layer 2b: tracing/startup variables that somehow survive in THIS shell's exported environment
+  for v in SHELLOPTS BASHOPTS PS4 BASH_XTRACEFD BASH_ENV ENV; do
+    if compgen -e | grep -qx "$v"; then echo "$v survived into the exported environment: refusing" >&2; exit 2; fi
+  done
+  # layer 2c: the previous scan of this shell's own environment
   for v in LOGIN_MINI_REPO LOGIN_MINI_SKIP_GIT LOGIN_MINI_MOUNT LOGIN_MINI_SECURE_RM LOGIN_MINI_AUTH_JSON LOGIN_MINI_NEON_KEY LOGIN_MINI_LOG \
            LOGIN_MINI_RELAY_HOST LOGIN_MINI_NOT_MAC VERCEL_API_BASE NEON_API_BASE SQL_FILE PSQL CDMSS_POSTCHECK_SQL CDMSS_ALLOW_TEST_POSTCHECK \
            STUDIO_ROLES_SHM XDG_RUNTIME_DIR BASH_ENV ENV; do
@@ -165,13 +224,26 @@ filter < "$MOUNT/py.err" >> "$LOG"; secure_rm "$MOUNT/py.err"   # python's stder
 chmod 600 "$MOUNT/owner-url" "$MOUNT/project.env"
 
 # Refuse a POOLED owner url BEFORE running anything: the post-check needs the database owner on a direct connection.
-raw=$(<"$MOUNT/owner-url")
-rest=${raw#*://}; authority=${rest%%/*}; host=${authority##*@}; host=${host%%:*}
-if [[ $raw != postgres*://* ]]; then echo "owner url is not a postgres url: refusing" >&2; exit 3; fi
-if [[ $host == *-pooler* || $raw == *pgbouncer=true* ]]; then
-  echo "owner url is a POOLED url (DATABASE_URL_UNPOOLED must be direct): refusing, nothing was run" >&2; exit 3
-fi
-unset raw rest authority host
+# The url is NEVER read into a shell variable (xtrace, `set -x` in a child, or an error message could print it): python reads the file
+# and reports only an exit code. (neon-role.sh and run-roles.sh do read the url into variables, but they run in the scrubbed
+# environment above, where no tracing variable can exist.)
+set +x
+python3 - "$MOUNT/owner-url" <<'PY'
+import re, sys
+raw = open(sys.argv[1]).read().strip()
+m = re.match(r"^postgres(?:ql)?://([^/?#]*)", raw)
+if not m:
+    sys.exit(4)
+host = m.group(1).rsplit("@", 1)[-1].split(":", 1)[0]
+if "-pooler" in host or re.search(r"(?:^|[?&])pgbouncer=true(?:&|$)", raw):
+    sys.exit(3)
+PY
+case $? in
+  0) ;;
+  3) echo "owner url is a POOLED url (DATABASE_URL_UNPOOLED must be direct): refusing, nothing was run" >&2; exit 3 ;;
+  4) echo "owner url is not a postgres url: refusing" >&2; exit 3 ;;
+  *) echo "owner url check failed: refusing" >&2; exit 3 ;;
+esac
 
 if [[ $MODE == nologin ]]; then
   "$REPO/ops/neon/run-roles.sh" --role "$ROLE" --nologin "$MOUNT/owner-url" 2>&1 | filter | tail -20 >> "$LOG"

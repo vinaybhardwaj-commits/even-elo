@@ -274,7 +274,7 @@ def test_every_host_file_or_binary_redirect_is_refused_outside_test_mode(world, 
 
 def test_readme_names_exactly_the_refused_variables_and_the_code_refuses_them():
     code = WRAPPER.read_text()
-    loop = re.search(r"for v in (.*?); do\n    if \[\[ -n", code, re.S).group(1).replace("\\\n", " ")
+    loop = re.search(r"for v in (LOGIN_MINI_REPO.*?); do\n    if \[\[ -n", code, re.S).group(1).replace("\\\n", " ")
     refused = set(loop.split())
     readme = (OPS / "README.md").read_text()
     section = readme[readme.index("## Test-only overrides"):]
@@ -366,3 +366,105 @@ def test_git_output_reaches_the_log_only_through_the_filter(world):
     for leak in ("SECRETPW", "postgres://", "password", "token", "bearer"):
         assert leak not in log and leak not in r.stdout + r.stderr, leak
     assert "visible git line" in log and world.vercel.requests == [] and stublog(world) == ""
+
+
+# ---------------------------------------------------------------- v5: the environment is allowlisted, not denylisted
+
+
+def secrets_absent(world, r):
+    pw = world.neon.issued.get(ROLE)
+    hay = r.stdout + r.stderr + (world.log.read_text() if world.log.exists() else "")
+    for secret in (world.cdmss.owner_url, VERCEL_TOKEN, API_KEY, *([pw, quote(pw, safe="")] if pw else [])):
+        assert secret not in hay, "a secret reached the terminal or the log"
+
+
+def run_direct(world, extra, via_bash=False):
+    """Run the wrapper the way an attacker-influenced shell would: exec'd through its shebang (bash -p), or `bash script` (ignores -p)."""
+    cmd = ["bash", str(WRAPPER)] if via_bash else [str(WRAPPER)]
+    return subprocess.run(cmd, capture_output=True, text=True, env={**world.env, "LOGIN_MINI_RELAY_HOST": "owner", **extra}, timeout=120)
+
+
+@pytest.mark.parametrize("via_bash", [False, True], ids=["shebang", "bash-script"])
+def test_shelloptions_xtrace_never_traces_the_owner_url(world, via_bash):
+    """Refuter repro 1: SHELLOPTS=xtrace printed `+ raw=postgresql://owner:PW@...` on the Mini. No variable holds the url now, and the
+    re-exec drops SHELLOPTS before any secret exists."""
+    r = run_direct(world, {"SHELLOPTS": "xtrace"}, via_bash)
+    assert r.returncode == 0, r.stderr
+    secrets_absent(world, r)
+    assert "+ raw" not in r.stderr and "postgres" not in r.stderr
+    run(world, "--detach")
+
+
+def test_ps4_code_execution_is_neutralised_by_the_shebang_and_the_documented_invocation(world, tmp_path):
+    """Refuter repro 2: SHELLOPTS=xtrace PS4='$(touch F)' ran code. The shebang `bash -p` ignores SHELLOPTS at startup; the documented
+    `env -i ... bash` form never passes it. (`bash script` ignores the -p: that route is the README's stated residual.)"""
+    f = tmp_path / "F-shebang"
+    r = run_direct(world, {"SHELLOPTS": "xtrace", "PS4": f"$(touch {f})"})
+    assert r.returncode == 0, r.stderr
+    assert not f.exists(), "PS4 command substitution ran"
+    secrets_absent(world, r)
+    run(world, "--detach")
+    g = tmp_path / "F-envi"
+    args = [f"{k}={v}" for k, v in {**world.env, "LOGIN_MINI_RELAY_HOST": "owner"}.items()]
+    r = subprocess.run(["/usr/bin/env", "-i", *args, "/bin/bash", "--noprofile", "--norc", str(WRAPPER)], capture_output=True, text=True,
+                       env={"SHELLOPTS": "xtrace", "PS4": f"$(touch {g})"}, timeout=120)
+    assert r.returncode == 0, r.stderr
+    assert not g.exists()
+    secrets_absent(world, r)
+    run(world, "--detach")
+
+
+def test_bashopts_extdebug_has_no_effect(world, tmp_path):
+    """Refuter repro 3: BASHOPTS=extdebug makes bash source a debugger file. BASH_ENV/ENV pointing at a file must not run either
+    (through the shebang; `bash script` sources BASH_ENV before the first line, the documented residual, but still leaks no secret)."""
+    marker = tmp_path / "sourced"
+    hook = tmp_path / "hook.sh"
+    hook.write_text(f"touch {marker}\n")
+    for via_bash in (False, True):
+        r = run_direct(world, {"BASHOPTS": "extdebug", "BASH_ENV": str(hook), "ENV": str(hook)}, via_bash)
+        assert r.returncode == 0, r.stderr
+        if not via_bash:
+            assert not marker.exists(), "a startup file ran through the shebang"
+        else:
+            marker.unlink(missing_ok=True)   # `bash script` sources BASH_ENV before line one: the README's stated residual
+        secrets_absent(world, r)
+        run(world, "--detach")
+
+
+@pytest.mark.parametrize("name", ["SHELLOPTS", "BASHOPTS", "PS4", "BASH_XTRACEFD", "PROMPT_COMMAND", "BASH_ENV", "ENV"])
+def test_shell_control_variables_are_refused_outside_test_mode(world, name):
+    r = subprocess.run(["bash", str(WRAPPER)], capture_output=True, text=True, env={**clean_env(world), name: "xtrace" if name != "BASH_XTRACEFD" else "9"})
+    assert r.returncode == 2 and name in r.stderr and "refusing" in r.stderr, r.stderr
+    assert nothing_ran(world)
+
+
+def test_an_unknown_variable_never_reaches_a_child_process(world, tmp_path):
+    dump = tmp_path / "envdump"
+    stub = Path(world.env["PATH"].split(":")[0])
+    for tool in ("hdiutil", "diskutil"):
+        old = (stub / tool).read_text()
+        (stub / tool).write_text(old.replace("#!/bin/bash\n", f'#!/bin/bash\nenv | cut -d= -f1 >> "{dump}"\n', 1))
+    r = run_direct(world, {"FOO_EVIL": "1", "ANOTHER_EVIL": "x", "EDITOR": "evil"})
+    assert r.returncode == 0, r.stderr
+    names = set(dump.read_text().split())
+    assert names and not {"FOO_EVIL", "ANOTHER_EVIL", "EDITOR", "SHELLOPTS"} & names
+    allowed = {"PATH", "HOME", "USER", "LOGNAME", "LANG", "TERM", "PWD", "SHLVL", "_", "OLDPWD", "LOGIN_MINI_TEST", "LOGIN_MINI_LOG", "LOGIN_MINI_REPO",
+               "LOGIN_MINI_SKIP_GIT", "LOGIN_MINI_MOUNT", "LOGIN_MINI_SECURE_RM", "LOGIN_MINI_AUTH_JSON", "LOGIN_MINI_NEON_KEY",
+               "LOGIN_MINI_RELAY_HOST", "VERCEL_API_BASE", "NEON_API_BASE", "PSQL"}
+    assert names <= allowed, names - allowed
+    run(world, "--detach")
+
+
+def test_outside_test_mode_an_unknown_variable_is_dropped_not_refused_and_known_ones_still_refused(world):
+    r = subprocess.run(["bash", str(WRAPPER)], capture_output=True, text=True, env={**clean_env(world), "FOO_EVIL": "1"})
+    assert r.returncode == 2 and "Mac Mini" in r.stderr and "FOO_EVIL" not in r.stderr   # dropped by the allowlist, then the next gate
+    r = subprocess.run(["bash", str(WRAPPER)], capture_output=True, text=True, env={**clean_env(world), "FOO_EVIL": "1", "PGHOST": "evil"})
+    assert r.returncode == 2 and "PGHOST redirects" in r.stderr
+
+
+def test_the_owner_url_is_never_read_into_a_shell_variable():
+    code = "\n".join(l for l in WRAPPER.read_text().splitlines() if not l.lstrip().startswith("#"))
+    assert not re.search(r"\$\(<\s*\"?\$MOUNT/owner-url", code) and not re.search(r"=\$\(<", code)
+    assert "set +x" in code.split("exec /usr/bin/env -i")[0]                        # before anything else, in the first block
+    assert code.index("exec /usr/bin/env -i") < code.index("umask 077") < code.index("hdiutil attach")
+    assert WRAPPER.read_text().startswith("#!/bin/bash -p\n")

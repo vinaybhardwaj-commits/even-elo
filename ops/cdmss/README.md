@@ -18,11 +18,14 @@ the checkout `~/oc/gov-orch/wt-banner` (the wrapper does `git fetch` + `checkout
 `~/Library/Application Support/com.vercel.cli/auth.json` (Vercel CLI login); `~/oc/gov-orch/secrets/neon-api-key` (mode 600).
 
 ```bash
-ops/cdmss/run-login-mini.sh          # 1. issue the password, enable LOGIN
+# Always invoke it like this (a clean environment and a clean bash; MODE is empty, --detach or --nologin):
+/usr/bin/env -i HOME=$HOME PATH=/usr/bin:/bin /bin/bash --noprofile --norc ops/cdmss/run-login-mini.sh        # 1. issue the password, enable LOGIN
 # ... the relay lane moves /Volumes/cdmssloginram/relay-url to the Asus ...
-ops/cdmss/run-login-mini.sh --detach # 2. wipe it (rm -P) and detach the RAM disk
-ops/cdmss/run-login-mini.sh --nologin # rotation step 0 (see below)
+/usr/bin/env -i HOME=$HOME PATH=/usr/bin:/bin /bin/bash --noprofile --norc ops/cdmss/run-login-mini.sh --detach # 2. wipe it (rm -P) and detach the RAM disk
+/usr/bin/env -i HOME=$HOME PATH=/usr/bin:/bin /bin/bash --noprofile --norc ops/cdmss/run-login-mini.sh --nologin # rotation step 0 (see below)
 ```
+
+**Why that invocation.** The script's shebang is `/bin/bash -p` and its first act is `exec /usr/bin/env -i` into a fresh `/bin/bash --noprofile --norc -p` carrying only an allowlist: `PATH` (fixed to the gnubin and Homebrew prefixes plus `/usr/bin:/bin:/usr/sbin:/sbin`), `HOME USER LOGNAME LANG TERM` and a re-exec marker. Every other variable is gone before any secret exists, so nothing like `SHELLOPTS`, `BASHOPTS`, `PS4`, `BASH_XTRACEFD`, `BASH_ENV`, `ENV`, `PG*`, `CURL_*`, proxies, `GIT_*`, `LD_*`/`DYLD_*` or an exported function can reach the owner url or the tools. The names it saw and dropped are then refused (second layer, below). The residual: whoever invokes the script controls the startup of the bash that runs its first lines, and `bash script` ignores the `-p` of the shebang (a `PS4='$(cmd)'` with `SHELLOPTS=xtrace` would run `cmd` before line one). The `/usr/bin/env -i ... /bin/bash --noprofile --norc` form removes that. The owner url is never read into a shell variable by the wrapper (python reads the file and returns an exit code).
 
 What step 1 does, in order (detail goes to `~/oc/gov-orch/scratch/cdmss-login.log`, filtered of urls and "password"; the terminal gets status lines only):
 1. `umask 077`; creates a RAM disk (`hdiutil attach -nomount ram://65536`, `diskutil erasevolume HFS+ cdmssloginram`), mounted at `/Volumes/cdmssloginram`; refuses to start if that mount already exists.
@@ -38,8 +41,8 @@ Rotation (password lost, or to rotate): `ops/cdmss/run-login-mini.sh --nologin`,
 `rm -P` may not really overwrite on recent macOS/APFS-era systems; detaching the RAM disk is the real wipe, which is why the wrapper detaches on every path.
 
 ## Test-only overrides
-These exist only for the Linux tests with stubs. They are honoured with `LOGIN_MINI_TEST=1` only; in any other run `run-login-mini.sh` refuses to start (exit 2) if one is set:
+These exist only for the Linux tests with stubs. With `LOGIN_MINI_TEST=1` the allowlisted re-exec carries them (and the caller's `PATH`), nothing else. In any other run the allowlist drops them and the second layer then refuses to start (exit 2) because it saw them set:
 `LOGIN_MINI_REPO LOGIN_MINI_SKIP_GIT LOGIN_MINI_MOUNT LOGIN_MINI_SECURE_RM LOGIN_MINI_AUTH_JSON LOGIN_MINI_NEON_KEY LOGIN_MINI_LOG LOGIN_MINI_RELAY_HOST LOGIN_MINI_NOT_MAC VERCEL_API_BASE NEON_API_BASE SQL_FILE PSQL CDMSS_POSTCHECK_SQL CDMSS_ALLOW_TEST_POSTCHECK STUDIO_ROLES_SHM XDG_RUNTIME_DIR BASH_ENV ENV`,
-and every variable that redirects a host, file or binary under the tools it runs: `PG*` (libpq), `CURL_*` and `*_proxy`/`*_PROXY`, `PYTHON*`, `GIT_*`, `LD_*`, `DYLD_*`. `HOME` and `PATH` are not refused.
-The scan fails closed: it enumerates names with `compgen -e` and validates each, and any scan error, odd variable name, exported bash function (`BASH_FUNC_*`) or newline inside an environment value exits 2 before anything else runs. git fetch/checkout output reaches the log only through the same filter as everything else.
+the shell-control variables `SHELLOPTS BASHOPTS PS4 BASH_XTRACEFD PROMPT_COMMAND` (also refused if they survive into the exported environment), and every variable that redirects a host, file or binary under the tools it runs: `PG*` (libpq), `CURL_*` and `*_proxy`/`*_PROXY`, `PYTHON*`, `GIT_*`, `LD_*`, `DYLD_*`. `HOME` and `PATH` are not refused.
+The second layer (after the re-exec) fails closed: it enumerates names with `compgen -e` and validates each, and any scan error, odd variable name, exported bash function (`BASH_FUNC_*`) or newline inside an environment value exits 2 before anything else runs. git fetch/checkout output reaches the log only through the same filter as everything else.
 Separately, `ops/neon/run-roles.sh` refuses `CDMSS_POSTCHECK_SQL` unless `CDMSS_ALLOW_TEST_POSTCHECK=1`.
