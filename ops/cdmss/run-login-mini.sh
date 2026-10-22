@@ -20,6 +20,8 @@
 # LOGIN_MINI_RELAY_HOST LOGIN_MINI_NOT_MAC VERCEL_API_BASE NEON_API_BASE SQL_FILE PSQL CDMSS_POSTCHECK_SQL CDMSS_ALLOW_TEST_POSTCHECK
 # STUDIO_ROLES_SHM XDG_RUNTIME_DIR; and every variable that redirects a host, file or binary under the tools it runs: PG* (libpq),
 # CURL_* and the proxy variables, PYTHON*, GIT_*, BASH_ENV, ENV, LD_*, DYLD_*. (HOME and PATH are not refused: the script needs them.)
+# The scan fails closed (compgen -e, every name validated); exported bash functions (BASH_FUNC_*), a newline inside any value and any
+# non-identifier variable name are refused too. git fetch/checkout output reaches the log only through the same filter.
 set -uo pipefail
 umask 077
 
@@ -30,12 +32,20 @@ if [[ $TEST != 1 ]]; then
            STUDIO_ROLES_SHM XDG_RUNTIME_DIR BASH_ENV ENV; do
     if [[ -n ${!v:-} ]]; then echo "$v is a test-only override: refusing (set LOGIN_MINI_TEST=1 only in tests)" >&2; exit 2; fi
   done
-  for v in $(env | cut -d= -f1); do
+  # The scan fails CLOSED: any error, any odd name, any odd environment line exits 2 before anything else runs.
+  if [[ -n $(compgen -A function) ]] || env | grep -q '^BASH_FUNC_'; then
+    echo "exported bash functions are in the environment (they can replace any command): refusing" >&2; exit 2
+  fi
+  names=$(compgen -e) || { echo "cannot enumerate the environment: refusing" >&2; exit 2; }
+  for v in $names; do
+    [[ $v =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { echo "environment holds an odd variable name: refusing" >&2; exit 2; }
     case $v in
       PG[A-Z]*|CURL_*|*_proxy|*_PROXY|PYTHON[A-Z]*|GIT_*|LD_*|DYLD_*)
         if [[ -n ${!v:-} ]]; then echo "$v redirects a host, file or binary: refusing (unset it)" >&2; exit 2; fi ;;
     esac
   done
+  # a value with a newline, or an entry whose name is not an identifier, shows up as an `env` line that does not start NAME=
+  odd=$(env | grep -vc '^[A-Za-z_][A-Za-z0-9_]*=') ; [[ $odd == 0 ]] || { echo "environment holds odd entries (newline in a value, or a non-identifier name): refusing" >&2; exit 2; }
   [[ $(uname -s) == Darwin ]] || { echo "this script is for the Mac Mini (macOS)" >&2; exit 2; }
 fi
 
@@ -110,7 +120,8 @@ note() { echo "$*" >> "$LOG"; }
 filter() { grep -viE 'postgres(ql)?://|password|bearer|token' || true; }
 
 if [[ $TEST != 1 || ${LOGIN_MINI_SKIP_GIT:-0} != 1 ]]; then
-  ( cd "$REPO" && git fetch -q origin && git checkout -q --detach origin/main ) >> "$LOG" 2>&1 || { echo "git fetch/checkout in $REPO failed (see $LOG)" >&2; exit 2; }
+  ( cd "$REPO" && git fetch -q origin && git checkout -q --detach origin/main ) 2>&1 | filter >> "$LOG"
+  [[ ${PIPESTATUS[0]} -eq 0 ]] || { echo "git fetch/checkout in $REPO failed (see $LOG)" >&2; exit 2; }
 fi
 
 DEV=$(hdiutil attach -nomount ram://65536 | awk '{print $1}')

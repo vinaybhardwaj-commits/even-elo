@@ -313,3 +313,56 @@ def test_nologin_mode_refuses_a_pooled_url_too(world):
     world.cdmss.su_exec(f"ALTER ROLE {ROLE} LOGIN")
     r = run(world, "--nologin")
     assert r.returncode == 3 and role_login(world)   # nothing ran, so the role was not touched
+
+
+def clean_env(world):
+    return {k: v for k, v in world.env.items() if not k.startswith("LOGIN_MINI_") and k not in ("VERCEL_API_BASE", "NEON_API_BASE", "PSQL")}
+
+
+def run_clean(world, extra):
+    return subprocess.run(["bash", str(WRAPPER)], capture_output=True, text=True, env={**clean_env(world), **extra})
+
+
+def nothing_ran(world):
+    return world.vercel.requests == [] and world.neon.requests == [] and stublog(world) == "" and not world.mount.exists()
+
+
+def test_the_refuters_newline_bypass_repro_exits_2_with_nothing_run(world):
+    """v3 bypass: an env value 'a<NL>CURL_-x=1' made `${!v}` abort the whole scan, so PGHOST/DYLD_* were never checked."""
+    r = run_clean(world, {"AAA": "a\nCURL_-x=1", "PGHOST": "evil", "DYLD_INSERT_LIBRARIES": "/x"})
+    assert r.returncode == 2 and re.search(r"(PGHOST|DYLD_INSERT_LIBRARIES) redirects", r.stderr), r.stderr  # either, whichever the scan meets first
+    assert nothing_ran(world)
+    # the newline entry alone is refused as well, and so is each redirect without it
+    r = run_clean(world, {"AAA": "a\nCURL_-x=1"})
+    assert r.returncode == 2 and "odd entries" in r.stderr and nothing_ran(world)
+    r = run_clean(world, {"DYLD_INSERT_LIBRARIES": "/x"})
+    assert r.returncode == 2 and "DYLD_INSERT_LIBRARIES redirects" in r.stderr and nothing_ran(world)
+    # a clean environment still reaches the next gate (not macOS), proving the scan itself does not misfire
+    r = run_clean(world, {})
+    assert r.returncode == 2 and "Mac Mini" in r.stderr
+
+
+def test_a_newline_in_any_value_is_refused_even_without_an_invalid_name(world):
+    r = run_clean(world, {"NOTE": "line one\nline two"})
+    assert r.returncode == 2 and "odd entries" in r.stderr and nothing_ran(world)
+
+
+def test_exported_bash_functions_are_refused_outside_test_mode(world):
+    """An exported function can replace any command (uname => Darwin passed on Linux in the refuter's run)."""
+    r = run_clean(world, {"BASH_FUNC_uname%%": "() { echo Darwin; }"})
+    assert r.returncode == 2 and "exported bash functions" in r.stderr and nothing_ran(world)
+    r = run_clean(world, {"BASH_FUNC_hdiutil%%": "() { echo pwned; }"})
+    assert r.returncode == 2 and "exported bash functions" in r.stderr and nothing_ran(world)
+
+
+def test_git_output_reaches_the_log_only_through_the_filter(world):
+    stub = Path(world.env["PATH"].split(":")[0])
+    (stub / "git").write_text('#!/bin/bash\necho "fatal: unable to access postgres://u:SECRETPW@h/db: password rejected, token=abc bearer xyz" >&2\necho "visible git line" >&2\nexit 1\n')
+    (stub / "git").chmod(0o755)
+    env = {k: v for k, v in world.env.items() if k != "LOGIN_MINI_SKIP_GIT"}
+    r = subprocess.run(["bash", str(WRAPPER)], capture_output=True, text=True, env=env)
+    assert r.returncode == 2 and "git fetch/checkout" in r.stderr
+    log = world.log.read_text()
+    for leak in ("SECRETPW", "postgres://", "password", "token", "bearer"):
+        assert leak not in log and leak not in r.stdout + r.stderr, leak
+    assert "visible git line" in log and world.vercel.requests == [] and stublog(world) == ""
