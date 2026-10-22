@@ -9,7 +9,6 @@ column, so nothing failed. Runs when STUDIO_TEST_PG_URI is set or `pgserver` is 
 import importlib.util
 import json
 import os
-import tempfile
 import uuid
 
 import psycopg
@@ -19,6 +18,7 @@ from psycopg.rows import dict_row
 
 from src import studio_audit, studio_tools
 from src.studio_tools import ALL_SQL, GOVERNANCE_TOOLS, VIEW_TOOL_NAMES, ToolError, ToolErrorToResult
+from tests.pg_teardown import start_server, stop_server
 from tests.neon_harness import incident_view_ddl
 from tests.test_studio_live_staff_sql import MIGRATIONS_TS, migrations
 
@@ -36,9 +36,7 @@ def real_db():
     if not base:
         if importlib.util.find_spec("pgserver") is None:
             pytest.skip("no local Postgres (set STUDIO_TEST_PG_URI or install pgserver)")
-        import pgserver
-
-        server = pgserver.get_server(tempfile.mkdtemp(prefix="studio-real-schema-"))
+        server = start_server("studio-real-schema")
         base = server.get_uri()
     name = "evenelo_" + uuid.uuid4().hex[:8]
     with psycopg.connect(base, autocommit=True) as c:
@@ -56,7 +54,7 @@ def real_db():
     finally:
         conn.close()
         if server:
-            server.cleanup()
+            stop_server(server)
 
 
 def seed(conn):
