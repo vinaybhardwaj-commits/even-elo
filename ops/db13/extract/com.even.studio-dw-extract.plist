@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Install: replace __REPO__ with the checkout path and __HOME__ with your home, mkdir -p ~/Library/Logs/gov-studio-extract, copy to ~/Library/LaunchAgents/, then
+       launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.even.studio-dw-extract.plist
+     Fires 22:30 local time (set the Mini to IST); the job itself refuses outside 22:00-07:00 IST.
+     Kill switch: touch ~/.config/studio-dw-extract/DISABLED ; launchctl bootout gui/$(id -u)/com.even.studio-dw-extract -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.even.studio-dw-extract</string>
+  <key>ProgramArguments</key>
+  <array><string>__REPO__/ops/db13/extract/run-extract.sh</string><string>scheduled</string></array>
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>22</integer><key>Minute</key><integer>30</integer></dict>
+  <key>Nice</key><integer>10</integer>
+  <key>LowPriorityIO</key><true/>
+  <key>StandardOutPath</key><string>__HOME__/Library/Logs/gov-studio-extract/extract.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/Library/Logs/gov-studio-extract/extract.log</string>
+</dict>
+</plist>

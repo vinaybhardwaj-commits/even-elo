@@ -12,6 +12,8 @@ The DSN is captured at import (conftest.py deletes the variable for each test) a
 """
 
 import os
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -50,6 +52,21 @@ INCIDENT_BASE_TABLES = ("incidents",)
 DOCAUDIT_BASE_TABLES = ("document_audits", "document_audit_findings")
 ALL_VIEW_COLUMNS = {**VIEW_COLUMNS, **DOCAUDIT_VIEW_COLUMNS, **INCIDENT_VIEW_COLUMNS}
 VIEW_BASE_TABLES = ("privileges", "oppe_reviews", "clinical_metrics_monthly", "qualifications", "gov_capture_gaps", "incident_replies") + DOCAUDIT_BASE_TABLES + INCIDENT_BASE_TABLES
+# studio_dw read views (ops/neon/0012_studio_dw.sql). The 8 data views are GENERATED from the extract spec (ops/db13/extract/spec.py),
+# the same source 0012's DDL is generated from, so the two cannot drift; the two status views are fixed text in 0012.
+# Expected whenever the studio_dw schema exists, and ALWAYS with STUDIO_EXPECT_DW=1 (a missing schema is then a failure).
+sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "ops" / "db13"))
+from extract.spec import TABLES as _DW_TABLES  # noqa: E402
+
+DW_STATUS_COLUMNS = {
+    "dw_extract_status": ("run_id", "mode", "status", "started_at", "ended_at", "db13_snapshot_now", "rows"),
+    "dw_extract_tables": ("run_id", "table_name", "status", "started_at", "ended_at", "db13_snapshot_now", "rows_read", "fetches", "fetch_seconds", "load_seconds"),
+}
+DW_VIEW_COLUMNS = {**{f"dw_{t.name}": tuple(c.name for c in t.cols) for t in _DW_TABLES}, **DW_STATUS_COLUMNS}
+DW_BASE_TABLES = tuple(t.name for t in _DW_TABLES) + ("extract_runs", "extract_run_tables")  # in schema studio_dw: all denied
+# Never in any dw view: the provenance stamp and the patient/doctor contact fields the extract must not carry (G-D4).
+DW_FORBIDDEN_COLUMNS = ("_run_id", "email", "name_with_prefix", "mobile", "name", "patient_name", "patient_address", "free_text",
+                        "bank_account__number", "tariffs", "amount", "net_amt")
 FREE_TEXT_COLUMNS = (
     "packet_jsonb", "granted_by", "reviewer_id", "source_file", "uploaded_by",
     "file_data", "verified_by", "replied_by_profile_id", "replied_by_physician_id",
@@ -280,7 +297,7 @@ def test_the_catalogue_is_enumerated_and_the_named_examples_exist():
 
 
 def test_every_relation_in_every_schema_outside_the_grant_list_is_denied():
-    granted = {("public", t) for t in GOV_TABLES} | {("studio_ro", v) for v in ALL_VIEW_COLUMNS if views_installed()}
+    granted = {("public", t) for t in GOV_TABLES} | {("studio_ro", v) for v in expected_views() if views_installed()}
     checked = 0
     for schema, rel in _relations():
         if (schema, rel) in granted:
@@ -289,6 +306,17 @@ def test_every_relation_in_every_schema_outside_the_grant_list_is_denied():
         assert attempt(f'SELECT * FROM "{schema}"."{rel}" WHERE false') == "denied", f"{schema}.{rel}"
         checked += 1
     assert checked >= 3
+
+
+def dw_installed() -> bool:
+    return bool(scalar("SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'studio_dw')"))
+
+
+def expected_views() -> dict:
+    """Every studio_ro view that must exist: the original ones, plus the studio_dw ones once 0012 is applied (or always with STUDIO_EXPECT_DW=1)."""
+    if dw_installed() or os.environ.get("STUDIO_EXPECT_DW") == "1":
+        return {**ALL_VIEW_COLUMNS, **DW_VIEW_COLUMNS}
+    return dict(ALL_VIEW_COLUMNS)
 
 
 def views_installed() -> bool:
@@ -323,6 +351,42 @@ def test_view_exposes_exactly_the_reviewed_columns_and_no_free_text(view):
     assert not set(cols) & set(FREE_TEXT_COLUMNS)
 
 
+def _need_dw():
+    """True when the dw expectations apply. A database without 0012 and without STUDIO_EXPECT_DW=1 passes these vacuously (no
+    skip: other harnesses require a skip-free probe run); with STUDIO_EXPECT_DW=1 a missing schema is a failure."""
+    _need_views()
+    if dw_installed():
+        return True
+    if os.environ.get("STUDIO_EXPECT_DW") == "1":
+        pytest.fail("studio_dw / studio_ro.dw_* views are not installed (0012_studio_dw.sql was not run)")
+    return False
+
+
+@pytest.mark.parametrize("view", sorted(DW_VIEW_COLUMNS))
+def test_dw_view_select_works_and_exposes_exactly_the_generated_columns(view):
+    if not _need_dw():
+        return
+    assert scalar(f"SELECT count(*) >= 0 FROM studio_ro.{view}") is True
+    with psycopg.connect(DSN, autocommit=False, prepare_threshold=None) as conn:
+        try:
+            cols = tuple(d.name for d in conn.execute(f"SELECT * FROM studio_ro.{view} WHERE false").description)
+        finally:
+            conn.rollback()
+    assert cols == DW_VIEW_COLUMNS[view]
+    assert not set(cols) & set(DW_FORBIDDEN_COLUMNS)
+
+
+@pytest.mark.parametrize("table", DW_BASE_TABLES)
+def test_studio_dw_tables_stay_denied_and_the_schema_is_unreachable(table):
+    if not _need_dw():
+        return
+    assert attempt(f"SELECT * FROM studio_dw.{table} WHERE false") == "denied"
+    # by oid: a text 'studio_dw.x' cast to regclass would itself need USAGE on the schema
+    assert scalar("""SELECT has_any_column_privilege(c.oid, 'SELECT') FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                     WHERE n.nspname = 'studio_dw' AND c.relname = %s""", (table,)) is False
+    assert scalar("SELECT has_schema_privilege(current_user, 'studio_dw', 'USAGE')") is False
+
+
 @pytest.mark.parametrize("table", VIEW_BASE_TABLES)
 def test_base_tables_behind_the_views_stay_denied(table):
     _need_views()
@@ -339,14 +403,14 @@ def test_views_are_security_barrier_owner_run_and_not_owned_by_the_role():
              AND NOT COALESCE(c.reloptions, '{}') @> ARRAY['security_invoker=true']
              AND c.relowner <> (SELECT oid FROM pg_roles WHERE rolname = current_user)"""
     )
-    assert n == len(ALL_VIEW_COLUMNS)
-    assert scalar("SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'studio_ro'") == len(ALL_VIEW_COLUMNS)
+    assert n == len(expected_views())
+    assert scalar("SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'studio_ro'") == len(expected_views())
 
 
 def test_views_are_read_only_for_the_role_and_the_schema_has_no_create():
     _need_views()
     # Catalogue, not an attempted write: a view over a join is "not updatable" before Postgres checks privileges.
-    for view in ALL_VIEW_COLUMNS:
+    for view in expected_views():
         rel = f"studio_ro.{view}"
         assert scalar("SELECT has_any_column_privilege(current_user, %s, 'INSERT') OR has_any_column_privilege(current_user, %s, 'UPDATE')", (rel, rel)) is False, view
         assert scalar("SELECT has_table_privilege(current_user, %s, 'DELETE') OR has_table_privilege(current_user, %s, 'TRUNCATE')", (rel, rel)) is False, view
