@@ -92,7 +92,7 @@ api() { # api METHOD PATH [JSON_BODY]  -> response body on stdout. Non-2xx: curl
   code=$(curl "${args[@]}" "$api_base$path"); rc=$?
   if [[ $rc -ne 0 ]]; then shred -u "$out" 2>/dev/null || rm -f "$out"; return "$rc"; fi
   if [[ $code =~ ^2[0-9][0-9]$ ]]; then cat "$out"; shred -u "$out" 2>/dev/null || rm -f "$out"; return 0; fi
-  msg=$(jq -r '.message // empty' "$out" 2>/dev/null | head -c 400 | tr -cd '[:print:]\n' | { grep -viE 'postgres(ql)?://|bearer|token|secret' || true; } | sed -E 's/[A-Za-z0-9_+/=-]{16,}/[redacted]/g; s/[Pp]assword/pw/g' | head -n 3 | tr '\n' ' ')
+  msg=$(jq -r '.message // empty' "$out" 2>/dev/null | head -c 400 | tr -cd '[:print:]\n' | { grep -viE 'postgres(ql)?://|bearer|token|secret' || true; } | sed -E 's/[A-Za-z0-9_+/=-]{16,}/[redacted]/g; s/[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]/pw/g' | head -n 3 | tr '\n' ' ')
   if [[ -z ${msg// /} ]] && [[ -n $(jq -r '.message // empty' "$out" 2>/dev/null | head -c 1) ]]; then msg="(message withheld: it contained a filtered word)"; fi
   shred -u "$out" 2>/dev/null || rm -f "$out"
   echo "Neon API $method ${path//password/pw} -> HTTP $code${msg:+: $msg}" >&2   # (reset_password shown as reset_pw: the wrappers' log filter drops lines with the word)
