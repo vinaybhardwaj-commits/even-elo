@@ -119,6 +119,13 @@ def apply_0012(c):
     c.execute(text, prepare=False)
 
 
+@pytest.fixture(autouse=True)
+def spill_root(tmp_path, monkeypatch):
+    root = tmp_path / "Library" / "Caches" / "gov-studio-extract"
+    monkeypatch.setattr(job, "SPILL_ROOT", root)
+    return root
+
+
 @pytest.fixture()
 def conns(clusters):
     db13, gov = clusters
@@ -233,11 +240,12 @@ def test_provenance_rows(conns):
     run_id, counts = x.run(allow_peak=True, mode="full")
     r = owner.execute("SELECT status, mode, rows, db13_snapshot_now, queries, started_at, ended_at, error_class FROM studio_dw.extract_runs WHERE run_id=%s", [run_id]).fetchone()
     assert r[0] == "ok" and r[1] == "full" and r[2] == counts and r[3] is not None and r[4] > 8 and r[6] >= r[5] and r[7] is None
-    tabs = {n: rest for n, *rest in owner.execute("SELECT table_name, status, rows_read, fetches, db13_snapshot, db13_snapshot_now, txn_seconds, watermark_to "
+    tabs = {n: rest for n, *rest in owner.execute("SELECT table_name, status, rows_read, fetches, db13_snapshot, db13_snapshot_now, fetch_seconds, watermark_to "
                                                    "FROM studio_dw.extract_run_tables WHERE run_id=%s", [run_id])}
     assert set(tabs) == {t.name for t in TABLES}
     for n, (st, rows, fetches, snap, snow, secs, wto) in tabs.items():
         assert st == "ok" and rows == counts[n] and fetches >= 2 and ":" in snap and snow is not None and secs is not None and wto == snow
+    assert owner.execute("SELECT count(*) FROM studio_dw.extract_run_tables WHERE run_id=%s AND fetch_seconds IS NOT NULL AND load_seconds IS NOT NULL", [run_id]).fetchone()[0] == 8
     assert owner.execute("SELECT count(*) FROM studio_ro.dw_extract_status WHERE status='ok'").fetchone()[0] == 1
     assert owner.execute("SELECT count(*) FROM studio_ro.dw_extract_tables").fetchone()[0] == 8
 
@@ -763,3 +771,128 @@ def test_signals_clean_up_ssh_config_and_child(tmp_path, sig):
     else:
         os.kill(child, signal.SIGKILL)
         pytest.fail("ssh child still alive")
+
+
+# ---- spill: fetch-only DB13 txn, then load from a 0600 file; the file never outlives the run ------------------------
+
+def test_default_spill_root_is_under_library_caches_not_tmp():
+    import importlib
+
+    fresh = importlib.reload(job)
+    try:
+        assert str(fresh.SPILL_ROOT).endswith("Library/Caches/gov-studio-extract") and not str(fresh.SPILL_ROOT).startswith("/tmp")
+    finally:
+        importlib.reload(job)
+
+
+def test_db13_txn_is_closed_before_neon_load_and_spill_is_private(conns, spill_root):
+    src, dst, owner, _ = conns
+    x, _ = extractor(src, dst, batch_size=2)
+    seen = {}
+    orig = job.Extract._load_from_spill
+
+    def spy(self, t, path, mode):
+        seen.setdefault(t.name, (src.info.transaction_status, stat.S_IMODE(path.stat().st_mode), stat.S_IMODE(path.parent.stat().st_mode),
+                                 stat.S_IMODE(spill_root.stat().st_mode), path.parent.parent == spill_root))
+        return orig(self, t, path, mode)
+
+    job.Extract._load_from_spill = spy
+    try:
+        run_id, counts = x.run(allow_peak=True, mode="full")
+    finally:
+        job.Extract._load_from_spill = orig
+    assert set(seen) == {t.name for t in TABLES}
+    assert all(v == (psycopg.pq.TransactionStatus.IDLE, 0o600, 0o700, 0o700, True) for v in seen.values())  # DB13 txn already committed
+    assert not list(spill_root.iterdir())  # success: spill deleted
+    rows = owner.execute("SELECT fetch_seconds, load_seconds FROM studio_dw.extract_run_tables WHERE run_id=%s", [run_id]).fetchall()
+    assert len(rows) == 8 and all(f is not None and l is not None for f, l in rows)
+
+
+def test_spill_deleted_on_failure_and_on_kill_during_load(conns, spill_root, monkeypatch):
+    src, dst, owner, _ = conns
+    for exc, status in ((RuntimeError("boom"), "failed"), (job.Killed(15), "killed")):
+        x, _ = extractor(src, dst)
+
+        def boom(self, t, path, mode, exc=exc):
+            assert path.exists() and path.stat().st_size > 0
+            raise exc
+
+        monkeypatch.setattr(job.Extract, "_load_from_spill", boom)
+        with pytest.raises(type(exc)):
+            x.run(allow_peak=True, mode="full", tables=["doctors"])
+        assert not list(spill_root.iterdir()), status
+        assert owner.execute("SELECT status FROM studio_dw.extract_runs ORDER BY started_at DESC LIMIT 1").fetchone()[0] == status
+        monkeypatch.undo()
+
+
+def test_timeout_during_fetch_leaves_no_spill_and_loads_nothing(conns, spill_root):
+    src, dst, owner, _ = conns
+    ck = Clock()
+    x = job.Extract(src, dst, throttle=job.Throttle(clock=ck.now, sleep=ck.sleep), log=lambda *_: None, clock=ck.now, batch_size=1, max_txn_seconds=1.0)
+    x.run(allow_peak=True, mode="full", tables=["individuals_prescriptions"])
+    assert not list(spill_root.iterdir()) and count(owner, "individuals_prescriptions") == 0
+
+
+def test_stale_spill_from_a_sigkilled_run_is_swept(conns, spill_root):
+    src, dst, _, _ = conns
+    old = spill_root / "run-dead"
+    old.mkdir(parents=True)
+    (old / "x.spill").write_bytes(b"x")
+    x, _ = extractor(src, dst)
+    x.run(allow_peak=True, mode="full", tables=["doctors"])
+    assert not list(spill_root.iterdir())
+
+
+DRIVER = """
+import sys, time
+sys.path.insert(0, {db13!r})
+import psycopg
+from extract import cli, job
+
+class Slow(job.Throttle):
+    def wait(self):
+        time.sleep(0.4)
+        super().wait()
+
+cli.install_signal_handlers()
+src = psycopg.connect({src!r}, autocommit=True)
+dst = psycopg.connect({dst!r}, autocommit=True)
+try:
+    job.Extract(src, dst, throttle=Slow(), batch_size=1, log=lambda *_: None).run(allow_peak=True, mode="full", tables=["individuals_prescriptions"])
+except job.Killed as k:
+    print("KILLED")
+    sys.exit(128 + k.args[0])
+"""
+
+
+@pytest.mark.parametrize("sig", ["SIGTERM", "SIGHUP", "SIGINT"])
+def test_signal_during_fetch_deletes_the_spill(clusters, tmp_path, sig):
+    import os
+    import signal
+    import subprocess
+    import time as _t
+
+    db13, gov = clusters
+    sg = getattr(signal, sig)
+    home = tmp_path / "home"
+    home.mkdir()
+    script = tmp_path / "driver.py"
+    script.write_text(DRIVER.format(db13=str(DB13), src=url(db13, "ro_user"), dst=url(gov, "studio_dw_writer", "govdb")))
+    root = home / "Library" / "Caches" / "gov-studio-extract"
+    p = subprocess.Popen([sys.executable, str(script)], env={**os.environ, "HOME": str(home)}, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    try:
+        for _ in range(150):
+            files = list(root.glob("run-*/*.spill"))
+            if files:
+                break
+            _t.sleep(0.1)
+        else:
+            pytest.fail("no spill file appeared")
+        assert stat.S_IMODE(files[0].stat().st_mode) == 0o600 and stat.S_IMODE(files[0].parent.stat().st_mode) == 0o700
+        p.send_signal(sg)
+        out, _ = p.communicate(timeout=30)
+    finally:
+        if p.poll() is None:
+            p.kill()
+    assert p.returncode == 128 + sg, out
+    assert not list(root.glob("run-*")), "spill dir must be gone after the signal"

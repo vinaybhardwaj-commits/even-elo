@@ -109,7 +109,8 @@ CREATE TABLE IF NOT EXISTS studio_dw.extract_run_tables (
   db13_snapshot text,
   rows_read integer,
   fetches integer,
-  txn_seconds numeric,
+  fetch_seconds numeric,  -- DB13 read-only transaction (the 15 min cap applies to this only)
+  load_seconds numeric,   -- spill -> Neon, DB13 transaction already closed
   watermark_from timestamptz,
   watermark_to timestamptz,
   error_class text,
@@ -257,7 +258,7 @@ SELECT run_id, mode, status, started_at, ended_at, db13_snapshot_now, rows
 FROM (SELECT * FROM studio_dw.extract_runs ORDER BY started_at DESC LIMIT 30) r;
 
 CREATE OR REPLACE VIEW studio_ro.dw_extract_tables WITH (security_barrier = true) AS
-SELECT t.run_id, t.table_name, t.status, t.started_at, t.ended_at, t.db13_snapshot_now, t.rows_read, t.fetches, t.txn_seconds
+SELECT t.run_id, t.table_name, t.status, t.started_at, t.ended_at, t.db13_snapshot_now, t.rows_read, t.fetches, t.fetch_seconds, t.load_seconds
 FROM studio_dw.extract_run_tables t
 WHERE t.run_id IN (SELECT run_id FROM studio_dw.extract_runs ORDER BY started_at DESC LIMIT 30);
 

@@ -4,8 +4,12 @@ only, never row data, never connection strings. Every statement sent to DB13 goe
 from __future__ import annotations
 
 import datetime as dt
+import os
+import pickle
+import shutil
 import time
 import uuid
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from psycopg.types.json import Jsonb
@@ -15,7 +19,8 @@ from .spec import BY_NAME, TABLES, Table
 
 IST = ZoneInfo("Asia/Kolkata")
 QPS_MAX = 2.0
-MAX_TXN_SECONDS = 15 * 60
+MAX_TXN_SECONDS = 15 * 60  # DB13 fetch phase only
+SPILL_ROOT = Path.home() / "Library" / "Caches" / "gov-studio-extract"  # never /tmp
 
 
 class ReadOnlyRefused(Exception):
@@ -101,11 +106,12 @@ def _dump(t: Table, row):
 
 class Extract:
     def __init__(self, src, dst, *, throttle=None, batch_size=2000, log=print, clock=time.monotonic, pinned=None,
-                 max_txn_seconds=MAX_TXN_SECONDS):
+                 max_txn_seconds=MAX_TXN_SECONDS, spill_root=None):
         self.throttle = throttle or Throttle()
         self.s = src if isinstance(src, Session) else Session(src, pinned, self.throttle)
         self.throttle = self.s.throttle
         self.dst, self.batch, self.log, self.clock, self.max_txn = dst, batch_size, log, clock, max_txn_seconds
+        self.spill_root = Path(spill_root) if spill_root else SPILL_ROOT
 
     # -- provenance --------------------------------------------------------------------------------
     def previous_watermarks(self):
@@ -118,7 +124,9 @@ class Extract:
         self.dst.execute(f"UPDATE studio_dw.extract_run_tables SET {sets} WHERE run_id = %s AND table_name = %s", [*cols.values(), run_id, name])
 
     # -- one table ---------------------------------------------------------------------------------
-    def _table(self, t: Table, run_id, mode, since):
+    def _fetch_to_spill(self, t: Table, since, path):
+        """DB13 side: one READ ONLY txn that only fetches (cursor, throttled) into the spill file, then COMMIT.
+        The 15 minute cap applies to this phase only. Returns (rows, fetches, snapshot_now, snapshot, seconds)."""
         t0 = self.clock()
         begin_read_only(self.s)
         committed = False
@@ -126,53 +134,90 @@ class Extract:
             snap_now, snap = self.s.run(queries.SNAPSHOT_SQL).fetchone()
             self.dst.execute("INSERT INTO studio_dw.extract_run_tables (run_id, table_name, status, started_at, db13_snapshot_now, db13_snapshot, "
                              "watermark_from, watermark_to) VALUES (%s, %s, 'running', now(), %s, %s, %s, %s)",
-                             [run_id, t.name, snap_now, snap, since, snap_now])
+                             [self._run_id, t.name, snap_now, snap, since, snap_now])
             sql = self.s.check(queries.cursor_sql(t, since is not None))
             params = {"since": since, "lb": t.lookback} if since is not None else None
-            cols = ", ".join(f'"{c}"' for c in t.colnames)
-            marks = ", ".join(["%s"] * (len(t.cols) + 1))
-            if t.key:
-                upd = ", ".join(f'"{c}" = EXCLUDED."{c}"' for c in t.colnames if c != t.key)
-                ins = (f'INSERT INTO studio_dw.{t.name} ({cols}, _run_id) VALUES ({marks}) '
-                       f'ON CONFLICT ("{t.key}") DO UPDATE SET {upd}, _run_id = EXCLUDED._run_id')
-            else:
-                ins = f"INSERT INTO studio_dw.{t.name} ({cols}, _run_id) VALUES ({marks})"
             cur = self.s.conn.cursor(name="gse_" + t.name[:40])
             self.throttle.wait()
             cur.execute(sql, params)
             n = fetches = 0
-            while True:
-                self.throttle.wait()  # every FETCH counts against the 2/s cap
-                rows = cur.fetchmany(self.batch)
-                fetches += 1
-                if not rows:
-                    break
-                with self.dst.transaction():
-                    self.dst.cursor().executemany(ins, [_dump(t, r) + [run_id] for r in rows])
-                n += len(rows)
-                if self.clock() - t0 > self.max_txn:
-                    raise TableTimeout()
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "wb") as f:
+                while True:
+                    self.throttle.wait()  # every FETCH counts against the 2/s cap
+                    rows = cur.fetchmany(self.batch)
+                    fetches += 1
+                    if not rows:
+                        break
+                    pickle.dump(rows, f, protocol=pickle.HIGHEST_PROTOCOL)
+                    n += len(rows)
+                    if self.clock() - t0 > self.max_txn:
+                        raise TableTimeout()
             cur.close()
             end_txn(self.s, True)
             committed = True
-            if t.group_key:  # child table: the view shows the newest ok run; drop older runs after this one is marked ok
-                self._tbl(run_id, t.name, status="ok", ended_at=dt.datetime.now(dt.timezone.utc), rows_read=n, fetches=fetches, txn_seconds=self.clock() - t0)
-                self.dst.execute(f"DELETE FROM studio_dw.{t.name} WHERE _run_id <> %s", [run_id])
-            else:
-                if mode == "full":  # full refresh also drops rows that vanished at the source
-                    self.dst.execute(f"DELETE FROM studio_dw.{t.name} WHERE _run_id <> %s", [run_id])
-                self._tbl(run_id, t.name, status="ok", ended_at=dt.datetime.now(dt.timezone.utc), rows_read=n, fetches=fetches, txn_seconds=self.clock() - t0)
-            self.log(f"table={t.name} rows={n} fetches={fetches} seconds={self.clock() - t0:.1f}")
-            return n, snap_now
+            return n, fetches, snap_now, snap, self.clock() - t0
         finally:
             if not committed:
                 end_txn(self.s, False)
 
+    def _load_from_spill(self, t: Table, path, mode):
+        """Neon side, DB13 transaction already closed."""
+        t0 = self.clock()
+        cols = ", ".join(f'"{c}"' for c in t.colnames)
+        marks = ", ".join(["%s"] * (len(t.cols) + 1))
+        if t.key:
+            upd = ", ".join(f'"{c}" = EXCLUDED."{c}"' for c in t.colnames if c != t.key)
+            ins = (f'INSERT INTO studio_dw.{t.name} ({cols}, _run_id) VALUES ({marks}) '
+                   f'ON CONFLICT ("{t.key}") DO UPDATE SET {upd}, _run_id = EXCLUDED._run_id')
+        else:
+            ins = f"INSERT INTO studio_dw.{t.name} ({cols}, _run_id) VALUES ({marks})"
+        with open(path, "rb") as f:
+            while True:
+                try:
+                    rows = pickle.load(f)
+                except EOFError:
+                    break
+                with self.dst.transaction():
+                    self.dst.cursor().executemany(ins, [_dump(t, r) + [self._run_id] for r in rows])
+        return self.clock() - t0
+
+    def _table(self, t: Table, run_id, mode, since):
+        path = self._spill_dir / f"{t.name}.spill"
+        try:
+            n, fetches, snap_now, snap, fetch_s = self._fetch_to_spill(t, since, path)
+            load_s = self._load_from_spill(t, path, mode)
+        finally:
+            path.unlink(missing_ok=True)  # success, failure and every signal
+        done = dict(status="ok", ended_at=dt.datetime.now(dt.timezone.utc), rows_read=n, fetches=fetches, fetch_seconds=fetch_s, load_seconds=load_s)
+        if t.group_key:  # child table: the view shows the newest ok run; drop older runs after this one is marked ok
+            self._tbl(run_id, t.name, **done)
+            self.dst.execute(f"DELETE FROM studio_dw.{t.name} WHERE _run_id <> %s", [run_id])
+        else:
+            if mode == "full":  # full refresh also drops rows that vanished at the source
+                self.dst.execute(f"DELETE FROM studio_dw.{t.name} WHERE _run_id <> %s", [run_id])
+            self._tbl(run_id, t.name, **done)
+        self.log(f"table={t.name} rows={n} fetches={fetches} fetch_seconds={fetch_s:.1f} load_seconds={load_s:.1f}")
+        return n, snap_now
+
     # -- the run -----------------------------------------------------------------------------------
     def run(self, *, mode="incremental", tables=None, run_id=None, allow_peak=False, now=None):
+        run_id = run_id or str(uuid.uuid4())
+        self._run_id = run_id
+        self.spill_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        os.chmod(self.spill_root, 0o700)
+        for old in self.spill_root.glob("run-*"):  # leftovers of a SIGKILLed run (the flock guarantees none is live)
+            shutil.rmtree(old, ignore_errors=True)
+        self._spill_dir = self.spill_root / f"run-{run_id}"
+        self._spill_dir.mkdir(mode=0o700)
+        try:
+            return self._run(mode, tables, run_id, allow_peak, now)
+        finally:
+            shutil.rmtree(self._spill_dir, ignore_errors=True)  # success, failure and every signal
+
+    def _run(self, mode, tables, run_id, allow_peak, now):
         assert mode in ("incremental", "full")
         specs = [BY_NAME[n] for n in tables] if tables else list(TABLES)
-        run_id = run_id or str(uuid.uuid4())
         offpeak = allow_peak or in_offpeak_window(now)
         self.dst.execute("INSERT INTO studio_dw.extract_runs (run_id, mode, started_at, status) VALUES (%s, %s, now(), 'running')", [run_id, mode])
         prev = self.previous_watermarks() if mode == "incremental" else {}
