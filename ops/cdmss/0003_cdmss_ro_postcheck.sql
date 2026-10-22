@@ -53,6 +53,45 @@ BEGIN
     RAISE EXCEPTION 'postcheck: studio_cdmss_ro has a direct grant on schema public';
   END IF;
 
+  -- FENCE (m2): the role must be able to do nothing outside cdmss_ro, through PUBLIC grants as well as direct ones.
+  IF NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = current_database() AND pg_get_userbyid(datdba) = current_user) THEN
+    RAISE EXCEPTION 'postcheck: run as the database owner (current_user % does not own %)', current_user, current_database();
+  END IF;
+  SELECT string_agg(c.relname, ', ') INTO bad FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+   WHERE n.nspname = 'cdmss_ro' AND pg_get_userbyid(c.relowner) <> current_user;
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'postcheck: cdmss_ro relation not owned by the running owner: %', bad; END IF;
+  IF has_database_privilege('studio_cdmss_ro', current_database(), 'CREATE') THEN
+    RAISE EXCEPTION 'postcheck: studio_cdmss_ro (or PUBLIC) holds CREATE on the database';
+  END IF;
+  SELECT string_agg(n.nspname, ', ') INTO bad FROM pg_namespace n
+   WHERE n.nspname NOT LIKE 'pg\_%' AND n.nspname <> 'information_schema'
+     AND has_schema_privilege('studio_cdmss_ro', n.oid, 'CREATE');
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'postcheck: studio_cdmss_ro (or PUBLIC) holds CREATE on schema(s): %', bad; END IF;
+  SELECT string_agg(n.nspname, ', ') INTO bad FROM pg_namespace n
+   WHERE n.nspname NOT LIKE 'pg\_%' AND n.nspname NOT IN ('information_schema', 'public', 'cdmss_ro')
+     AND has_schema_privilege('studio_cdmss_ro', n.oid, 'USAGE');
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'postcheck: studio_cdmss_ro (or PUBLIC) holds USAGE on other schema(s): %', bad; END IF;
+  -- SELECT/INSERT/UPDATE/... anywhere outside cdmss_ro, in ANY non-system schema (lab_v2 included), table or column level
+  SELECT string_agg(n.nspname || '.' || c.relname, ', ') INTO bad FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+   WHERE n.nspname NOT LIKE 'pg\_%' AND n.nspname NOT IN ('information_schema', 'cdmss_ro')
+     AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
+     AND (has_table_privilege('studio_cdmss_ro', c.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+          OR (c.relkind <> 'S' AND has_any_column_privilege('studio_cdmss_ro', c.oid, 'SELECT,INSERT,UPDATE,REFERENCES')));
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'postcheck: studio_cdmss_ro holds a privilege outside cdmss_ro: %', bad; END IF;
+  -- SECURITY DEFINER functions the role (or PUBLIC) can execute, in a schema it can use
+  SELECT string_agg(n.nspname || '.' || p.proname, ', ') INTO bad FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+   WHERE p.prosecdef AND n.nspname NOT LIKE 'pg\_%' AND n.nspname <> 'information_schema'
+     AND has_schema_privilege('studio_cdmss_ro', n.oid, 'USAGE') AND has_function_privilege('studio_cdmss_ro', p.oid, 'EXECUTE');
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'postcheck: executable SECURITY DEFINER function(s): %', bad; END IF;
+  -- every grantee on a cdmss_ro relation is the owner or studio_cdmss_ro (no PUBLIC, no third role)
+  SELECT string_agg(c.relname || '->' || COALESCE(NULLIF(a.grantee::regrole::text, '-'), 'PUBLIC'), ', ') INTO bad
+    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace, LATERAL aclexplode(COALESCE(c.relacl, '{}'::aclitem[])) a
+   WHERE n.nspname = 'cdmss_ro' AND a.grantee <> c.relowner AND a.grantee <> 'studio_cdmss_ro'::regrole;
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'postcheck: unexpected grantee on a cdmss_ro relation: %', bad; END IF;
+  SELECT string_agg(x.grantee::regrole::text, ', ') INTO bad FROM pg_namespace n, LATERAL aclexplode(COALESCE(n.nspacl, '{}'::aclitem[])) x
+   WHERE n.nspname = 'cdmss_ro' AND x.grantee <> n.nspowner AND x.grantee <> 'studio_cdmss_ro'::regrole;
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'postcheck: unexpected grantee on schema cdmss_ro: %', bad; END IF;
+
   -- COLUMN ALLOWLIST
   CREATE TEMP TABLE _cdmss_allow ON COMMIT DROP AS
   SELECT v.view_name, c.col

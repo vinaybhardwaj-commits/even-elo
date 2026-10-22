@@ -64,7 +64,8 @@ DROP VIEW IF EXISTS cdmss_ro.site_dim;
 -- SITE: one vocabulary -> canonical site code. Values from code evidence ONLY (Even-CDMSS lib/readmission-rates-core.ts):
 --   facility_name   'Even', 'Even-EHRC' -> EHRC   (FACILITY_EHRC_ALIASES; the 19 Aug 2026 relabel keeps the canonical key)
 --                   'Even-EHBR'          -> EHBR   (FACILITY_EHBR)
---   encounter_prefix (readmission-rates-core.ts:197, "measured"): 'IP-' -> EHRC; 'IPNO-', 'ADM' -> EHBR
+--   encounter_prefix (readmission-rates-core.ts:201-204 facilityOfEncounter, "measured"): id.trim().toUpperCase() startsWith 'IP-' -> EHRC;
+--                    'IPNO' or 'ADM' -> EHBR. The views do the same: starts_with(upper(btrim(id)), raw_value).
 -- hospital_uid (OT) and pre-op hospitalName/hospital uid have NO name lookup anywhere in the repo, so they have NO rows
 -- here and resolve to 'UNMAPPED' (never dropped, never guessed). Add a row here only with code or database evidence.
 CREATE VIEW cdmss_ro.site_dim WITH (security_barrier = true) AS
@@ -73,9 +74,9 @@ FROM (VALUES
   ('facility_name',    'exact',  'Even',      'EHRC', 'readmission-rates-core.ts FACILITY_EHRC / FACILITY_EHRC_ALIASES'),
   ('facility_name',    'exact',  'Even-EHRC', 'EHRC', 'readmission-rates-core.ts FACILITY_EHRC_ALIASES (relabel 19 Aug 2026)'),
   ('facility_name',    'exact',  'Even-EHBR', 'EHBR', 'readmission-rates-core.ts FACILITY_EHBR'),
-  ('encounter_prefix', 'prefix', 'IP-',       'EHRC', 'readmission-rates-core.ts:197 (measured)'),
-  ('encounter_prefix', 'prefix', 'IPNO-',     'EHBR', 'readmission-rates-core.ts:197 (measured)'),
-  ('encounter_prefix', 'prefix', 'ADM',       'EHBR', 'readmission-rates-core.ts:197 (measured)')
+  ('encounter_prefix', 'prefix', 'IP-',       'EHRC', 'readmission-rates-core.ts:201-204 (measured)'),
+  ('encounter_prefix', 'prefix', 'IPNO',      'EHBR', 'readmission-rates-core.ts:201-204 startsWith IPNO'),
+  ('encounter_prefix', 'prefix', 'ADM',       'EHBR', 'readmission-rates-core.ts:201-204 (measured)')
 ) AS v(vocabulary, match_kind, raw_value, site_code, code_evidence);
 
 -- ---------------------------------------------------------------------------------------------------------------
@@ -218,10 +219,13 @@ SELECT DISTINCT ON (a.app_source, a.document_id)
 FROM public.ipd_discharge_audits a
 LEFT JOIN LATERAL (
   SELECT m.site_code FROM cdmss_ro.site_dim m
-  WHERE m.vocabulary = 'encounter_prefix' AND starts_with(a.ip_uid, m.raw_value)
+  WHERE m.vocabulary = 'encounter_prefix' AND starts_with(upper(btrim(a.ip_uid)), m.raw_value)
   ORDER BY length(m.raw_value) DESC LIMIT 1
 ) pf ON true
+-- audit-canonical.ts:226-229 canonicalBy drops -mini rows BEFORE ranking; D2 (:170-172) also ranks qwen local. Both are dropped here, so a
+-- document graded only by a local model is absent (grader_tier is therefore always 'cloud' in this view).
 WHERE a.document_id IS NOT NULL
+  AND NOT (a.model LIKE 'qwen%' OR a.engine_version LIKE '%-mini')
 ORDER BY a.app_source, a.document_id,
   CASE WHEN a.model LIKE 'qwen%' OR a.engine_version LIKE '%-mini' THEN 1 ELSE 0 END,
   CASE WHEN split_part(a.engine_version, '/', 2) ~ '^[0-9]+(\.[0-9]+)*$'
@@ -230,7 +234,8 @@ ORDER BY a.app_source, a.document_id,
   a.audited_at DESC NULLS LAST,
   a.id;
 
--- F3 IPD episode audit. Current rows only (is_current), newest engine version per (app_source, encounter_id).
+-- F3 IPD episode audit. Current rows only (is_current, ipd-episode/store.ts:107,413), newest engine version per (app_source, encounter_id);
+-- CDMSS has no canonicalBy for episodes (is_current is its dedup).
 -- Site: facility_name first (canonicalised through site_dim), else the ip_uid prefix, else UNMAPPED.
 CREATE VIEW cdmss_ro.ipd_episode_audit WITH (security_barrier = true) AS
 SELECT DISTINCT ON (a.app_source, a.encounter_id)
@@ -275,7 +280,7 @@ LEFT JOIN LATERAL (
 ) fn ON true
 LEFT JOIN LATERAL (
   SELECT m.site_code FROM cdmss_ro.site_dim m
-  WHERE m.vocabulary = 'encounter_prefix' AND starts_with(a.ip_uid, m.raw_value)
+  WHERE m.vocabulary = 'encounter_prefix' AND starts_with(upper(btrim(a.ip_uid)), m.raw_value)
   ORDER BY length(m.raw_value) DESC LIMIT 1
 ) pf ON true
 WHERE a.is_current
@@ -286,7 +291,8 @@ ORDER BY a.app_source, a.encounter_id,
   a.audited_at DESC NULLS LAST,
   a.id;
 
--- F4/F5 OT document audit. One row per (app_source, uid).
+-- F4/F5 OT document audit. One row per (app_source, uid), by the full CANONICAL_RANK_SQL as the OT reader does it
+-- (document-audits-export-read.ts:81-87 canonicalDistinctOnSql identity uid; audit-canonical.ts:315-319).
 -- hospital_uid has no name lookup in code, so site_code is UNMAPPED until site_dim gains evidence-backed rows.
 CREATE VIEW cdmss_ro.ot_note_audit WITH (security_barrier = true) AS
 SELECT DISTINCT ON (a.app_source, a.uid)
@@ -318,10 +324,13 @@ ORDER BY a.app_source, a.uid,
   CASE WHEN a.model LIKE 'qwen%' OR a.engine_version LIKE '%-mini' THEN 1 ELSE 0 END,
   CASE WHEN split_part(a.engine_version, '/', 2) ~ '^[0-9]+(\.[0-9]+)*$'
        THEN string_to_array(split_part(a.engine_version, '/', 2), '.')::int[] END DESC NULLS LAST,
+  CASE WHEN a.model IN ('google/gemini-2.5-pro', 'gemini-2.5-pro') THEN 0 ELSE 1 END,
   a.audited_at DESC NULLS LAST,
   a.id;
 
--- F8 Pre-op risk. Newest engine version per (app_source, episode_key). `hospital` is "name or uid": it resolves
+-- F8 Pre-op risk. Newest engine version per (app_source, episode_key). CDMSS itself reads ONE engine (PREOP_ENGINE_VERSION =
+-- 'preop-risk/0.1', preop/store.ts:51,126); no canonicalBy and no grader tier apply to this family. Identical while that engine is
+-- the newest; engine_version is exposed so a consumer can pin it. `hospital` is "name or uid": it resolves
 -- only if it is literally one of the facility_name strings; otherwise UNMAPPED.
 CREATE VIEW cdmss_ro.preop_finding WITH (security_barrier = true) AS
 SELECT DISTINCT ON (a.app_source, a.episode_key)
@@ -371,7 +380,8 @@ ORDER BY a.app_source, a.episode_key,
   a.updated_at DESC NULLS LAST,
   a.id;
 
--- F7 Readmission. Newest engine version per (app_source, dedup_key) Site = index encounter prefix.
+-- F7 Readmission. Newest engine version per (app_source, dedup_key). CDMSS reads ONE engine (READMIT_ENGINE_VERSION,
+-- readmission/rates.ts:33,104,135; NUMERATOR_SQL :44-48 engine_version = $1); no canonicalBy / grader tier. engine_version is exposed. Site = index encounter prefix.
 CREATE VIEW cdmss_ro.readmission_finding WITH (security_barrier = true) AS
 SELECT DISTINCT ON (a.app_source, a.dedup_key)
   a.id AS finding_id,
@@ -427,7 +437,7 @@ SELECT DISTINCT ON (a.app_source, a.dedup_key)
 FROM public.readmission_findings a
 LEFT JOIN LATERAL (
   SELECT m.site_code FROM cdmss_ro.site_dim m
-  WHERE m.vocabulary = 'encounter_prefix' AND starts_with(a.index_encounter_id, m.raw_value)
+  WHERE m.vocabulary = 'encounter_prefix' AND starts_with(upper(btrim(a.index_encounter_id)), m.raw_value)
   ORDER BY length(m.raw_value) DESC LIMIT 1
 ) pf ON true
 ORDER BY a.app_source, a.dedup_key,
@@ -502,14 +512,14 @@ FROM (
   SELECT 'preop_finding.hospital', 'facility_name', btrim(hospital), count(*) FROM public.preop_findings GROUP BY btrim(hospital)
   UNION ALL
   SELECT 'ipd_discharge_audit.ip_uid', 'encounter_prefix',
-         COALESCE(substring(ip_uid from '^[A-Za-z]+-?'), ''), count(*) FROM public.ipd_discharge_audits GROUP BY 3
+         COALESCE(substring(upper(btrim(ip_uid)) from '^[A-Z]+-?'), ''), count(*) FROM public.ipd_discharge_audits GROUP BY 3
   UNION ALL
   SELECT 'readmission_finding.index_encounter_id', 'encounter_prefix',
-         COALESCE(substring(index_encounter_id from '^[A-Za-z]+-?'), ''), count(*) FROM public.readmission_findings GROUP BY 3
+         COALESCE(substring(upper(btrim(index_encounter_id)) from '^[A-Z]+-?'), ''), count(*) FROM public.readmission_findings GROUP BY 3
 ) x
 LEFT JOIN cdmss_ro.site_dim m
   ON m.vocabulary = x.vocabulary
- AND ((m.match_kind = 'exact' AND m.raw_value = x.raw_value) OR (m.match_kind = 'prefix' AND starts_with(x.raw_value, m.raw_value)));
+ AND ((m.match_kind = 'exact' AND m.raw_value = x.raw_value) OR (m.match_kind = 'prefix' AND starts_with(upper(btrim(x.raw_value)), m.raw_value)));
 
 -- ---------------------------------------------------------------------------------------------------------------
 -- GRANTS: USAGE on the schema and SELECT on exactly the views above. Nothing else, to nobody else.

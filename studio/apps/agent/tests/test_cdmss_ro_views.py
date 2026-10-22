@@ -82,6 +82,11 @@ def data(cdmss):
                                 ("doc3", "ER-511", "ipd-discharge-audit/0.2", "gemini-2.5-pro")]:
         c.su_exec("INSERT INTO ipd_discharge_audits (document_id, ip_uid, engine_version, model, care_value_index, band, member_id, report) "
                   "VALUES (%s,%s,%s,%s,70,'C','MEMBER-SECRET','{\"x\":\"REPORT-SECRET\"}')", (doc, ip, ver, model))
+    # site matching is trim + upper + startsWith (readmission-rates-core.ts:201-204); local-only documents are dropped (audit-canonical.ts:226-229)
+    for doc, ip, ver, model in [("doc4", " ip-77", "ipd-discharge-audit/0.2", "gemini-2.5-pro"), ("doc5", "IPNO123", "ipd-discharge-audit/0.2", "gemini-2.5-pro"),
+                                ("doc6", "adm9", "ipd-discharge-audit/0.2", "gemini-2.5-pro"), ("doc7", "ER-1", "ipd-discharge-audit/0.2-mini", "qwen2.5:14b"),
+                                ("doc8", "ER-2", "ipd-discharge-audit/0.2", "qwen2.5:14b")]:
+        c.su_exec("INSERT INTO ipd_discharge_audits (document_id, ip_uid, engine_version, model, care_value_index, band) VALUES (%s,%s,%s,%s,70,'C')", (doc, ip, ver, model))
     # IPD episode
     for enc, ip, fac, cur in [("e1", "IP-1", "Even", True), ("e2", "IP-2", "Even-EHRC", True), ("e3", "IPNO-3", "Even-EHBR", True),
                               ("e4", "IP-4", "Mystery Hospital", True), ("e5", "XX-5", "Mystery Hospital", True), ("e6", "IP-6", "Even", False)]:
@@ -91,6 +96,8 @@ def data(cdmss):
     c.su_exec("INSERT INTO ot_note_audits (uid, hospital_uid, uhid, note, component_json, surgeon_raw, doctor_uid, map_status, engine_version, note_day) "
               "VALUES ('ot1','hosp-uid-1','UHID-SECRET','NOTE-SECRET','{\"a\":1}','SURGEON-SECRET','D1','mapped','ot-note-audit/0.1','2026-09-01'),"
               "('ot2','hosp-uid-1',NULL,NULL,NULL,NULL,NULL,'unmapped','ot-note-audit/0.1','2026-09-02')")
+    c.su_exec("INSERT INTO ot_note_audits (uid, engine_version, model, map_status, note_day) VALUES "
+              "('ot3','ot-note-audit/0.2','qwen2.5:14b','unmapped','2026-09-03'),('ot3','ot-note-audit/0.1','gemini-2.5-pro','unmapped','2026-09-03')")
     # pre-op
     c.su_exec("INSERT INTO preop_findings (episode_key, engine_version, hospital, patient_name, uhid, tier, snapshot, snapshot_fingerprint) VALUES "
               "('ep1','preop-risk/0.1','Even-EHBR','NAME-SECRET','UHID-SECRET','high','{}','fp'),('ep2','preop-risk/0.1','uid-xyz','NAME-SECRET','UHID-SECRET','low','{}','fp')")
@@ -231,13 +238,31 @@ def test_ipd_discharge_canonical_and_site(data):
     assert rows["IP-1250"] == ("ipd-discharge-audit/0.2", "EHRC", "encounter_prefix")  # 0.2 beats 0.1; the -mini/qwen row loses
     assert rows["IPNO-229"][1] == "EHBR"
     assert rows["ER-511"] == ("ipd-discharge-audit/0.2", "UNMAPPED", "none")  # no code evidence for ER-: kept, not dropped
-    assert q(data, "SELECT count(*) FROM cdmss_ro.ipd_discharge_audit") == [(3,)]
+    assert q(data, "SELECT count(*) FROM cdmss_ro.ipd_discharge_audit") == [(6,)]
+
+
+def test_ipd_discharge_drops_local_graders_before_ranking(data):
+    got = set(col(data, "ipd_discharge_audit", "ip_uid"))
+    assert "ER-1" not in got and "ER-2" not in got  # doc7 only -mini/qwen, doc8 only qwen on the plain version: absent, not demoted
+    assert set(col(data, "ipd_discharge_audit", "grader_tier")) == {"cloud"}
+
+
+def test_prefix_site_matching_is_trim_upper_startswith(data):
+    got = {ip: s for ip, s in q(data, "SELECT ip_uid, site_code FROM cdmss_ro.ipd_discharge_audit")}
+    assert got[" ip-77"] == "EHRC" and got["IPNO123"] == "EHBR" and got["adm9"] == "EHBR"  # 'IPNO' without dash; lower case; padded
+    assert ("encounter_prefix", "IPNO", "EHBR") in {(v, r, s) for v, r, s in q(data, "SELECT vocabulary, raw_value, site_code FROM cdmss_ro.site_dim")}
+    seen = {r: s for r, s in q(data, "SELECT raw_value, site_code FROM cdmss_ro.site_observed WHERE source='ipd_discharge_audit.ip_uid'")}
+    assert seen["IP-"] == "EHRC" and seen["IPNO"] == "EHBR" and seen["ADM"] == "EHBR"
+
+
+def test_ot_rank_is_the_full_canonical_rank(data):
+    assert q(data, "SELECT engine_version, model FROM cdmss_ro.ot_note_audit WHERE uid='ot3'") == [("ot-note-audit/0.1", "gemini-2.5-pro")]  # grader tier beats version
 
 
 def test_site_dim_canonicalises_the_relabel(data):
     sd = {(v, r): s for v, r, s in q(data, "SELECT vocabulary, raw_value, site_code FROM cdmss_ro.site_dim")}
     assert sd[("facility_name", "Even")] == sd[("facility_name", "Even-EHRC")] == "EHRC" and sd[("facility_name", "Even-EHBR")] == "EHBR"
-    assert sd[("encounter_prefix", "IP-")] == "EHRC" and sd[("encounter_prefix", "IPNO-")] == sd[("encounter_prefix", "ADM")] == "EHBR"
+    assert sd[("encounter_prefix", "IP-")] == "EHRC" and sd[("encounter_prefix", "IPNO")] == sd[("encounter_prefix", "ADM")] == "EHBR"
     assert not any(v == "hospital_uid" for v, _ in sd)  # no code evidence: never invented
     ep = {e: (s, b) for e, s, b in q(data, "SELECT encounter_id, site_code, site_basis FROM cdmss_ro.ipd_episode_audit")}
     assert ep["e1"] == ("EHRC", "facility_name") and ep["e2"] == ("EHRC", "facility_name") and ep["e3"] == ("EHBR", "facility_name")
@@ -247,7 +272,7 @@ def test_site_dim_canonicalises_the_relabel(data):
 
 
 def test_unmapped_is_kept_and_listed(data):
-    assert col(data, "ot_note_audit", "site_code") == ["UNMAPPED", "UNMAPPED"]
+    assert col(data, "ot_note_audit", "site_code") == ["UNMAPPED"] * 3
     assert col(data, "preop_finding", "site_code", "episode_key='ep1'") == ["EHBR"]
     assert col(data, "preop_finding", "site_code", "episode_key='ep2'") == ["UNMAPPED"]
     seen = {(s, r): (site, n) for s, r, site, n in q(data, "SELECT source, raw_value, site_code, n_rows FROM cdmss_ro.site_observed")}
@@ -264,7 +289,7 @@ def test_readmission_newest_version_and_site(data):
 
 
 def test_ot_surgeon_mapping_flag(data):
-    assert dict(q(data, "SELECT uid, surgeon_mapped FROM cdmss_ro.ot_note_audit")) == {"ot1": True, "ot2": False}
+    assert dict(q(data, "SELECT uid, surgeon_mapped FROM cdmss_ro.ot_note_audit")) == {"ot1": True, "ot2": False, "ot3": False}
 
 
 def test_doctor_dim_has_roster_only_doctors_and_no_aliases(data):
@@ -288,3 +313,14 @@ def test_identity_and_text_columns_are_exposed_by_ruling(data):
     assert not [c for c in cols if re.search(r"secret|token|password|api_?key|prompt|trace|raw_judge|stage_timings", c)]
     assert {"clinical_review_decision", "clinical_review_quote", "clinical_review_model"} <= set(allowlist()["readmission_finding"])
     assert "doctor_uid" not in allowlist()["ccb_brief"]  # UNVERIFIED-live: in no migration or runtime DDL
+
+
+def test_precheck_source_list_matches_the_view_dependencies(data):
+    """0000 is generated from pg_depend of the views; this regenerates it and fails on drift (edit 0002 and 0000 together)."""
+    from tests.cdmss_harness import SQL_PRE
+    live = data.su_exec("""SELECT t.relname, a.attname FROM pg_depend d JOIN pg_rewrite r ON r.oid=d.objid JOIN pg_class v ON v.oid=r.ev_class
+        JOIN pg_namespace vn ON vn.oid=v.relnamespace JOIN pg_class t ON t.oid=d.refobjid JOIN pg_namespace tn ON tn.oid=t.relnamespace
+        JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum=d.refobjsubid
+        WHERE vn.nspname='cdmss_ro' AND tn.nspname='public' AND d.classid='pg_rewrite'::regclass AND d.refclassid='pg_class'::regclass AND d.refobjsubid>0""")
+    listed = {(m.group(1), c) for m in re.finditer(r"^\s*\('([a-z_]+)', '([a-z0-9_ ]+)'\)", SQL_PRE.read_text(), re.M) for c in m.group(2).split()}
+    assert listed == set(live) and len(listed) > 250

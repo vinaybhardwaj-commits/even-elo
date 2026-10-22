@@ -2,8 +2,10 @@
 no migration ledger, so the files are applied in filename order and every failure is recorded, not hidden).
 Nothing here touches a real database. The CDMSS repo is read-only; its path is $CDMSS_REPO (default ~/wt/Even-CDMSS)."""
 
+import atexit
 import importlib.util
 import os
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -15,6 +17,7 @@ OPS = REPO / "ops" / "cdmss"
 SQL_ROLE = OPS / "0001_cdmss_ro_role.sql"
 SQL_VIEWS = OPS / "0002_cdmss_ro_views.sql"
 SQL_POST = OPS / "0003_cdmss_ro_postcheck.sql"
+SQL_PRE = OPS / "0000_cdmss_ro_precheck.sql"
 RUN_WRAPPER = OPS / "run-cdmss-ro.sh"
 RUNTIME_DDL = Path(__file__).parent / "fixtures" / "cdmss_runtime_ddl.sql"
 CDMSS_REPO = Path(os.environ.get("CDMSS_REPO", "~/wt/Even-CDMSS")).expanduser()
@@ -36,7 +39,9 @@ class CdmssCluster:
     def __init__(self):
         import pgserver
 
-        self.server = pgserver.get_server(tempfile.mkdtemp(prefix="cdmss-emu-"))
+        self.data_dir = tempfile.mkdtemp(prefix="cdmss-emu-")
+        atexit.register(shutil.rmtree, self.data_dir, ignore_errors=True)  # backstop if stop() is never reached
+        self.server = pgserver.get_server(self.data_dir)
         self.su = self.server.get_uri()
         self.sock = self.su.split("host=")[1]
         self.psql = str(Path(pgserver.__file__).parent / "pginstall" / "bin" / "psql")
@@ -102,7 +107,11 @@ class CdmssCluster:
             return cur.fetchall() if cur.description else None
 
     def stop(self):
-        self.server.cleanup()
+        """Stop postgres AND delete the data dir (pgserver's cleanup() only stops the server; the dir leaked)."""
+        try:
+            self.server.cleanup()
+        finally:
+            shutil.rmtree(self.data_dir, ignore_errors=True)
 
 
 @pytest.fixture(scope="session")
