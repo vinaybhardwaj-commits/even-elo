@@ -85,7 +85,8 @@ def data(cdmss):
     # site matching is trim + upper + startsWith (readmission-rates-core.ts:201-204); local-only documents are dropped (audit-canonical.ts:226-229)
     for doc, ip, ver, model in [("doc4", " ip-77", "ipd-discharge-audit/0.2", "gemini-2.5-pro"), ("doc5", "IPNO123", "ipd-discharge-audit/0.2", "gemini-2.5-pro"),
                                 ("doc6", "adm9", "ipd-discharge-audit/0.2", "gemini-2.5-pro"), ("doc7", "ER-1", "ipd-discharge-audit/0.2-mini", "qwen2.5:14b"),
-                                ("doc8", "ER-2", "ipd-discharge-audit/0.2", "qwen2.5:14b")]:
+                                ("doc8", "ER-2", "ipd-discharge-audit/0.2", "qwen2.5:14b"), ("doc9", "ER-3", "ipd-discharge-audit/0.2", None),
+                                ("doc10", "ER-4", "ipd-discharge-audit/0.2", "qwen2.5:14b"), ("doc10", "ER-4", "ipd-discharge-audit/0.1", "gemini-2.5-pro")]:
         c.su_exec("INSERT INTO ipd_discharge_audits (document_id, ip_uid, engine_version, model, care_value_index, band) VALUES (%s,%s,%s,%s,70,'C')", (doc, ip, ver, model))
     # IPD episode
     for enc, ip, fac, cur in [("e1", "IP-1", "Even", True), ("e2", "IP-2", "Even-EHRC", True), ("e3", "IPNO-3", "Even-EHBR", True),
@@ -238,13 +239,16 @@ def test_ipd_discharge_canonical_and_site(data):
     assert rows["IP-1250"] == ("ipd-discharge-audit/0.2", "EHRC", "encounter_prefix")  # 0.2 beats 0.1; the -mini/qwen row loses
     assert rows["IPNO-229"][1] == "EHBR"
     assert rows["ER-511"] == ("ipd-discharge-audit/0.2", "UNMAPPED", "none")  # no code evidence for ER-: kept, not dropped
-    assert q(data, "SELECT count(*) FROM cdmss_ro.ipd_discharge_audit") == [(6,)]
+    assert q(data, "SELECT count(*) FROM cdmss_ro.ipd_discharge_audit") == [(9,)]
 
 
-def test_ipd_discharge_drops_local_graders_before_ranking(data):
-    got = set(col(data, "ipd_discharge_audit", "ip_uid"))
-    assert "ER-1" not in got and "ER-2" not in got  # doc7 only -mini/qwen, doc8 only qwen on the plain version: absent, not demoted
-    assert set(col(data, "ipd_discharge_audit", "grader_tier")) == {"cloud"}
+def test_ipd_discharge_drops_only_mini_engine_rows(data):
+    """audit-canonical.ts:69,226-229: only /-mini$/ rows leave before ranking; qwen-only and NULL-model documents stay."""
+    got = {ip: (v, tier) for ip, v, tier in q(data, "SELECT ip_uid, engine_version, grader_tier FROM cdmss_ro.ipd_discharge_audit")}
+    assert "ER-1" not in got                                        # doc7: only a -mini row -> dropped
+    assert got["ER-2"] == ("ipd-discharge-audit/0.2", "local")      # doc8: qwen-only on the plain version -> kept, flagged local
+    assert got["ER-3"] == ("ipd-discharge-audit/0.2", "cloud")      # doc9: NULL model -> kept
+    assert got["ER-4"] == ("ipd-discharge-audit/0.1", "cloud")      # doc10: qwen 0.2 loses to cloud 0.1 (grader tier first, CANONICAL_RANK_SQL)
 
 
 def test_prefix_site_matching_is_trim_upper_startswith(data):

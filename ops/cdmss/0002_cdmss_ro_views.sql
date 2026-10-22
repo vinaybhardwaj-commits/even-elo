@@ -222,10 +222,10 @@ LEFT JOIN LATERAL (
   WHERE m.vocabulary = 'encounter_prefix' AND starts_with(upper(btrim(a.ip_uid)), m.raw_value)
   ORDER BY length(m.raw_value) DESC LIMIT 1
 ) pf ON true
--- audit-canonical.ts:226-229 canonicalBy drops -mini rows BEFORE ranking; D2 (:170-172) also ranks qwen local. Both are dropped here, so a
--- document graded only by a local model is absent (grader_tier is therefore always 'cloud' in this view).
+-- audit-canonical.ts:226-229 canonicalBy drops ONLY isMiniEngine rows (/-mini$/, :69) before ranking, NULL-safe. qwen rows and NULL-model
+-- rows stay and are ranked by CANONICAL_RANK_SQL (qwen last via the grader tier); grader_tier shows 'local' for them.
 WHERE a.document_id IS NOT NULL
-  AND NOT (a.model LIKE 'qwen%' OR a.engine_version LIKE '%-mini')
+  AND COALESCE(a.engine_version, '') !~ '-mini$'
 ORDER BY a.app_source, a.document_id,
   CASE WHEN a.model LIKE 'qwen%' OR a.engine_version LIKE '%-mini' THEN 1 ELSE 0 END,
   CASE WHEN split_part(a.engine_version, '/', 2) ~ '^[0-9]+(\.[0-9]+)*$'

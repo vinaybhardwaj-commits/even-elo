@@ -193,3 +193,8 @@ def test_harness_removes_its_data_dir():
     assert d.exists()
     c.stop()
     assert not d.exists()
+
+
+def test_fence_usage_on_a_sequence(cdmss, tmp_path):
+    up = ["CREATE SEQUENCE public.leak_seq", "GRANT USAGE ON SEQUENCE public.leak_seq TO studio_cdmss_ro"]
+    breach(cdmss, tmp_path, up, ["DROP SEQUENCE public.leak_seq"], "privilege outside cdmss_ro: public.leak_seq")

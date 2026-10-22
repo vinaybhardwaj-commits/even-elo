@@ -76,7 +76,8 @@ BEGIN
    WHERE n.nspname NOT LIKE 'pg\_%' AND n.nspname NOT IN ('information_schema', 'cdmss_ro')
      AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
      AND (has_table_privilege('studio_cdmss_ro', c.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
-          OR (c.relkind <> 'S' AND has_any_column_privilege('studio_cdmss_ro', c.oid, 'SELECT,INSERT,UPDATE,REFERENCES')));
+          OR (c.relkind <> 'S' AND has_any_column_privilege('studio_cdmss_ro', c.oid, 'SELECT,INSERT,UPDATE,REFERENCES'))
+          OR (c.relkind = 'S' AND has_sequence_privilege('studio_cdmss_ro', c.oid, 'USAGE,SELECT,UPDATE')));
   IF bad IS NOT NULL THEN RAISE EXCEPTION 'postcheck: studio_cdmss_ro holds a privilege outside cdmss_ro: %', bad; END IF;
   -- SECURITY DEFINER functions the role (or PUBLIC) can execute, in a schema it can use
   SELECT string_agg(n.nspname || '.' || p.proname, ', ') INTO bad FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
