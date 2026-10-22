@@ -28,6 +28,8 @@ PROXY_CONF=$PROXY_DIR/squid.conf
 PROXY_HOSTS=$PROXY_DIR/hosts.txt
 PROXY_CERT=$PROXY_DIR/splice-only.pem
 PROXY_SNI_HELPER=$PROXY_DIR/sni-check.sh
+PREFILTER=studio-prefilter
+PREFILTER_BIN=/usr/local/sbin/studio-ech-prefilter
 RELAY=studio-pgrelay
 RELAY_DIR=/etc/studio-pgrelay
 NEON_ENV=$RELAY_DIR/neon.env
@@ -38,7 +40,8 @@ EGRESS_CONF=$ETC_DIR/egress.conf
 REFRESH_BIN=/usr/local/sbin/studio-agent-egress-refresh
 GUARD_BIN=/usr/local/sbin/studio-agent-egress-guard
 UNIT_DIR=/etc/systemd/system
-PROXY_PORT=8888
+PROXY_PORT=8888      # what the agent talks to: the ClientHello pre-filter
+SQUID_PORT=8889      # Squid itself; the nft table gives the agent uid no route to it
 PORT=8123
 
 # name=default; required ones (non-empty before the service may start) are listed separately.
@@ -218,8 +221,9 @@ Description=Even Studio agent (FastAPI, 127.0.0.1:$PORT)
 Requires=studio-agent-nft.service
 Wants=studio-pgrelay.service
 BindsTo=studio-proxy.service
+BindsTo=$PREFILTER.service
 PartOf=studio-agent-nft.service
-After=network-online.target studio-agent-nft.service studio-proxy.service studio-pgrelay.service
+After=network-online.target studio-agent-nft.service studio-proxy.service $PREFILTER.service studio-pgrelay.service
 Wants=network-online.target
 
 [Service]
@@ -285,7 +289,7 @@ EOT
 render_proxy_unit() {
   cat <<EOT
 [Unit]
-Description=Studio agent egress proxy (squid: CONNECT :443, TLS server-name allowlist, no decryption; 127.0.0.1:$PROXY_PORT)
+Description=Studio agent egress proxy (squid: CONNECT :443, TLS server-name allowlist, no decryption; 127.0.0.1:$SQUID_PORT, behind $PREFILTER)
 After=network-online.target
 Wants=network-online.target
 
@@ -332,6 +336,65 @@ WantedBy=multi-user.target
 EOT
 }
 
+render_prefilter_unit() {
+  cat <<EOT
+[Unit]
+Description=Studio agent ClientHello pre-filter (drops ECH 0xfe0d/0xfe02/0xff02 and malformed hellos; 127.0.0.1:$PROXY_PORT -> squid 127.0.0.1:$SQUID_PORT)
+BindsTo=studio-proxy.service
+After=network-online.target studio-proxy.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$PREFILTER
+Group=$PREFILTER
+Environment=PREFILTER_LISTEN_PORT=$PROXY_PORT PREFILTER_UPSTREAM_PORT=$SQUID_PORT PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 -I $PREFILTER_BIN
+Restart=on-failure
+RestartSec=5
+UMask=0077
+LimitCORE=0
+LimitNOFILE=1024
+TasksMax=64
+MemoryMax=256M
+MemorySwapMax=0
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProcSubset=pid
+ProtectProc=invisible
+RemoveIPC=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateUsers=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+SystemCallErrorNumber=EPERM
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+# loopback only, TCP only: it listens on $PROXY_PORT and talks to squid on $SQUID_PORT, nothing else
+RestrictAddressFamilies=AF_INET AF_INET6
+IPAddressDeny=any
+IPAddressAllow=127.0.0.1/32
+InaccessiblePaths=-/opt/studio-agent -/etc/studio-agent -/etc/studio-pgrelay -/etc/studio-proxy -/run/systemd/resolve -/run/dbus -/run/nscd -/run/tailscale -/run/avahi-daemon -/var/run/dbus
+
+[Install]
+WantedBy=multi-user.target
+EOT
+}
+
 render_proxy_conf() {
   cat <<EOT
 # CONNECT to :443 only, to exactly the names in $PROXY_HOSTS. ssl_bump peeks at the TLS ClientHello and splices (blind
@@ -339,7 +402,7 @@ render_proxy_conf() {
 # so nothing is decrypted. The certificate below is a throwaway that Squid insists on when ssl-bump is enabled; no client
 # trusts it, it signs nothing, and a denied client is reset before any handshake (deny_info TCP_RESET).
 # Exact names only, never a reverse lookup: "-n" on dstdomain, and IP-literal targets (v4 and v6) are denied first.
-http_port 127.0.0.1:$PROXY_PORT ssl-bump tls-cert=$PROXY_CERT generate-host-certificates=off
+http_port 127.0.0.1:$SQUID_PORT ssl-bump tls-cert=$PROXY_CERT generate-host-certificates=off
 acl ip_literal url_regex -i ^([0-9]{1,3}\\.){3}[0-9]{1,3}(:[0-9]+)?\$
 acl ip_literal url_regex -i ^\\[
 acl ip_literal url_regex -i ^[0-9a-f]*:[0-9a-f]*:[0-9a-f:.]*\$
@@ -374,7 +437,10 @@ via off
 forwarded_for delete
 client_persistent_connections off
 shutdown_lifetime 3 seconds
-logformat studio %Ss/%03>Hs %rm %>rd:%>rP sni=%ssl::>sni
+# R3-3.2: one line per transaction. A spliced tunnel logs TCP_TUNNEL with the bytes it carried (in = client to server, out = server
+# to client, bump=splice); every SSL-bump termination (SNI mismatch, no SNI) logs bump=terminate, a denied CONNECT logs TCP_DENIED.
+# post-session-check.sh tallies these per session. No URL, no payload, no header is logged.
+logformat studio %Ss/%03>Hs %rm %>rd:%>rP sni=%ssl::>sni in=%>st out=%<st bump=%ssl::bump_mode err=%err_code/%err_detail
 access_log syslog:daemon.info studio
 EOT
 }
@@ -502,7 +568,7 @@ say "0. preflight: Funnel capability and :443 handlers"
 preflight_funnel
 
 say "1. system users and directories"
-for u in "$SVC:$APP_DIR" "$RELAY:/nonexistent"; do
+for u in "$SVC:$APP_DIR" "$RELAY:/nonexistent" "$PREFILTER:/nonexistent"; do
   name=${u%%:*} home=${u##*:}
   if ! id "$name" >/dev/null 2>&1; then
     run useradd --system --home-dir "$home" --no-create-home --shell /usr/sbin/nologin "$name"
@@ -535,11 +601,11 @@ else
 fi
 
 say "2. config, units, egress scripts (rewritten only when their content changed)"
-PROXY_CHANGED=0 NFT_CHANGED=0 AGENT_UNIT_CHANGED=0 RELAY_CHANGED=0 UNITS_CHANGED=0
+PROXY_CHANGED=0 PREFILTER_CHANGED=0 NFT_CHANGED=0 AGENT_UNIT_CHANGED=0 RELAY_CHANGED=0 UNITS_CHANGED=0
 note_change() { # $1 = group (proxy|nft|agent|unit-only)
   [ "$WROTE" = 1 ] || return 0
   UNITS_CHANGED=1
-  case $1 in proxy) PROXY_CHANGED=1 ;; nft) NFT_CHANGED=1 ;; agent) AGENT_UNIT_CHANGED=1 ;; relay) RELAY_CHANGED=1 ;; esac
+  case $1 in proxy) PROXY_CHANGED=1 ;; nft) NFT_CHANGED=1 ;; agent) AGENT_UNIT_CHANGED=1 ;; relay) RELAY_CHANGED=1 ;; prefilter) PREFILTER_CHANGED=1 ;; esac
 }
 # stock units from the packages would grab ports (squid 3128, pgbouncer 6432) and run with stock configs
 for u in tinyproxy squid pgbouncer; do
@@ -564,6 +630,7 @@ write_file "$PROXY_CONF" 0640 root:proxy < <(render_proxy_conf); note_change pro
 write_file "$PROXY_HOSTS" 0640 root:proxy < <(render_proxy_hosts); note_change proxy
 write_file "$PROXY_SNI_HELPER" 0750 root:proxy < <(render_sni_helper); note_change proxy
 write_file "$UNIT_DIR/studio-proxy.service" 0644 root:root < <(render_proxy_unit); note_change proxy
+write_file "$UNIT_DIR/$PREFILTER.service" 0644 root:root < <(render_prefilter_unit); note_change prefilter
 write_file "$UNIT_DIR/$RELAY.service" 0644 root:root < <(render_relay_unit); note_change relay
 # AWS credentials for the agent: credential_process -> the t4 broker (no GCP key, no STS, no googleapis on this host)
 if [ "$DRY" = 1 ]; then echo "+ install -m 0755 -o root -g root $HERE/studio-aws-creds.py $AWS_HELPER"
@@ -571,11 +638,11 @@ else install -m 0755 -o root -g root "$HERE/studio-aws-creds.py" "$AWS_HELPER"; 
 write_file "$AWS_CONFIG" 0640 "root:$SVC" < <(printf '[default]\nregion = ap-south-1\ncredential_process = %s\n' "$AWS_HELPER")
 write_file "$UNIT_DIR/$SVC.service" 0644 root:root < <(render_agent_unit); note_change agent
 write_file "$EGRESS_CONF" 0644 root:root < <(printf 'NEON_HOSTS="%s"\nBROKER_ADDR="%s"\n' "${NEON_HOSTS[*]}" "$BROKER"); note_change nft
-for pair in "studio-agent-egress-refresh.sh:$REFRESH_BIN" "studio-agent-egress-guard.sh:$GUARD_BIN" "studio-pgrelay-render.sh:$RELAY_BIN"; do
+for pair in "studio-agent-egress-refresh.sh:$REFRESH_BIN" "studio-agent-egress-guard.sh:$GUARD_BIN" "studio-pgrelay-render.sh:$RELAY_BIN" "studio-ech-prefilter.py:$PREFILTER_BIN"; do
   src=$HERE/${pair%%:*} dst=${pair##*:}
   WROTE=0; if ! cmp -s "$src" "$dst" 2>/dev/null; then WROTE=1; fi
   run install -m 0755 -o root -g root "$src" "$dst"
-  case $dst in "$REFRESH_BIN") note_change nft ;; "$RELAY_BIN") note_change relay ;; esac
+  case $dst in "$REFRESH_BIN") note_change nft ;; "$RELAY_BIN") note_change relay ;; "$PREFILTER_BIN") note_change prefilter ;; esac
 done
 write_file "$UNIT_DIR/studio-agent-nft.service" 0644 root:root < <(cat <<EOT
 [Unit]
@@ -728,10 +795,14 @@ fi
 say "5. proxy, egress and relay layers (restarted only when their config changed)"
 run_t systemctl reset-failed studio-proxy.service studio-agent-nft.service "$RELAY.service" "$SVC.service"
 [ "$UNITS_CHANGED" = 0 ] || run systemctl daemon-reload
-run systemctl enable studio-proxy.service studio-agent-nft.service studio-agent-egress-refresh.timer studio-agent-egress-guard.timer
+run systemctl enable studio-proxy.service "$PREFILTER.service" studio-agent-nft.service studio-agent-egress-refresh.timer studio-agent-egress-guard.timer
 if [ "$PROXY_CHANGED" = 1 ] || ! systemctl is-active --quiet studio-proxy.service 2>/dev/null; then
   run systemctl restart studio-proxy.service
 else echo "studio-proxy unchanged and active; not restarted"; fi
+# the pre-filter is bound to squid (a squid restart stops it); start it after squid, restart it when its code or unit changed
+if [ "$PREFILTER_CHANGED" = 1 ] || ! systemctl is-active --quiet "$PREFILTER.service" 2>/dev/null; then
+  run systemctl restart "$PREFILTER.service"
+else echo "$PREFILTER unchanged and active; not restarted"; fi
 if [ "$NFT_CHANGED" = 1 ] || ! systemctl is-active --quiet studio-agent-nft.service 2>/dev/null; then
   run systemctl restart studio-agent-nft.service
 else echo "studio-agent-nft unchanged and active; not restarted"; fi

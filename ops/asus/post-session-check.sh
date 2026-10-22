@@ -6,6 +6,9 @@
 # never the canary and never file contents.
 #
 #   printf '%s' "$CANARY" | sudo ./post-session-check.sh [--dry-run]
+# Also reports (R3-3.2, informational, never a failure): per session the number of Squid terminations (no-SNI, SNI mismatch, denied CONNECT),
+# the ClientHello pre-filter drops, and the bytes tunnelled to each allowed name (api.typesafe.ai included) from the Squid access log in the journal.
+# The session starts at the agent's last start (override: STUDIO_SESSION_SINCE="YYYY-MM-DD HH:MM:SS"; none known: the whole journal).
 # Also checks: egress-refresh last success <= 15 min old, and STUDIO_LOG_LEVEL is INFO or higher (env file and running process).
 # Exit: 0 clean (or PURGED: secrets were purged, nothing found), 1 hit(s) or log-level violation, 2 usage, 3 INCONCLUSIVE (unreadable path, journalctl failure,
 # missing/stale egress-refresh stamp, unreadable env; nothing worse seen).
@@ -23,6 +26,8 @@ if [ "$DRY" = 1 ]; then
     echo "+ find $d -name '*.gz|*.xz|*.zst' | zgrep/xzgrep/zstdgrep -qaF -f <canary fd>   # compressed rotated logs"
   done
   echo "+ journalctl --no-pager -a | grep -cF -f <canary fd>"
+  echo "+ journalctl -t squid --since <agent start|STUDIO_SESSION_SINCE>: count bump=terminate (no-sni / sni-mismatch), TCP_DENIED, sum in=/out= of TCP_TUNNEL per host"
+  echo "+ journalctl -u studio-prefilter --since <same>: count 'prefilter drop reason=' (ech / malformed / other)"
   echo "+ egress-refresh last success: /var/lib/studio-agent-egress-ok age <= 900s else INCONCLUSIVE"
   echo "+ STUDIO_LOG_LEVEL in /etc/studio-agent/env and in /proc/<MainPID>/environ must be INFO|WARNING|ERROR|CRITICAL"
   echo "expect: 0 hits (exit 0); exit 1 on hits; exit 3 if any path/journal was unreadable"
@@ -99,6 +104,37 @@ if [ "$jrc" != 0 ] || [ -s "$errfile" ]; then
 fi
 echo "journal hits: $jc"
 hits=$((hits + jc))
+
+# ---- R3-3.2: what left through the proxy during this session (informational; a journal read failure is INCONCLUSIVE)
+since=${STUDIO_SESSION_SINCE:-}
+src="STUDIO_SESSION_SINCE"
+if [ -z "$since" ]; then
+  ts=$(systemctl show studio-agent -p ActiveEnterTimestamp --value 2>/dev/null)
+  if [ -n "$ts" ] && since=$(date -d "$ts" '+%Y-%m-%d %H:%M:%S' 2>/dev/null); then src="agent start"; else since=""; fi
+fi
+jargs=(--no-pager -a -o cat)
+if [ -n "$since" ]; then jargs+=(--since "$since"); echo "egress session: since $since ($src)"; else echo "egress session: whole journal (no agent start time, no STUDIO_SESSION_SINCE)"; fi
+sqlog=$(mktemp); pflog=$(mktemp)
+if journalctl "${jargs[@]}" -t squid >"$sqlog" 2>"$errfile" && journalctl "${jargs[@]}" -u studio-prefilter >"$pflog" 2>>"$errfile" && [ ! -s "$errfile" ]; then
+  awk -v hosts="$( [ -r /etc/studio-proxy/hosts.txt ] && tr '\n' ' ' </etc/studio-proxy/hosts.txt )" '
+    function kv(k,   i, p) { for (i = 1; i <= NF; i++) { p = k "="; if (index($i, p) == 1) return substr($i, length(p) + 1) } return "" }
+    BEGIN { n = split(hosts, h, " "); for (i = 1; i <= n; i++) seen[h[i]] = 1 }
+    {
+      host = $3; sub(/:[0-9]+$/, "", host); sni = kv("sni"); bump = kv("bump")
+      if ($1 ~ /^TCP_TUNNEL\// && $2 == "CONNECT") { seen[host] = 1; tn[host]++; bin[host] += kv("in"); bout[host] += kv("out") }
+      else if (bump == "terminate") { if (sni == "-" || sni == "") nosni++; else if (sni != host) mism++; else other++ }
+      else if ($1 ~ /^TCP_DENIED\//) denied++
+    }
+    END {
+      printf "egress terminations: %d (no-sni=%d, sni-mismatch=%d, other=%d); denied CONNECTs: %d\n", nosni + mism + other, nosni, mism, other, denied
+      for (k in seen) printf "egress tunnelled %s: tunnels=%d bytes_in(client->server)=%d bytes_out(server->client)=%d\n", k, tn[k], bin[k], bout[k]
+    }' "$sqlog" | sort
+  pd=$(grep -c '^prefilter drop ' "$pflog"); pe=$(grep -c '^prefilter drop reason=ech ' "$pflog"); pm=$(grep -c '^prefilter drop reason=malformed' "$pflog")
+  echo "egress prefilter drops: $pd (ech=$pe, malformed=$pm, other=$((pd - pe - pm)))"
+else
+  echo "INCONCLUSIVE: could not read the squid / prefilter journal for the egress tally"; inconclusive=1
+fi
+rm -f "$sqlog" "$pflog"
 
 # egress-refresh timer: last success stamp written by studio-agent-egress-refresh
 stamp=/var/lib/studio-agent-egress-ok
