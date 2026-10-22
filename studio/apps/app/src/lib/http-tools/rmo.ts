@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { fetchAgent } from "@/lib/agent-fetch";
 import { agentHeaders } from "@/lib/zone/actor-token";
 import { SESSION_COOKIE } from "@/lib/zone/authorize";
 import { RMO_INBOX_PARAMS, RMO_ITEM_COLUMNS, RMO_WRITE_PARAMS, type RmoInboxPayload, type RmoOp } from "@/lib/screens/rmo-schema";
@@ -87,15 +88,18 @@ async function audit(actor: Actor, tool: string, params: Record<string, unknown>
     return { ok: false as const, status: 503 };
   }
   try {
-    const res = await fetch(`${agentUrl.replace(/\/+$/, "")}/audit`, {
-      method: "POST",
-      headers: { ...headers, "Content-Type": "application/json" },
-      // Ids and filters only: no names, no finding text.
-      body: JSON.stringify({ tool, params, row_count: rows, duration_ms: Math.max(0, Date.now() - startedAt), outcome }),
-      cache: "no-store",
-      redirect: "error",
-      signal: AbortSignal.timeout(AUDIT_TIMEOUT_MS),
-    });
+    const res = await fetchAgent(
+      `${agentUrl.replace(/\/+$/, "")}/audit`,
+      {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        // Ids and filters only: no names, no finding text.
+        body: JSON.stringify({ tool, params, row_count: rows, duration_ms: Math.max(0, Date.now() - startedAt), outcome }),
+        cache: "no-store",
+        redirect: "error",
+      },
+      AUDIT_TIMEOUT_MS,
+    );
     return res.ok ? { ok: true as const } : { ok: false as const, status: res.status };
   } catch {
     return { ok: false as const, status: 502 };

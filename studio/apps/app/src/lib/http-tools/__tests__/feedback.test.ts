@@ -82,6 +82,23 @@ describe("feedback", () => {
     expect(await runFeedback("list", {}, ACTOR)).toMatchObject({ status: 502, body: { error: "bad_payload" } });
   });
 
+  it("an audit POST that hits a stale socket is re-sent once and the list still succeeds", async () => {
+    let auditSends = 0;
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (url.endsWith("/audit")) {
+        auditSends += 1;
+        if (auditSends === 1) throw new TypeError("fetch failed", { cause: Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }) });
+        return json({ ok: true }, auditStatus);
+      }
+      return up(url, init);
+    });
+    const r = await runFeedback("list", {}, ACTOR);
+    expect(r.status).toBe(200);
+    expect(auditSends).toBe(2);
+    expect(upstream()).toHaveLength(1);
+  });
+
   it("retract is refused (403 second_factor_required) before any upstream call while G3 is absent", async () => {
     expect(await runFeedback("retract", { feedback_id: FID, retraction_reason: "dup" }, ACTOR)).toMatchObject({ status: 403, body: { error: "second_factor_required" } });
     expect(calls).toHaveLength(0);
