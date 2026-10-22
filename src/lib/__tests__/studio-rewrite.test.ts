@@ -51,7 +51,7 @@ const MAPPING: Array<[string, string]> = [
   ["/document-audits", "/studio/document-audits"],
   ["/document-audits/d1", "/studio/document-audits/d1"],
   ["/rmo-inbox", "/studio/rmo-inbox"],
-  ["/incidents", "/studio/incidents"],
+  ["/incidents", "/studio/feedback"],
   ["/safety", "/studio/incidents"],
   ["/mm", "/studio/surgical"],
   ["/surgical-governance", "/studio/surgical"],

@@ -18,10 +18,11 @@ FROM profiles_with_roles p
 WHERE p.id = $1::uuid
 LIMIT 1`;
 
-// Same read plus the three hospital-role flags the per-screen predicates need (zone/access.ts). It needs
-// GRANT SELECT (is_sgc_member, is_site_medical_head, is_hr) ON profiles_with_roles TO studio_gov_ro, which ops/neon does
-// NOT contain yet (0001_roles.sql grants only id, status, is_super_admin). Until it is granted this read fails with
-// InsufficientPrivilege and we fall back to LIVE_STAFF_SQL: the flags are then unknown = false (plain staff, fail closed).
+// The live read: LIVE_STAFF_SQL plus the three hospital-role flags the per-screen predicates need (zone/access.ts).
+// The flags are derived columns of the view (profiles no longer has them); ops/neon/0011_profiles_role_flags.sql grants
+// exactly those three columns. Before 0011 is applied this read fails with InsufficientPrivilege and we fall back to
+// LIVE_STAFF_SQL (so a deploy that precedes the grant keeps working): the flags are then unknown = false, i.e. plain
+// staff, fail closed. tests/test_studio_live_staff_sql.py runs both statements against the real even-elo schema.
 export const LIVE_STAFF_WIDE_SQL = `
 SELECT p.status, p.is_super_admin, p.is_sgc_member, p.is_site_medical_head, p.is_hr,
        (SELECT base.must_change_pin FROM profiles base WHERE base.id = p.id) AS must_change_pin

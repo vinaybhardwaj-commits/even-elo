@@ -37,6 +37,15 @@ Each file is run as the owner over the DIRECT url (`SQL_FILE=ops/neon/<file> ops
 6. `0008_ungate_views.sql`: NEW, owner must apply AFTER 0003 and 0007 (section below). Appends the free-text columns to five 0003 views. The Studio tools that read those columns fail until it is applied, so apply it before the matching deploy.
 7. `0009_incidents_view.sql`: NEW, owner must apply AFTER 0003 (section below). ADDITIVE: creates `studio_ro.incident_register` and its grant, revokes nothing, so the running agent keeps working. Run it, then deploy the agent (`incident_summary` and `overview_counts` read the view), then step 8.
 8. `0010_incidents_revoke.sql`: NEW, owner must apply ONLY AFTER 0009 and the agent deploy. `REVOKE ALL ON public.incidents FROM studio_gov_ro`; refuses without the view. Applying it before the deploy breaks the old agent's incident tools.
+9. `0011_profiles_role_flags.sql`: NEW, owner must apply AFTER 0001 (section below). ADDITIVE column grants of `is_sgc_member`, `is_site_medical_head`, `is_hr` on `profiles_with_roles`. Apply it before (or with) the role-parity deploy: without it the app reads only `is_super_admin` and treats SGO / Site Medical Head / HR users as plain staff. Re-run it after any re-run of 0001.
+
+### Role flags (gov/role-parity): `0011_profiles_role_flags.sql`
+The Studio zone admits any active staff member and picks their screens from their roles, re-read live on every request. `profiles` no longer has the flags (even-elo v3.0a moved them to `profile_hospital_roles`); `profiles_with_roles` derives them, so this file grants `SELECT (is_sgc_member, is_site_medical_head, is_hr)` on the view only (SGO = `is_sgc_member`). The view is `SELECT p.*`: only COLUMN grants are safe, never `password_hash`, `email` or a PIN column. The post-check rolls back unless the role can read EXACTLY `id, status, is_super_admin` + the three flags on the view and `id, must_change_pin` on `profiles`, has no table-wide SELECT and no membership.
+```bash
+SQL_FILE=ops/neon/0011_profiles_role_flags.sql ops/neon/run-roles.sh "$XDG_RUNTIME_DIR/owner-url"    # one transaction, idempotent
+STUDIO_EXPECT_VIEWS=1 GOV_RO_DATABASE_URL="$(<"$XDG_RUNTIME_DIR/gov-ro-url")" uv run --directory studio/apps/agent pytest tests/test_lc1_live_probe.py -q
+```
+With `STUDIO_EXPECT_VIEWS=1` the probe fails if the flags are not readable.
 
 ### Column-scoped views (M1): `0003_studio_views.sql`
 Physician 360, OPD governance and Patient feedback read **views** in schema `studio_ro`, never the base tables behind them (`privileges`, `oppe_reviews`, `clinical_metrics_monthly`, `qualifications`, `gov_capture_gaps`, `incident_replies`). Run it as the owner over the DIRECT url, after step 1 (the role must exist), before the probe:

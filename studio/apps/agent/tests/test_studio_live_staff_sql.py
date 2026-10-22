@@ -25,9 +25,9 @@ LIVE_STAFF_TS = Path(__file__).resolve().parents[2] / "app" / "src" / "lib" / "z
 pytestmark = pytest.mark.skipif(not MIGRATIONS_TS.exists(), reason="even-elo repo root not available")
 
 
-def live_staff_sql() -> str:
-    m = re.search(r"export const LIVE_STAFF_SQL = `(.*?)`;", LIVE_STAFF_TS.read_text(), re.S)
-    assert m, "LIVE_STAFF_SQL not found"
+def live_staff_sql(name: str = "LIVE_STAFF_SQL") -> str:
+    m = re.search(rf"export const {name} = `(.*?)`;", LIVE_STAFF_TS.read_text(), re.S)
+    assert m, f"{name} not found"
     return re.sub(r"\$1\b", "%s", m.group(1))
 
 
@@ -72,6 +72,8 @@ def db(uri):
     # (The view is `SELECT p.*`, so a table-wide grant on it would expose password_hash.)
     conn.execute("GRANT SELECT (id, status, is_super_admin) ON profiles_with_roles TO ro_live_staff")
     conn.execute("GRANT SELECT (id, must_change_pin) ON profiles TO ro_live_staff")
+    # ops/neon/0011_profiles_role_flags.sql: the three hospital-role flags (derived columns of the view only).
+    conn.execute("GRANT SELECT (is_sgc_member, is_site_medical_head, is_hr) ON profiles_with_roles TO ro_live_staff")
     yield conn
     conn.close()
 
@@ -90,10 +92,10 @@ def add_profile(conn, pin_flag, is_super=True, status="active"):
     return str(pid)
 
 
-def run_as_ro(conn, profile_id):
+def run_as_ro(conn, profile_id, name: str = "LIVE_STAFF_SQL"):
     conn.execute("SET ROLE ro_live_staff")
     try:
-        return conn.execute(live_staff_sql(), (profile_id,)).fetchall()
+        return conn.execute(live_staff_sql(name), (profile_id,)).fetchall()
     finally:
         conn.execute("RESET ROLE")
 
@@ -144,7 +146,7 @@ def test_the_column_grant_is_enough_and_secrets_stay_denied(db):
     # The view is `SELECT p.*`, so it carries password_hash: only the column grant keeps it closed.
     cols = {r[0] for r in db.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'profiles_with_roles'")}
     assert "password_hash" in cols  # premise: a table-wide grant on the view WOULD leak it
-    for col in ("password_hash", "email", "full_name", "is_site_medical_head"):
+    for col in ("password_hash", "email", "full_name", "created_at"):
         as_ro_fails(db, f"SELECT {col} FROM profiles_with_roles", psycopg.errors.InsufficientPrivilege)
     as_ro_fails(db, "SELECT * FROM profiles_with_roles", psycopg.errors.InsufficientPrivilege)
     as_ro_fails(db, "SELECT password_hash FROM profiles_with_roles WHERE id = id", psycopg.errors.InsufficientPrivilege)
@@ -171,3 +173,46 @@ def test_the_read_only_role_needs_select_on_profiles(db):
             db.execute(live_staff_sql(), (pid,))
     finally:
         db.execute("RESET ROLE")
+
+
+def grant_role(conn, profile_id, role):
+    """A hospital role as even-elo stores it (profile_hospital_roles); the view derives the booleans from it."""
+    hosp = conn.execute("SELECT hospital_id FROM profiles WHERE id = %s::uuid", (profile_id,)).fetchone()[0]
+    conn.execute("INSERT INTO profile_hospital_roles (profile_id, hospital_id, role) VALUES (%s::uuid, %s, %s)", (profile_id, hosp, role))
+
+
+def test_wide_live_staff_sql_returns_the_role_flags_from_the_view_only(db):
+    """LIVE_STAFF_WIDE_SQL as a role holding exactly 0011's column grants, against the real even-elo schema."""
+    sgo, smh, hr, plain = (add_profile(db, False, is_super=False) for _ in range(4))
+    grant_role(db, sgo, "sgc_member")
+    grant_role(db, smh, "site_medical_head")
+    grant_role(db, hr, "hr")
+    wide = lambda pid: run_as_ro(db, pid, "LIVE_STAFF_WIDE_SQL")
+    # (status, is_super_admin, is_sgc_member, is_site_medical_head, is_hr, must_change_pin)
+    assert wide(sgo) == [("active", False, True, False, False, False)]
+    assert wide(smh) == [("active", False, False, True, False, False)]
+    assert wide(hr) == [("active", False, False, False, True, False)]
+    assert wide(plain) == [("active", False, False, False, False, False)]
+    assert wide(add_profile(db, True))[0][5] is True  # must_change_pin still comes from the base table
+    assert wide(str(uuid.uuid4())) == []
+
+
+def test_wide_read_needs_exactly_the_0011_grants(db):
+    """Without 0011 (the pre-grant state) the wide read is refused and the narrow one still works: the app's fallback."""
+    db.execute("CREATE ROLE ro_pre_0011 NOLOGIN")
+    db.execute("GRANT SELECT (id, status, is_super_admin) ON profiles_with_roles TO ro_pre_0011")
+    db.execute("GRANT SELECT (id, must_change_pin) ON profiles TO ro_pre_0011")
+    pid = add_profile(db, False)
+    db.execute("SET ROLE ro_pre_0011")
+    try:
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            db.execute(live_staff_sql("LIVE_STAFF_WIDE_SQL"), (pid,))
+    finally:
+        db.execute("RESET ROLE")
+    db.execute("SET ROLE ro_pre_0011")
+    try:
+        assert db.execute(live_staff_sql(), (pid,)).fetchall() == [("active", True, False)]
+    finally:
+        db.execute("RESET ROLE")
+    for col in ("password_hash", "email", "full_name"):  # 0011 never widens this
+        as_ro_fails(db, f"SELECT {col} FROM profiles_with_roles", psycopg.errors.InsufficientPrivilege)

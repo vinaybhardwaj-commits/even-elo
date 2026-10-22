@@ -77,6 +77,15 @@ describe("even-elo middleware redirect: role x moved page", () => {
     });
   }
 
+  it("/incidents is the feedback home (any staff) and /safety is e-IRIS (super_admin | SGO)", async () => {
+    process.env.STUDIO_ORIGIN = ORIGIN;
+    const plain = { status: "active", is_super_admin: false };
+    const inc = await visit("/incidents", plain);
+    expect(new URL(inc.headers.get("location")!).pathname).toBe("/studio/feedback");
+    expect((await visit("/safety", plain)).headers.get("location") ?? "").not.toContain("/studio");
+    expect(new URL((await visit("/safety", { ...plain, is_sgc_member: true })).headers.get("location")!).pathname).toBe("/studio/incidents");
+  });
+
   it("pending and suspended accounts never reach the Studio redirect", async () => {
     process.env.STUDIO_ORIGIN = ORIGIN;
     for (const status of ["pending_approval", "suspended"]) {

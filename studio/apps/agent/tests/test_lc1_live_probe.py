@@ -58,7 +58,7 @@ FREE_TEXT_COLUMNS = (
     "citations_json", "patient_json", "cdmss_sync_error",
     "authored_by_profile_id", "doctor_uid", "content_hash", "queue_item_ref", "source_audit_id",
 )
-COLUMN_GRANT_ONLY = ("profiles", "profiles_with_roles")  # id/status/is_super_admin and id/must_change_pin only
+COLUMN_GRANT_ONLY = ("profiles", "profiles_with_roles")  # view: id, status, is_super_admin + the 0011 flags (is_sgc_member, is_site_medical_head, is_hr); profiles: id, must_change_pin
 WRITES = {
     "insert": "INSERT INTO {t} SELECT * FROM {t} WHERE false",
     "update": "UPDATE {t} SET id = id WHERE false",
@@ -152,6 +152,12 @@ def test_no_table_wide_select_on_profiles_or_its_view():
 def test_zone_role_view_is_readable():
     """The Studio middleware re-reads roles from profiles_with_roles on the same RO connection."""
     assert scalar("SELECT count(id) >= 0 FROM profiles_with_roles") is True  # column grant: never count(*)/p.*
+    # 0011 (role flags for the per-screen access): required with STUDIO_EXPECT_VIEWS=1 (all files applied); the credential columns above stay denied
+    granted = scalar("SELECT has_column_privilege(current_user, 'profiles_with_roles', 'is_hr', 'SELECT')")
+    if os.environ.get("STUDIO_EXPECT_VIEWS") == "1":
+        assert granted is True, "0011_profiles_role_flags.sql is not applied"
+    if granted:
+        assert scalar("SELECT count(is_sgc_member) + count(is_site_medical_head) + count(is_hr) >= 0 FROM profiles_with_roles") is True
 
 
 @pytest.mark.parametrize("table", GOV_TABLES)

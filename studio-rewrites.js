@@ -34,7 +34,7 @@ const STUDIO_REDIRECTS = [
   ["/document-audits", "/studio/document-audits"],
   ["/document-audits/:id", "/studio/document-audits/:id"],
   ["/rmo-inbox", "/studio/rmo-inbox"],
-  ["/incidents", "/studio/incidents"],
+  ["/incidents", "/studio/feedback"],
   ["/safety", "/studio/incidents"],
   ["/mm", "/studio/surgical"],
   ["/surgical-governance", "/studio/surgical"],
