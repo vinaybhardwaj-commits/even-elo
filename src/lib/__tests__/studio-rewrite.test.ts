@@ -70,9 +70,9 @@ const UNMAPPED = ["/admin", "/admin/pending", "/admin/metrics", "/admin/users/u1
 async function jwt(superAdmin: boolean) {
   return signStaffJwt({ profileId: "p", email: "x@example.test", status: "active", is_super_admin: superAdmin, is_sgc_member: true }, "1h");
 }
-async function hit(path: string, token: string | null, opts: { host?: string; method?: string } = {}) {
+async function hit(path: string, token: string | null, opts: { host?: string; method?: string; headers?: Record<string, string> } = {}) {
   const host = opts.host ?? "governance.evenos.app";
-  const headers: Record<string, string> = { host };
+  const headers: Record<string, string> = { host, ...opts.headers };
   if (token) headers.cookie = `epi_session=${token}`;
   return middleware(new NextRequest(`https://${host}${path}`, { method: opts.method ?? "GET", headers }));
 }
@@ -107,6 +107,26 @@ describe("Studio redirects (role-conditional, in middleware)", () => {
       expect(loc.pathname + loc.search, from).toBe(`${to}?a=1&b=x%20y`);
       expect(loc.host, from).toBe("governance.evenos.app");
     }
+  });
+
+  it("RSC / prefetch requests are not redirected (each marker alone), a plain navigation still is", async () => {
+    process.env.STUDIO_ORIGIN = ORIGIN;
+    const t = await jwt(true);
+    const markers: Array<[string, string, Record<string, string>]> = [
+      ["rsc header", "/overview", { rsc: "1" }],
+      ["next-router-prefetch header", "/overview", { "next-router-prefetch": "1" }],
+      ["next-router-state-tree header", "/overview", { "next-router-state-tree": "%5B%22%22%5D" }],
+      ["_rsc param", "/overview?_rsc=abc12", {}],
+      ["_rsc param on a detail page", "/physicians/p1?a=1&_rsc=zz", {}],
+    ];
+    for (const [name, path, headers] of markers) {
+      const r = await hit(path, t, { headers });
+      expect(r.status, name).toBe(200);
+      expect(r.headers.get("location"), name).toBeNull();
+      expect(r.headers.get("x-middleware-next"), name).toBe("1");
+    }
+    expect((await hit("/overview", t)).status).toBe(307);
+    expect((await hit("/overview?a=1", t, { headers: { rsc: "0" } })).status).toBe(307);
   });
 
   it("non-super_admin never redirects to the Studio on any mapped path", async () => {

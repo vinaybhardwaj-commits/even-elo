@@ -49,6 +49,21 @@ const ADMIN_BOOTSTRAP_ROUTES = [
   "/api/admin/map-cdmss-doctors",
 ];
 
+// Next.js client-side navigation and <Link> prefetch fetch the RSC payload of the target page (headers rsc / next-router-prefetch /
+// next-router-state-tree, or ?_rsc=). Those must not be redirected into the Studio: they pass to the old page handler, so
+// prefetching a moved link costs nothing there. Only a full navigation (no RSC marker) is redirected. nextUrl may drop _rsc, so
+// the raw request URL is checked too.
+function isRscRequest(request: NextRequest): boolean {
+  const h = request.headers;
+  return (
+    h.get("rsc") === "1" ||
+    h.get("next-router-prefetch") === "1" ||
+    h.has("next-router-state-tree") ||
+    request.nextUrl.searchParams.has("_rsc") ||
+    new URL(request.url).searchParams.has("_rsc")
+  );
+}
+
 interface MiddlewarePayload {
   profileId?: unknown;
   email?: unknown;
@@ -197,8 +212,8 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(new URL("/auth/change-pin", request.url));
     }
 
-    // Pages that moved into the Studio: super_admin only (the Studio zone admits nobody else), page navigations only.
-    if (payload.is_super_admin === true && (request.method === "GET" || request.method === "HEAD")) {
+    // Pages that moved into the Studio: super_admin only (the Studio zone admits nobody else), full page navigations only (not RSC/prefetch requests).
+    if (payload.is_super_admin === true && (request.method === "GET" || request.method === "HEAD") && !isRscRequest(request)) {
       const to = studioRedirectPath(process.env.STUDIO_ORIGIN, pathname, host);
       if (to) {
         const url = request.nextUrl.clone();
