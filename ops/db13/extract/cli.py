@@ -7,9 +7,11 @@ import argparse
 import fcntl
 import os
 import shlex
+import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -32,7 +34,8 @@ def private_file(p: Path):
         raise SystemExit(f"refusing {p.name}: missing or not 0600")
 
 
-def read_env(p: Path = ADA_ENV) -> dict:
+def read_env(p: Path | None = None) -> dict:
+    p = p or ADA_ENV
     private_file(p)
     out = {}
     for line in p.read_text().splitlines():
@@ -47,6 +50,23 @@ def read_env(p: Path = ADA_ENV) -> dict:
     return out
 
 
+TUNNEL_HOST = "gov-studio-ada"
+APP_NAME = "gov-studio-extract"
+
+
+def ssh_config(env: dict, port: int) -> str:
+    """ssh -F config: host, user, key PATH and the one forward live here, not on argv. No password exists on this hop."""
+    return "\n".join([
+        f"Host {TUNNEL_HOST}", f"  HostName {env['ADA_HOST']}", f"  User {env['SSH_USER']}", f"  IdentityFile {env['SSH_KEY']}",
+        "  IdentitiesOnly yes", "  BatchMode yes", "  ExitOnForwardFailure yes", "  StrictHostKeyChecking yes",
+        "  ServerAliveInterval 15",
+        f"  LocalForward 127.0.0.1:{port} {env['PG_HOST']}:{env['PG_PORT']}", ""])
+
+
+def tunnel_argv(cfg: Path) -> list[str]:
+    return ["ssh", "-N", "-F", str(cfg), TUNNEL_HOST]
+
+
 @contextmanager
 def tunnel(env: dict):
     """ONE ssh port-forward to ada. Command line holds hosts and key path, never a password."""
@@ -54,11 +74,12 @@ def tunnel(env: dict):
     s.bind(("127.0.0.1", 0))
     port = s.getsockname()[1]
     s.close()
-    p = subprocess.Popen(
-        ["ssh", "-N", "-i", env["SSH_KEY"], "-o", "BatchMode=yes", "-o", "ExitOnForwardFailure=yes",
-         "-o", "StrictHostKeyChecking=yes", "-o", "ServerAliveInterval=15",
-         "-L", f"127.0.0.1:{port}:{env['PG_HOST']}:{env['PG_PORT']}", f"{env['SSH_USER']}@{env['ADA_HOST']}"],
-        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    tmp = tempfile.mkdtemp(prefix="gov-studio-ssh-")  # 0700; holds a 0600 ssh config, removed on exit
+    cfg = Path(tmp) / "config"
+    fd = os.open(cfg, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(ssh_config(env, port))
+    p = subprocess.Popen(tunnel_argv(cfg), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         for _ in range(60):
             if p.poll() is not None:
@@ -77,11 +98,17 @@ def tunnel(env: dict):
             p.wait(10)
         except subprocess.TimeoutExpired:
             p.kill()
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def db13_kwargs(env, port):
+    """Connection arguments, in-process only: the password goes to libpq here and nowhere else."""
+    return dict(host="127.0.0.1", port=port, dbname=env["PG_DB"], user=env["PG_USER"], password=env["PG_PASSWORD"],
+                sslmode="disable", connect_timeout=15, application_name=APP_NAME, autocommit=True)
 
 
 def db13_conn(env, port):
-    return psycopg.connect(host="127.0.0.1", port=port, dbname=env["PG_DB"], user=env["PG_USER"], password=env["PG_PASSWORD"],
-                           sslmode="disable", connect_timeout=15, application_name="studio-dw-extract", autocommit=True)
+    return psycopg.connect(**db13_kwargs(env, port))
 
 
 def main(argv=None):

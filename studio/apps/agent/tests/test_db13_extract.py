@@ -21,7 +21,7 @@ REPO = Path(__file__).resolve().parents[4]
 DB13 = REPO / "ops" / "db13"
 SQL_0012 = REPO / "ops" / "neon" / "0012_studio_dw.sql"
 sys.path.insert(0, str(DB13))
-from extract import cli, job  # noqa: E402
+from extract import cli, job, manifest, queries  # noqa: E402
 from extract.spec import BY_NAME, TABLES  # noqa: E402
 
 pytestmark = pytest.mark.skipif(importlib.util.find_spec("pgserver") is None, reason="needs pgserver")
@@ -386,3 +386,153 @@ def test_launchd_plist_and_runner():
     assert p["StartCalendarInterval"]["Hour"] == 22
     sh = DB13 / "extract" / "run-extract.sh"
     assert sh.stat().st_mode & stat.S_IXUSR
+
+
+# ---- fable conditions (22 Oct 14:30): pinned queries, application_name, no credentials leaking ----------------------
+
+def test_every_column_has_a_metric_id():
+    for t in TABLES:
+        for c in t.cols:
+            assert c.metrics.strip(), (t.name, c.name)
+
+
+def test_manifest_matches_spec_and_hashes_every_query():
+    import json
+
+    committed = json.loads(manifest.MANIFEST.read_text())
+    assert committed == manifest.generate()  # run `python -m extract.manifest write` after a reviewed spec change
+    assert len(committed["queries"]) == len(queries.all_queries()) >= 8 * 2
+    assert all(len(h) == 64 for h in committed["queries"].values())
+
+
+def test_modified_query_is_refused_before_it_reaches_db13(conns, monkeypatch):
+    src, dst, owner, _ = conns
+    seen = []
+
+    class Spy:
+        def __init__(self, c):
+            self.c = c
+
+        def execute(self, sql, *a):
+            seen.append(sql)
+            return self.c.execute(sql, *a)
+
+    orig = queries.rows_sql
+    monkeypatch.setattr(queries, "rows_sql", lambda *a, **k: orig(*a, **k) + " -- sneaky")
+    x = job.Extract(Spy(src), dst, throttle=job.Throttle(clock=Clock().now, sleep=lambda s: None), log=lambda *_: None)
+    with pytest.raises(job.QueryNotPinned) as e:
+        x.run(mode="full", tables=["doctors"])
+    assert "sneaky" not in str(e.value) and "FROM" not in str(e.value)
+    assert not any("sneaky" in s or "public.\"doctors\"" in s for s in seen)  # never sent
+    assert owner.execute("SELECT status FROM studio_dw.extract_runs").fetchone()[0] == "failed"
+
+
+def test_manifest_missing_a_hash_refuses(conns):
+    src, dst, _, _ = conns
+    pinned = manifest.load() - {queries.sha(queries.count_sql(BY_NAME["doctors"]))}
+    x = job.Extract(src, dst, pinned=pinned, log=lambda *_: None, throttle=job.Throttle(clock=Clock().now, sleep=lambda s: None))
+    x.run(mode="full", tables=["doctors"])  # data queries are pinned
+    job.begin_read_only(src)
+    with pytest.raises(job.QueryNotPinned):
+        job._pinned(queries.count_sql(BY_NAME["doctors"]).replace("count(*)", "count(1)"))
+    src.execute("ROLLBACK")
+
+
+ENV = {"ADA_HOST": "ada.invalid", "SSH_USER": "u1", "SSH_KEY": "/k/id", "PG_HOST": "10.0.0.5", "PG_PORT": "5433", "PG_DB": "postgres",
+       "PG_USER": "ro_user", "PG_PASSWORD": "STANDIN-pw-9f3a"}
+
+
+def test_application_name_and_kwargs():
+    kw = cli.db13_kwargs(ENV, 4242)
+    assert kw["application_name"] == "gov-studio-extract" and kw["autocommit"] is True and kw["sslmode"] == "disable"
+
+
+def test_application_name_visible_on_the_server(clusters):
+    db13, _ = clusters
+    kw = cli.db13_kwargs(ENV, 0)
+    with psycopg.connect(url(db13, "ro_user"), application_name=kw["application_name"], autocommit=True) as c:
+        assert c.execute("SHOW application_name").fetchone()[0] == "gov-studio-extract"
+        assert c.execute("SELECT count(*) FROM pg_stat_activity WHERE application_name='gov-studio-extract'").fetchone()[0] >= 1
+
+
+def test_tunnel_argv_and_config_carry_no_password(monkeypatch):
+    argv_seen = []
+
+    class FakeProc:
+        def poll(self):
+            return None
+
+        def terminate(self):
+            pass
+
+        def wait(self, *_):
+            pass
+
+    def popen(argv, **kw):
+        argv_seen.append((list(argv), dict(kw)))
+        cfg = Path(argv[argv.index("-F") + 1])
+        argv_seen.append(cfg.read_text())
+        assert stat.S_IMODE(cfg.stat().st_mode) == 0o600
+        return FakeProc()
+
+    monkeypatch.setattr(cli.subprocess, "Popen", popen)
+    monkeypatch.setattr(cli.socket, "create_connection", lambda *a, **k: type("S", (), {"close": lambda s: None})())
+    with cli.tunnel(ENV):
+        pass
+    argv, kw = argv_seen[0]
+    cfg_text = argv_seen[1]
+    assert argv[:3] == ["ssh", "-N", "-F"] and "STANDIN-pw-9f3a" not in " ".join(argv)
+    assert "ada.invalid" not in " ".join(argv) and "u1@" not in " ".join(argv) and "PG_PASSWORD" not in cfg_text
+    assert "STANDIN-pw-9f3a" not in cfg_text and "IdentityFile /k/id" in cfg_text and "LocalForward" in cfg_text
+    assert "STANDIN-pw-9f3a" not in repr(kw)  # nor in the child's environment arguments
+
+
+def test_password_never_in_logs_argv_or_rows(clusters, tmp_path, monkeypatch, capsys):
+    db13, gov = clusters
+    pw = ENV["PG_PASSWORD"]
+    env_file = tmp_path / "ada.env"
+    env_file.write_text("\n".join(f"{k}={v}" for k, v in ENV.items()) + "\n")
+    env_file.chmod(0o600)
+    dsn = tmp_path / "writer-url"
+    dsn.write_text(url(gov, "studio_dw_writer", "govdb") + "\n")
+    dsn.chmod(0o600)
+    state = tmp_path / "state"
+    monkeypatch.setattr(cli, "ADA_ENV", env_file)
+    monkeypatch.setattr(cli, "DW_DSN_FILE", dsn)
+    monkeypatch.setattr(cli, "STATE", state)
+    monkeypatch.setattr(cli, "LOCK", state / "run.lock")
+    monkeypatch.setattr(cli, "KILL_FLAG", state / "DISABLED")
+    popen_args = []
+    monkeypatch.setattr(cli.subprocess, "Popen", lambda *a, **k: popen_args.append((a, k)))
+
+    @cli.contextmanager
+    def fake_tunnel(env):
+        yield 0
+
+    captured = {}
+
+    def fake_conn(env, port):
+        captured["kw"] = cli.db13_kwargs(env, port)  # the password is allowed here, in-process only
+        return psycopg.connect(url(db13, "ro_user"), application_name=captured["kw"]["application_name"], autocommit=True)
+
+    monkeypatch.setattr(cli, "tunnel", fake_tunnel)
+    monkeypatch.setattr(cli, "db13_conn", fake_conn)
+    with psycopg.connect(url(gov, "gov_owner", "govdb"), autocommit=True) as o:
+        o.execute("TRUNCATE " + ", ".join(f"studio_dw.{t.name}" for t in TABLES) + ", studio_dw.extract_runs")
+        assert cli.main(["run", "--full"]) == 0
+        # a failing run too: only the class is printed
+        with psycopg.connect(db13.get_uri(), autocommit=True) as sup:
+            sup.execute("ALTER TABLE public.surgery_cases RENAME COLUMN status TO status_x")
+            try:
+                assert cli.main(["run", "--full", "--tables", "surgery_cases"]) == 1
+            finally:
+                sup.execute("ALTER TABLE public.surgery_cases RENAME COLUMN status_x TO status")
+        out = capsys.readouterr()
+        assert pw not in out.out and pw not in out.err
+        assert "FAILED: UndefinedColumn" in out.out
+        assert captured["kw"]["password"] == pw and captured["kw"]["application_name"] == "gov-studio-extract"
+        dump = o.execute("SELECT string_agg(t::text, ' ') FROM studio_dw.extract_runs t").fetchone()[0]
+        for tb in TABLES:
+            dump += " " + (o.execute(f"SELECT coalesce(string_agg(t::text, ' '), '') FROM studio_dw.{tb.name} t").fetchone()[0])
+        assert pw not in dump and "ada.invalid" not in dump and "10.0.0.5" not in dump
+    assert pw not in repr(popen_args)

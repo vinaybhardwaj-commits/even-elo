@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 from psycopg.types.json import Jsonb
 
+from . import manifest, queries
 from .spec import BY_NAME, TABLES, Table
 
 IST = ZoneInfo("Asia/Kolkata")
@@ -23,6 +24,10 @@ SRC_SETUP = (
 
 class ReadOnlyRefused(Exception):
     """The DB13 session is not read-only (or its timeouts are not set): nothing was queried."""
+
+
+class QueryNotPinned(Exception):
+    """A query text whose SHA-256 is not in manifest.json: refused before it reaches DB13."""
 
 
 class Throttle:
@@ -61,21 +66,19 @@ def begin_read_only(src):
         raise ReadOnlyRefused("statement_timeout is not 60s")
 
 
-def _select(t: Table, where: str, order: str, limit_param: bool = True) -> str:
-    cols = ", ".join(f't."{c.name}"::{c.type} AS "{c.name}"' for c in t.cols)
-    return f"SELECT {cols} FROM {t.source} t {where} ORDER BY t.\"{order}\"" + (" LIMIT %(n)s" if limit_param else "")
-
-
 def _dump(t: Table, row):
     return [Jsonb(v) if c.type == "jsonb" and v is not None else v for c, v in zip(t.cols, row)]
 
 
 class Extract:
-    def __init__(self, src, dst, *, throttle=None, batch_size=2000, log=print, clock=time.monotonic):
+    def __init__(self, src, dst, *, throttle=None, batch_size=2000, log=print, clock=time.monotonic, pinned=None):
         self.src, self.dst, self.throttle = src, dst, throttle or Throttle()
+        self.pinned = manifest.load() if pinned is None else pinned
         self.batch, self.log, self.clock = batch_size, log, clock
 
     def q(self, sql, params=None):
+        if queries.sha(sql) not in self.pinned:
+            raise QueryNotPinned(queries.sha(sql)[:12])  # hash only, never the text
         self.throttle.wait()
         return self.src.execute(sql, params).fetchall()
 
@@ -88,14 +91,12 @@ class Extract:
                f'ON CONFLICT ("{t.key}") DO UPDATE SET {upd}, _run_id = EXCLUDED._run_id')
         ki = t.colnames.index(t.key)
         while True:
-            conds, p = [f't."{t.key}" IS NOT NULL'], {"n": self.batch}
+            p = {"n": self.batch}
             if last is not None:
-                conds.append(f't."{t.key}" > %(last)s')
                 p["last"] = last
             if since is not None and t.wm:
-                conds.append(f't."{t.wm}" > %(since)s::timestamptz - %(lb)s::interval')
                 p["since"], p["lb"] = since, t.lookback
-            rows = self.q(_select(t, "WHERE " + " AND ".join(conds), t.key), p)
+            rows = self.q(queries.rows_sql(t, last is not None, since is not None and bool(t.wm)), p)
             if not rows:
                 return total, batches
             with self.dst.transaction():
@@ -109,16 +110,14 @@ class Extract:
         ins = f'INSERT INTO studio_dw.{t.name} ({cols}, _run_id) VALUES ({", ".join(["%s"] * (len(t.cols) + 1))})'
         gi = t.colnames.index(g)
         while True:
-            where, p = f't."{g}" IS NOT NULL', {"n": self.batch}
+            p = {"n": self.batch}
             if last is not None:
-                where += f' AND t."{g}" > %(last)s'
                 p["last"] = last
-            ids = self.q(f'SELECT DISTINCT t."{g}"::text FROM {t.source} t WHERE {where} ORDER BY 1 LIMIT %(n)s', p)
+            ids = self.q(queries.ids_sql(t, last is not None), p)
             if not ids:
                 return total, batches
             keys = [r[0] for r in ids]
-            rows = self.q(f'SELECT {", ".join(f"t.{chr(34)}{c.name}{chr(34)}::{c.type} AS {chr(34)}{c.name}{chr(34)}" for c in t.cols)} '
-                          f'FROM {t.source} t WHERE t."{g}"::text = ANY(%(keys)s)', {"keys": keys})
+            rows = self.q(queries.children_sql(t), {"keys": keys})
             with self.dst.transaction():
                 self.dst.execute(f'DELETE FROM studio_dw.{t.name} WHERE "{g}" = ANY(%s)', [keys])
                 self.dst.cursor().executemany(ins, [_dump(t, r) + [run_id] for r in rows])
@@ -137,7 +136,7 @@ class Extract:
         started = dt.datetime.now(dt.timezone.utc)
         begin_read_only(self.src)  # raises ReadOnlyRefused BEFORE any data query or any run row
         try:
-            snap_now, snap = self.src.execute("SELECT now(), pg_current_snapshot()::text").fetchone()
+            snap_now, snap = self.q(queries.SNAPSHOT_SQL)[0]
             prev = self.previous_watermarks() if mode == "incremental" else {}
             self.dst.execute("INSERT INTO studio_dw.extract_runs (run_id, mode, started_at, status, db13_snapshot_now, db13_snapshot) "
                              "VALUES (%s, %s, %s, 'running', %s, %s)", [run_id, mode, started, snap_now, snap])
@@ -174,6 +173,12 @@ class Extract:
                          [status, Jsonb(counts), Jsonb(wms), self.throttle.calls, err, run_id])
 
 
+def _pinned(sql):
+    if queries.sha(sql) not in manifest.load():
+        raise QueryNotPinned(queries.sha(sql)[:12])
+    return sql
+
+
 def verify_session(src, expect_user: str, log=print):
     """First-session checks (fable G-D5, VERIFY.md). Returns True only if every check passes; prints no values."""
     ok = True
@@ -191,7 +196,7 @@ def verify_session(src, expect_user: str, log=print):
     n = src.execute("SELECT count(*) FROM pg_stat_activity WHERE usename = current_user").fetchone()[0]
     check("pg_stat_activity count for current_user <= 3", 1 <= n <= 3)
     t = BY_NAME["doctors"]
-    check("one SELECT count on one query (doctors)", src.execute(f"SELECT count(*) FROM ({_select(t, '', t.key, False)}) s").fetchone()[0] >= 0)
+    check("one SELECT count on one query (doctors)", src.execute(_pinned(queries.count_sql(t))).fetchone()[0] >= 0)
     try:
         src.execute("CREATE TABLE studio_dw_verify_must_fail (a int)")
         check("write attempt refused", False)
