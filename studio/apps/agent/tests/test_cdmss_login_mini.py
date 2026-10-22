@@ -75,7 +75,7 @@ class MockVercel:
 @pytest.fixture
 def world(tmp_path, cdmss, keyfile):
     neon = MockNeon(cdmss)
-    neon.reject_reset_for_nologin = True   # live Neon: HTTP 422 for reset_password on a NOLOGIN role
+    neon.require_password_for_reset = True   # live Neon: HTTP 422 "cannot update password for role without password" until the role has one
     vercel = MockVercel(cdmss.owner_url)
     stub = tmp_path / "stub"
     stub.mkdir()
@@ -93,7 +93,10 @@ def world(tmp_path, cdmss, keyfile):
     auth.write_text(json.dumps({"token": VERCEL_TOKEN}))
     w = type("W", (), {})()
     w.neon, w.vercel, w.mount, w.slog, w.tmp, w.cdmss, w.key = neon, vercel, mount, slog, tmp_path, cdmss, keyfile
+    cdmss.su_exec(f"ALTER ROLE {ROLE} NOLOGIN")
+    cdmss.su_exec(f"ALTER ROLE {ROLE} PASSWORD NULL")
     w.log = tmp_path / "login.log"
+    w.log_mark = cdmss.log.stat().st_size      # the server log is shared by the session: only this test's statements count
     w.env = {
         "PATH": f"{stub}:{os.environ['PATH']}", "HOME": str(tmp_path / "home"), "PSQL": cdmss.psql, "NEON_API_BASE": neon.url,
         "LOGIN_MINI_TEST": "1", "LOGIN_MINI_SKIP_GIT": "1", "LOGIN_MINI_REPO": str(REPO), "LOGIN_MINI_MOUNT": str(mount),
@@ -104,12 +107,14 @@ def world(tmp_path, cdmss, keyfile):
     neon.stop()
     vercel.stop()
     cdmss.su_exec(f"ALTER ROLE {ROLE} NOLOGIN")
+    cdmss.su_exec(f"ALTER ROLE {ROLE} PASSWORD NULL")     # the next test starts from a password-less role, as before a first login
 
 
 def renew(w):
     """A previous successful run in the same test left the role LOGIN with a password (and Neon saying so): put it back to a fresh
     NOLOGIN, password-less role, as it is before a first login."""
     w.cdmss.su_exec(f"ALTER ROLE {ROLE} NOLOGIN")
+    w.cdmss.su_exec(f"ALTER ROLE {ROLE} PASSWORD NULL")
     w.neon.issued.pop(ROLE, None)
 
 
@@ -236,7 +241,7 @@ def test_login_failure_contains_the_role_and_removes_the_issued_url(world):
         r = run(world)
         assert r.returncode != 0 and "FAILED" in r.stderr
         assert_clean_failure(world)
-        assert world.neon.posts == []   # v6 order: the login checks run BEFORE the reset, so Neon was never asked for a password
+        assert len(world.neon.posts) == 1   # v7 order: the reset already happened (password before LOGIN); the login checks (c) failed after it
     finally:
         with psycopg.connect(world.cdmss.owner_url, autocommit=True) as c:
             c.execute(f"REVOKE ALL ON public.opd_note_audits FROM {ROLE}")
@@ -482,64 +487,145 @@ def test_the_owner_url_is_never_read_into_a_shell_variable():
     assert WRAPPER.read_text().startswith("#!/bin/bash -p\n")
 
 
-# ---------------------------------------------------------------- v6 order: LOGIN (checks) -> reset -> re-check, never reset on a NOLOGIN role
+# ---------------------------------------------------------------- v7 order: throwaway seed (NOLOGIN) -> reset -> LOGIN checks
 
 
-def test_order_login_first_then_the_reset_then_the_recheck(world):
+from tests.neon_harness import PsSampler, seeded_tokens   # noqa: E402
+
+
+def tokens(world):
+    return seeded_tokens(world.cdmss.log, ROLE, world.neon.all_issued, since=world.log_mark)
+
+
+def everything_on_disk(world):
+    """Every file under the test's tmp dir (stub logs, the wrapper log, any leftover) as one text blob."""
+    blob = []
+    for f in world.tmp.rglob("*"):
+        if f.is_file() and f.stat().st_size < 5_000_000:
+            try:
+                blob.append(f.read_bytes().decode(errors="replace"))
+            except OSError:
+                pass
+    return "\n".join(blob)
+
+
+def test_order_seed_then_reset_on_a_nologin_role_then_login_last(world):
     r = run(world, env={"LOGIN_MINI_RELAY_HOST": "owner"})
     assert r.returncode == 0, r.stderr
-    assert world.neon.reset_log == [(ROLE, True)], "Neon must be asked for the password only once the role is LOGIN"
-    gets = [p for m, p, _, _ in world.neon.requests if m == "GET" and p.endswith("/roles")]
-    assert gets and len(gets) >= 2                                  # role-auth before, and the reset's own visibility check
+    assert world.neon.reset_log == [(ROLE, False)], "Neon is asked for the password while the role is still NOLOGIN (and already has the throwaway)"
+    assert len(tokens(world)) == 1 and len(tokens(world)[0]) >= 43          # one throwaway, 48 random bytes
     log = world.log.read_text()
-    assert log.index("role-auth no_login") < log.index("login enabled (a)") < log.index("reset-password ok (b)") < log.index("re-check ok (c)")
+    assert log.index("role-auth no_login") < log.index("throwaway seeded (a)") < log.index("reset-password ok (b)") < log.index("login enabled (c)")
+    assert role_login(world)
     run(world, "--detach")
 
 
-def test_a_422_after_login_contains_the_role_and_leaves_no_url(world):
-    world.neon.force_reset_status = 422
+def test_the_throwaway_is_in_no_argv_env_log_or_file_of_ours(world):
+    with PsSampler() as ps:
+        r = run(world, env={"LOGIN_MINI_RELAY_HOST": "owner"})
+    assert r.returncode == 0, r.stderr
+    toks = tokens(world)
+    assert toks
+    hay = {"ps argv samples": ps.text(), "stdout": r.stdout, "stderr": r.stderr, "wrapper log": world.log.read_text(), "files": everything_on_disk(world),
+           "neon requests": repr(world.neon.requests), "vercel requests": repr(world.vercel.requests)}
+    for t in toks:
+        for label, text in hay.items():
+            assert t not in text, f"the throwaway reached {label}"
+    # the relay url holds the NEON-issued password, never the throwaway
+    assert all(t not in (world.mount / "relay-url").read_text() for t in toks)
+    run(world, "--detach")
+
+
+def test_a_seed_that_fails_stops_before_neon_and_sets_nothing(world):
+    world.cdmss.su_exec(f"GRANT pg_read_all_data TO {ROLE}")           # a membership: the seed transaction refuses
+    try:
+        r = run(world)
+        assert r.returncode == 1 and "seeding the throwaway password (a) FAILED" in r.stderr
+        assert tokens(world) == [] and world.neon.posts == [] and not role_login(world) and not world.mount.exists()
+        assert "hdiutil detach /dev/diskSTUB" in stublog(world)
+        no_secrets(world, r)
+    finally:
+        world.cdmss.su_exec(f"REVOKE pg_read_all_data FROM {ROLE}")
+
+
+def test_a_failed_reset_stops_with_the_message_reseeds_and_never_falls_back_to_login_first(world):
+    world.neon.force_reset_status = 500
+    world.neon.reset_422_message = "upstream exploded"
     r = run(world)
-    assert r.returncode == 22 and "reset-password (b) FAILED" in r.stderr    # exit code of the failing step, as before
-    assert not role_login(world) and not world.mount.exists()
-    log = stublog(world)
-    assert "wipe owner-url" in log and "hdiutil detach /dev/diskSTUB" in log
-    assert "HTTP 422: role has no login privilege" in world.log.read_text()
-    no_secrets(world, r)
+    assert r.returncode == 22 and "reset-password (b) FAILED" in r.stderr
+    assert "HTTP 500: upstream exploded" in world.log.read_text()
+    assert not role_login(world), "LOGIN-first fallback must not exist"
+    assert "login enabled" not in world.log.read_text()
+    toks = tokens(world)
+    assert len(toks) == 2 and toks[0] != toks[1], toks                    # the logged throwaway was killed by a fresh one nobody saw
+    assert not world.mount.exists() and "wipe owner-url" in stublog(world)
+    # the FIRST throwaway no longer works even if the role were LOGIN (the second one is the live, still-NOLOGIN password; it too sits only in
+    # the server statement log until the next successful run's reset replaces it)
+    world.cdmss.su_exec(f"ALTER ROLE {ROLE} LOGIN")
+    try:
+        with pytest.raises(psycopg.OperationalError):
+            psycopg.connect(host=world.cdmss.sock, user=ROLE, dbname="cdmssdb", password=toks[0], connect_timeout=10)
+    finally:
+        world.cdmss.su_exec(f"ALTER ROLE {ROLE} NOLOGIN")
+    # leaks: neither throwaway reached anywhere of ours
+    for t in toks:
+        for text in (r.stdout, r.stderr, world.log.read_text(), everything_on_disk(world)):
+            assert t not in text
 
 
-def test_the_422_message_reaches_the_log_without_secrets(world):
-    world.neon.force_reset_status = 422
-    world.neon.reset_422_message = "postgres://leak:SECRETPW@h/db rejected; password=abc; bearer xyz"
-    r = run(world)
-    assert r.returncode == 22
-    log = world.log.read_text()
-    assert "HTTP 422" in log
-    for leak in ("SECRETPW", "postgres://", "password=", "bearer"):
-        assert leak not in log and leak not in r.stdout + r.stderr, leak
+def test_the_422_for_a_role_without_a_password_is_what_the_old_order_hit(world):
+    """Documents the root cause with the mock: without the seed the reset is 422; the wrapper never lets that happen."""
+    from tests.neon_harness import CDMSS_BRANCH, CDMSS_PROJECT, NeonRun
+    nr = NeonRun(world.tmp, world.neon.url, "root")
+    r = nr.run("reset-password", str(world.key), CDMSS_PROJECT, CDMSS_BRANCH, ROLE, str(world.tmp / "o"))
+    assert r.returncode != 0 and "HTTP 422: cannot update pw for role without pw" in r.stderr and not world.neon.issued
 
 
-def test_a_failed_recheck_after_the_reset_contains_the_role_and_wipes_the_url(world):
+def test_login_checks_that_fail_after_the_reset_leave_nologin_and_no_url(world):
+    with psycopg.connect(world.cdmss.owner_url, autocommit=True) as c:
+        c.execute(f"GRANT SELECT (uid) ON public.opd_note_audits TO {ROLE}")        # the fence the LOGIN step checks
+    try:
+        r = run(world)
+        assert r.returncode != 0 and "login checks (c) FAILED" in r.stderr
+        assert len(world.neon.posts) == 1 and not role_login(world) and not world.mount.exists()
+        assert len(tokens(world)) == 1                                              # the reset completed: no re-seed needed
+        no_secrets(world, r)
+    finally:
+        with psycopg.connect(world.cdmss.owner_url, autocommit=True) as c:
+            c.execute(f"REVOKE ALL ON public.opd_note_audits FROM {ROLE}")
+
+
+def test_neon_superuser_added_by_the_reset_is_caught_by_the_login_step(world):
     world.neon.add_superuser_on_reset = True
     try:
         r = run(world)
-        assert r.returncode != 0 and "re-check (c) FAILED" in r.stderr
+        assert r.returncode != 0 and "login checks (c) FAILED" in r.stderr
         assert not role_login(world) and not world.mount.exists()
-        assert world.neon.reset_log == [(ROLE, True)]
-        assert "hdiutil detach /dev/diskSTUB" in stublog(world)
-        no_secrets(world, r)
+        assert "wipe owner-url" in stublog(world)
     finally:
         world.cdmss.su_exec(f"REVOKE neon_superuser FROM {ROLE}")
 
 
+def test_a_signal_after_the_seed_reseeds_and_leaves_nologin(world):
+    world.neon.reset_delay = 3.0
+    proc = subprocess.Popen([str(WRAPPER)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=world.env)
+    deadline = time.time() + 40
+    while not world.neon.posts and time.time() < deadline:
+        time.sleep(0.05)
+    proc.send_signal(signal.SIGTERM)
+    out, err = proc.communicate(timeout=60)
+    assert proc.returncode == 143 and not role_login(world)
+    assert len(tokens(world)) >= 1
+
+
 def test_a_role_that_already_has_a_password_refuses_the_new_order(world):
-    """Rotation, not a first login: the API does not say no_login, so nothing is changed (exit 6)."""
+    """Rotation, not a first login: the API does not say no_login, so nothing is changed (exit 6) and nothing is seeded."""
     world.cdmss.su_exec(f"ALTER ROLE {ROLE} LOGIN")
     world.neon.passworded.add(ROLE)
     r = run(world, fresh=False)
     assert r.returncode == 6 and "ROTATION" in r.stderr and "authentication_method=scram-sha-256" in r.stderr
-    assert world.neon.posts == [] and role_login(world)               # untouched: still LOGIN, no reset, no containment
+    assert world.neon.posts == [] and role_login(world) and tokens(world) == []
     assert "hdiutil detach /dev/diskSTUB" in stublog(world) and not world.mount.exists()
-    # a LOGIN role with NO password yet is not the first-login case either (the API says no_password): also refused
     world.neon.passworded.clear()
     r = run(world, fresh=False)
     assert r.returncode == 6 and "no_password" in r.stderr and world.neon.posts == []
@@ -548,4 +634,4 @@ def test_a_role_that_already_has_a_password_refuses_the_new_order(world):
 def test_a_role_neon_cannot_see_stops_at_the_precheck(world):
     world.neon.hidden.add(ROLE)
     r = run(world)
-    assert r.returncode == 4 and "cannot see" in r.stderr and world.neon.posts == [] and not role_login(world)
+    assert r.returncode == 4 and "cannot see" in r.stderr and world.neon.posts == [] and not role_login(world) and tokens(world) == []
