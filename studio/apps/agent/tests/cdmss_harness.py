@@ -50,6 +50,11 @@ class CdmssCluster:
             c.execute("CREATE ROLE neondb_owner LOGIN CREATEDB CREATEROLE BYPASSRLS")
             c.execute("GRANT neon_superuser TO neondb_owner")
             c.execute("CREATE DATABASE cdmssdb OWNER neondb_owner")
+            # password logins for the CDMSS role must really authenticate (scram), as on Neon
+            hba = Path(c.execute("SHOW hba_file").fetchone()[0])
+            c.execute("ALTER SYSTEM SET password_encryption = 'scram-sha-256'")
+            hba.write_text("local all studio_cdmss_ro scram-sha-256\n" + hba.read_text())
+            c.execute("SELECT pg_reload_conf()")
         self.owner_url = self.url("neondb_owner", "cdmssdb")
         self.su_cdmss = self.su.replace("@/postgres?", "@/cdmssdb?")
         self.first_pass_failures: list[tuple[str, str]] = []
