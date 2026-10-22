@@ -38,6 +38,8 @@ export const SourceTablePayload = z.object({
   row_count: z.number().int().nonnegative(),
   // Paged tools only: the match count across all pages (absent past the last page).
   total: z.number().int().nonnegative().optional(),
+  // Date-range reads over a capped upstream list: what the rows do not cover, shown on the source line.
+  incomplete: z.string().max(300).optional(),
 });
 export type SourceTablePayload = z.infer<typeof SourceTablePayload>;
 

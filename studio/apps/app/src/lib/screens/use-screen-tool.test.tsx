@@ -71,11 +71,11 @@ describe("useScreenTool cache", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("a dropped connection is retried once before it is shown; a timeout and a refusal are shown at once", async () => {
+  it("only a browser-level fetch failure is retried, once; a route error never is (at most 2 agent POSTs per view)", async () => {
     // Live: first load of Physicians / Physician 360 showed "The agent is unreachable"; a manual Retry fixed it.
     const err = (code: string, status = 502) => new Response(JSON.stringify({ ok: false, error: code }), { status });
     fetchMock.mockReset();
-    fetchMock.mockResolvedValueOnce(err("agent_unreachable")).mockImplementation(async () => ok());
+    fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch")).mockImplementation(async () => ok());
     const healed = renderHook(() => useScreenTool("overview_counts", {}));
     await waitFor(() => expect(healed.result.current.status).toBe("ok"), { timeout: 3000 });
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -89,14 +89,17 @@ describe("useScreenTool cache", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     down.unmount();
 
-    for (const [code, status] of [["agent_timeout", 504], ["rate_limited", 429]] as const) {
+    // The route already re-sent a stale-socket POST (or the agent is down, slow or limiting): shown at once.
+    for (const [code, status] of [["agent_unreachable_after_retry", 502], ["agent_unreachable", 502], ["agent_timeout", 504], ["rate_limited", 429]] as const) {
       fetchMock.mockReset();
-      fetchMock.mockResolvedValueOnce(err(code, status));
+      fetchMock.mockResolvedValueOnce(err(code, status)).mockImplementation(async () => ok());
       const shown = renderHook(() => useScreenTool("overview_counts", {}));
       await waitFor(() => expect(shown.result.current).toMatchObject({ status: "error", code }));
-      expect(fetchMock).toHaveBeenCalledTimes(1);
+      await new Promise((r) => setTimeout(r, 1000)); // past TRANSIENT_RETRY_MS: still no second request
+      expect(fetchMock, code).toHaveBeenCalledTimes(1);
       shown.unmount();
     }
     expect(describeScreenError("agent_timeout")).toBe("The agent took too long to answer. Retry in a moment.");
-  });
+    expect(describeScreenError("agent_unreachable_after_retry")).toBe("The agent is unreachable. Retry in a moment.");
+  }, 10_000);
 });

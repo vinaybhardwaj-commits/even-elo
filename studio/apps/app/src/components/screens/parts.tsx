@@ -10,7 +10,8 @@ import type { SourceTablePayload } from "@/lib/screens/tool-schema";
 export function sourceLabel(data: SourceTablePayload): string {
   const { source, row_count, mode, synthetic } = data;
   const sample = mode === "fixture" || synthetic ? " · SAMPLE DATA (live reads are off)" : " · live, read-only";
-  return `Source: ${source.tool} · query ${source.query_hash} · ${row_count} row${row_count === 1 ? "" : "s"}${sample}`;
+  const incomplete = data.incomplete ? ` · INCOMPLETE: ${data.incomplete}` : "";
+  return `Source: ${source.tool} · query ${source.query_hash} · ${row_count} row${row_count === 1 ? "" : "s"}${sample}${incomplete}`;
 }
 
 export function SourceLine({ data }: { data: SourceTablePayload }) {

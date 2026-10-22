@@ -171,10 +171,16 @@ describe("/studio/api/screen/[tool]", () => {
     expect((await call("overview_counts")).status).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(2);
 
+    // A failed re-send says the route already retried (the screen hook never retries it): 2 agent POSTs at most.
     fetchMock.mockReset();
     fetchMock.mockRejectedValueOnce(stale()).mockRejectedValueOnce(stale());
     const down = await call("overview_counts");
-    expect(await down.json()).toEqual({ ok: false, error: "agent_unreachable" });
+    expect(await down.json()).toEqual({ ok: false, error: "agent_unreachable_after_retry" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    fetchMock.mockReset();
+    fetchMock.mockRejectedValueOnce(stale()).mockRejectedValueOnce(new DOMException("timeout", "TimeoutError"));
+    expect(await (await call("overview_counts")).json()).toEqual({ ok: false, error: "agent_timeout" });
     expect(fetchMock).toHaveBeenCalledTimes(2);
 
     fetchMock.mockReset();

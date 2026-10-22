@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- params are zod-validated before use; the builders read them by key */
 import { createHash } from "node:crypto";
+import { fetchAgent } from "@/lib/agent-fetch";
 import { agentHeaders } from "@/lib/zone/actor-token";
 import type { SourceTablePayload } from "@/lib/screens/tool-schema";
 import {
@@ -190,14 +191,17 @@ async function audit(
     return { ok: false, status: 503 };
   }
   try {
-    const res = await fetch(`${agentUrl.replace(/\/+$/, "")}/audit`, {
-      method: "POST",
-      headers: { ...headers, "Content-Type": "application/json" },
-      body: JSON.stringify({ tool, params, row_count: rowCount, duration_ms: Math.max(0, Date.now() - startedAt), outcome }),
-      cache: "no-store",
-      redirect: "error",
-      signal: AbortSignal.timeout(AUDIT_TIMEOUT_MS),
-    });
+    const res = await fetchAgent(
+      `${agentUrl.replace(/\/+$/, "")}/audit`,
+      {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ tool, params, row_count: rowCount, duration_ms: Math.max(0, Date.now() - startedAt), outcome }),
+        cache: "no-store",
+        redirect: "error",
+      },
+      AUDIT_TIMEOUT_MS,
+    );
     return res.ok ? { ok: true } : { ok: false, status: res.status };
   } catch {
     return { ok: false, status: 502 };

@@ -27,6 +27,7 @@ const cachedRead = (cacheKey: string, now = Date.now()) => {
 const ERROR_TEXT: Record<string, string> = {
   rate_limited: "Too many reads in the last minute. Wait a moment, then retry.",
   agent_unreachable: "The agent is unreachable. Retry in a moment.",
+  agent_unreachable_after_retry: "The agent is unreachable. Retry in a moment.",
   agent_timeout: "The agent took too long to answer. Retry in a moment.",
   agent_not_configured: "The agent is not configured.",
   unauthorized: "Your session is no longer valid. Sign in again.",
@@ -39,10 +40,10 @@ const ERROR_TEXT: Record<string, string> = {
   audit_unavailable: "The audit log is unavailable, so nothing is shown. Retry later.",
   bad_params: "This view asked for something the read tool does not accept.",
 };
-// A dropped connection is retried once, after a short pause, before it is shown. A timeout is not: the agent is
-// running but slow, and a second read would add to its load.
+// Only a request that never got an answer from the Studio route (the browser's fetch threw) is retried, once,
+// after a short pause. A route error is never retried: the route already re-sent a stale-socket POST itself, so
+// one view costs the agent at most 2 POSTs. Timeouts are route errors too (the agent is slow, not down).
 export const TRANSIENT_RETRY_MS = 800;
-const TRANSIENT = new Set(["agent_unreachable"]);
 
 export const describeScreenError = (code: string) => ERROR_TEXT[code] ?? "This read failed. Retry, or ask the agent in the panel.";
 
@@ -69,7 +70,10 @@ export function useScreenTool<T extends AnyScreenToolName>(
     const done = (result: ScreenToolState) => {
       if (!controller.signal.aborted) setSettled({ id: requestId, result });
     };
+    // `thrown`: the browser's fetch itself failed (no answer from the route), the only case retried below.
+    let thrown = false;
     const once = async (): Promise<ScreenToolState> => {
+      thrown = false;
       try {
         const res = await fetch(`${SCREEN_API}/${tool}`, {
           method: "POST",
@@ -87,12 +91,13 @@ export function useScreenTool<T extends AnyScreenToolName>(
         if (parsed.success) screenCache.set(cacheKey, { at: Date.now(), data: parsed.data });
         return parsed.success ? { status: "ok", data: parsed.data } : { status: "error", code: "bad_payload" };
       } catch {
+        thrown = true;
         return { status: "error", code: "agent_unreachable" };
       }
     };
     (async () => {
       let result = await once();
-      if (result.status === "error" && TRANSIENT.has(result.code) && !controller.signal.aborted) {
+      if (thrown && !controller.signal.aborted) {
         await new Promise((r) => setTimeout(r, TRANSIENT_RETRY_MS));
         if (!controller.signal.aborted) result = await once();
       }

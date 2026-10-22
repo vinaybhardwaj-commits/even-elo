@@ -4,7 +4,7 @@ import { agentHeaders } from "@/lib/zone/actor-token";
 import { ACTOR_ID_HEADER, ACTOR_ROLE_HEADER } from "@/lib/zone/authorize";
 import { SCREEN_TOOL_PARAMS, SourceTablePayload, isGovernanceTool, isHttpTool } from "@/lib/screens/tool-schema";
 import { runHttpTool } from "@/lib/http-tools/run";
-import { fetchAgent, isTimeout } from "@/lib/agent-fetch";
+import { AgentRetryError, fetchAgent, isTimeout } from "@/lib/agent-fetch";
 
 // Screen reads (M1). A fixed Studio layout asks for ONE named governance read tool with typed params; this
 // route forwards it to the agent's POST /agent/tools/<name> with the same service token and actor JWT the
@@ -86,8 +86,10 @@ export const POST = async (req: NextRequest, ctx: { params: Promise<{ tool: stri
       AGENT_TIMEOUT_MS,
     );
   } catch (err) {
-    // Slow is not down: a timeout says so, so the screen does not report a running agent as unreachable.
-    return isTimeout(err) ? fail(504, "agent_timeout") : fail(502, "agent_unreachable");
+    // Slow is not down: a timeout says so, so the screen does not report a running agent as unreachable. After a
+    // failed re-send the code says so too; the screen hook never retries a route error (at most 2 agent POSTs).
+    if (isTimeout(err)) return fail(504, "agent_timeout");
+    return fail(502, err instanceof AgentRetryError ? "agent_unreachable_after_retry" : "agent_unreachable");
   }
 
   if (res.status === 429) return fail(429, "rate_limited", { "Retry-After": "60" });

@@ -2,7 +2,7 @@
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
-import { fetchAgent, isStaleSocket, isTimeout } from "./agent-fetch";
+import { AgentRetryError, fetchAgent, isStaleSocket, isTimeout } from "./agent-fetch";
 
 let server: http.Server | null = null;
 afterEach(() => new Promise<void>((r) => (server ? server.close(() => r()) : r())));
@@ -50,7 +50,12 @@ describe("fetchAgent", () => {
   it("is sent at most twice: a second dropped connection is reported", async () => {
     const s = await serve((n) => n >= 2);
     await (await fetchAgent(s.url, post, 2000)).text();
-    await expect(fetchAgent(s.url, post, 2000)).rejects.toSatisfy(isStaleSocket);
+    const err = await fetchAgent(s.url, post, 2000).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(AgentRetryError);
+    expect(isStaleSocket((err as Error).cause)).toBe(true);
     expect(s.count()).toBe(3);
   });
 

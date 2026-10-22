@@ -30,16 +30,23 @@ describe("date ranges", () => {
     expect(instantMs("2026-10-01 10:00:00+00")).toBe(Date.parse("2026-10-01T10:00:00Z"));
     expect(instantMs("2026-10-01T10:00:00.123+0530")).toBe(Date.parse("2026-10-01T04:30:00.123Z"));
     expect(instantMs("2026-10-01T10:00:00z")).toBe(Date.parse("2026-10-01T10:00:00Z"));
+    // A space before the offset (or Z), as some Postgres / log formats print it.
+    expect(instantMs("2026-10-01 10:00:00 +05:30")).toBe(Date.parse("2026-10-01T04:30:00Z"));
+    expect(instantMs("2026-10-01T10:00:00 -0100")).toBe(Date.parse("2026-10-01T11:00:00Z"));
+    expect(instantMs("2026-10-01 10:00:00 Z")).toBe(Date.parse("2026-10-01T10:00:00Z"));
     expect(instantMs("yesterday")).toBeNaN();
     // A naive reported_at at 01:00 IST on 1 Oct is in a range from 1 Oct (it is 30 Sep 19:30 UTC).
     expect(inRange("2026-10-01T01:00:00", { since: "2026-10-01" })).toBe(true);
   });
 
-  it("truncation: flagged only when the oldest dated row is later than since", () => {
-    expect(truncatedAt(["2026-10-05T00:00:00Z", "2026-09-10T10:00:00Z", null], "2026-09-01")).toBe("2026-09-10T10:00:00Z");
-    expect(truncatedAt(["2026-10-05T00:00:00Z", "2026-08-31T23:00:00"], "2026-09-01")).toBeNull();
-    expect(truncatedAt(["2026-10-05T00:00:00Z"], undefined)).toBeNull();
-    expect(truncatedAt([], "2026-09-01")).toBeNull();
+  it("truncation: flagged only when the list came back full and its oldest dated row is later than since", () => {
+    const rows = ["2026-10-05T00:00:00Z", "2026-09-10T10:00:00Z", null];
+    expect(truncatedAt(rows, "2026-09-01", 3)).toBe("2026-09-10T10:00:00Z");
+    expect(truncatedAt(rows, "2026-09-01", 4)).toBeNull(); // short of the cap: the whole table
+    expect(truncatedAt(rows, "2026-09-01")).toBeNull(); // default cap 300
+    expect(truncatedAt(["2026-10-05T00:00:00Z", "2026-08-31T23:00:00"], "2026-09-01", 2)).toBeNull();
+    expect(truncatedAt(["2026-10-05T00:00:00Z"], undefined, 1)).toBeNull();
+    expect(truncatedAt([], "2026-09-01", 0)).toBeNull();
   });
 
   it("with a range, rows without a date are out; without one, everything is in", () => {

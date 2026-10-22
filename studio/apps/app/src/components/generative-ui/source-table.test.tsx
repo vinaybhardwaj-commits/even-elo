@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import { SourceTable, parseSourceTable } from "./source-table";
+import { sourceLabel } from "@/components/screens/parts";
 
 const good = {
   source: { tool: "overview_counts", query_hash: "0123456789ab" },
@@ -23,6 +24,14 @@ describe("SourceTable", () => {
   it("labels fixture data as sample data", () => {
     render(<SourceTable result={{ ...good, mode: "fixture", synthetic: true }} />);
     expect(screen.getByText(/SAMPLE DATA/)).toBeTruthy();
+  });
+
+  it("a date-range read over a capped list says on its source line what it does not cover (chat and screens)", () => {
+    const incomplete = "e-IRIS returned incidents back to 2026-10-09T23:00:00Z only; earlier ones in the range are not included";
+    render(<SourceTable result={{ ...good, incomplete }} />);
+    expect(screen.getByText(/1 row · live, read-only · INCOMPLETE: e-IRIS returned incidents back to 2026-10-09T23:00:00Z only/)).toBeTruthy();
+    expect(sourceLabel({ ...good, mode: "live", incomplete })).toMatch(/ · INCOMPLETE: e-IRIS returned incidents back to/);
+    expect(sourceLabel({ ...good, mode: "live" })).not.toMatch(/INCOMPLETE/);
   });
 
   it("refuses a payload without a source", () => {
