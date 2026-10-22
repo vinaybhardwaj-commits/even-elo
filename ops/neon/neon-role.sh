@@ -7,6 +7,8 @@
 #
 #   neon-role.sh discover       API_KEY_FILE
 #   neon-role.sh resolve        API_KEY_FILE PROJECT                      branch ids/names + endpoint ids/hosts of one project (no secrets)
+#   neon-role.sh role-auth      API_KEY_FILE PROJECT BRANCH ROLE          prints the role's authentication_method as the API reports it
+#                                                                         (`no_login` = NOLOGIN, no password yet); exit 4 if the role is not visible
 #   neon-role.sh reset-password API_KEY_FILE PROJECT BRANCH ROLE OUT_FILE [--dsn-from OWNER_URL_FILE [--host auto|pooled]]
 #   (--allow-disk-tmp may precede the subcommand)
 #   PROJECT is an id, or @FILE: a 0600/0400 file holding the id, or a dotenv line NEON_PROJECT_ID=... (what `vercel env pull` writes
@@ -27,7 +29,7 @@
 set -euo pipefail
 umask 077
 
-usage() { echo "usage: $0 [--allow-disk-tmp] discover KEYFILE | resolve KEYFILE PROJECT | reset-password KEYFILE PROJECT|@FILE BRANCH|auto ROLE OUT [--dsn-from OWNER_URL_FILE [--host auto|pooled]]" >&2; exit 2; }
+usage() { echo "usage: $0 [--allow-disk-tmp] discover KEYFILE | resolve KEYFILE PROJECT | role-auth KEYFILE PROJECT|@FILE BRANCH|auto ROLE | reset-password KEYFILE PROJECT|@FILE BRANCH|auto ROLE OUT [--dsn-from OWNER_URL_FILE [--host auto|pooled]]" >&2; exit 2; }
 
 allow_disk=0
 if [[ ${1:-} == --allow-disk-tmp ]]; then allow_disk=1; shift; fi
@@ -81,13 +83,20 @@ trap 'exit 143' TERM
 cfg="$tmp/curl.cfg"
 { printf 'header = "Authorization: Bearer '; tr -d '\r\n' < "$key_file"; printf '"\n'; } > "$cfg"
 chmod 600 "$cfg"
-api() { # api METHOD PATH [JSON_BODY]  -> response body on stdout; non-2xx fails (curl --fail), body not shown
-  local method=$1 path=$2 body=${3:-}
-  if [[ -n $body ]]; then
-    curl -sS --fail --config "$cfg" -H 'Accept: application/json' -H 'Content-Type: application/json' -X "$method" --data "$body" "$api_base$path"
-  else
-    curl -sS --fail --config "$cfg" -H 'Accept: application/json' -X "$method" "$api_base$path"
-  fi
+api() { # api METHOD PATH [JSON_BODY]  -> response body on stdout. Non-2xx: curl --fail semantics (rc 22, nothing on stdout), but the
+        # HTTP status and the API's error `message` are logged to stderr so a 422 is diagnosable. The message passes the same
+        # filter as the wrappers' logs (urls, "password", bearer, token, secret lines dropped; printable characters only).
+  local method=$1 path=$2 body=${3:-} out="$tmp/resp.$$.$RANDOM" code rc msg
+  local args=(-sS --config "$cfg" -H 'Accept: application/json' -X "$method" -o "$out" -w '%{http_code}')
+  if [[ -n $body ]]; then args+=(-H 'Content-Type: application/json' --data "$body"); fi
+  code=$(curl "${args[@]}" "$api_base$path"); rc=$?
+  if [[ $rc -ne 0 ]]; then shred -u "$out" 2>/dev/null || rm -f "$out"; return "$rc"; fi
+  if [[ $code =~ ^2[0-9][0-9]$ ]]; then cat "$out"; shred -u "$out" 2>/dev/null || rm -f "$out"; return 0; fi
+  msg=$(jq -r '.message // empty' "$out" 2>/dev/null | head -c 400 | tr -cd '[:print:]\n' | { grep -viE 'postgres(ql)?://|password|bearer|token|secret' || true; } | head -n 3 | tr '\n' ' ')
+  if [[ -z ${msg// /} ]] && [[ -n $(jq -r '.message // empty' "$out" 2>/dev/null | head -c 1) ]]; then msg="(message withheld: it contained a filtered word)"; fi
+  shred -u "$out" 2>/dev/null || rm -f "$out"
+  echo "Neon API $method ${path//password/pw} -> HTTP $code${msg:+: $msg}" >&2   # (reset_password shown as reset_pw: the wrappers' log filter drops lines with the word)
+  return 22
 }
 
 valid_id() { [[ $1 =~ ^[A-Za-z0-9._-]{1,128}$ ]]; }
@@ -149,6 +158,18 @@ case $cmd in
     valid_id "$project" || { echo "invalid project id" >&2; exit 2; }
     api GET "/projects/$project/branches" | jq -r '.branches[]? | ["branch", .id, (.name // ""), (if (.default or .primary) then "default" else "-" end)] | @tsv' | tr -c 'A-Za-z0-9._\t\n/-' '?'
     api GET "/projects/$project/endpoints" | jq -r '.endpoints[]? | ["endpoint", .id, .branch_id, .type, .host] | @tsv' | tr -c 'A-Za-z0-9._\t\n/-' '?'
+    ;;
+  role-auth)
+    [[ $# -eq 3 ]] || usage
+    project=$(project_id "$1") || exit 2
+    valid_id "$project" || { echo "invalid project id" >&2; exit 2; }
+    branch=$(resolve_branch "$project" "$2") || exit 2
+    valid_id "$branch" || { echo "invalid branch id" >&2; exit 2; }
+    valid_role "$3" || { echo "invalid role name" >&2; exit 2; }
+    method=$(api GET "/projects/$project/branches/$branch/roles" | jq -r --arg r "$3" '[.roles[]? | select(.name == $r)] | if length == 1 then (.[0].authentication_method // "unknown") else "NOT_VISIBLE" end')
+    [[ $method != NOT_VISIBLE ]] || { echo "role not visible to Neon API: $3 (nothing changed)" >&2; exit 4; }
+    [[ $method =~ ^[a-z0-9_-]{1,40}$ ]] || method=unknown
+    echo "$method"
     ;;
   reset-password)
     [[ $# -ge 4 ]] || usage

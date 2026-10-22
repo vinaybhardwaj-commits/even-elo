@@ -31,6 +31,7 @@ def dw(world, tmp_path, keyfile):
     r, _ = run_roles(cluster, tmp_path, sql_file=SQL_DW, tag="dw0012")
     assert r.returncode == 0, r.stderr
     neon = MockNeon(cluster)
+    neon.reject_reset_for_nologin = True   # live Neon: HTTP 422 for reset_password on a NOLOGIN role
     stub = tmp_path / "stub"
     stub.mkdir()
     slog = tmp_path / "stub.log"
@@ -61,7 +62,10 @@ def dw(world, tmp_path, keyfile):
     cluster.su_exec(f"ALTER ROLE {ROLE} NOLOGIN")
 
 
-def run(w, *args, env=None, direct=True):
+def run(w, *args, env=None, direct=True, fresh=True):
+    if fresh and not args:
+        w.cluster.su_exec(f"ALTER ROLE {ROLE} NOLOGIN")      # a fresh, password-less role, as before a first login
+        w.neon.issued.pop(ROLE, None)
     cmd = [str(WRAPPER)] if direct else ["bash", str(WRAPPER)]
     return subprocess.run([*cmd, *args], capture_output=True, text=True, env={**w.env, **(env or {})}, timeout=180)
 
@@ -332,3 +336,62 @@ def test_run_roles_accepts_the_writer_and_nothing_broader():
     assert r.returncode == 0 and 'ALTER ROLE :"role" LOGIN' in r.stdout
     r = subprocess.run(["bash", str(RUN_ROLES), "--role", "studio_other", "--dry-run"], capture_output=True, text=True)
     assert r.returncode == 2 and "studio_dw_writer" in r.stderr
+
+
+# ---------------------------------------------------------------- v6 order: LOGIN (checks) -> reset -> re-check -> post-check as the writer
+
+
+def test_order_login_first_then_reset_then_recheck_then_post_check(dw):
+    r = run(dw)
+    assert r.returncode == 0, r.stderr
+    assert dw.neon.reset_log == [(ROLE, True)], "Neon must be asked for the password only once the role is LOGIN"
+    log = dw.log.read_text()
+    assert log.index("role-auth no_login") < log.index("login enabled (a)") < log.index("reset-password ok (b)") < log.index("re-check ok (c)") < log.index("post-check ok")
+
+
+def test_a_422_after_login_contains_the_role_and_leaves_no_url(dw):
+    dw.dest.parent.mkdir(parents=True)
+    dw.dest.write_text("UNTOUCHED\n")
+    dw.neon.force_reset_status = 422
+    r = run(dw)
+    assert r.returncode == 22 and "reset-password (b) FAILED" in r.stderr
+    assert not can_login(dw) and not dw.mount.exists()
+    assert dw.dest.read_text() == "UNTOUCHED\n"                       # the password was never rotated, so the existing url is still the valid one
+    assert "HTTP 422: role has no login privilege" in dw.log.read_text()
+    no_secrets(dw, r)
+
+
+def test_the_422_message_reaches_the_log_without_secrets(dw):
+    dw.neon.force_reset_status = 422
+    dw.neon.reset_422_message = "postgres://leak:SECRETPW@h/db rejected; password=abc; bearer xyz"
+    r = run(dw)
+    assert r.returncode == 22
+    log = dw.log.read_text()
+    assert "HTTP 422" in log
+    for leak in ("SECRETPW", "postgres://", "password=", "bearer"):
+        assert leak not in log and leak not in r.stdout + r.stderr, leak
+
+
+def test_a_failed_recheck_contains_the_role_and_leaves_no_url(dw):
+    dw.dest.parent.mkdir(parents=True)
+    dw.dest.write_text("OLD\n")
+    dw.neon.add_superuser_on_reset = True
+    try:
+        r = run(dw)
+        assert r.returncode != 0 and "re-check (c) FAILED" in r.stderr
+        assert not can_login(dw) and not dw.dest.exists() and not dw.mount.exists()   # the reset happened: the old url is dead, so it is removed
+    finally:
+        dw.cluster.su_exec("REVOKE neon_superuser FROM studio_dw_writer")
+
+
+def test_a_role_that_already_has_a_password_refuses_the_new_order(dw):
+    dw.dest.parent.mkdir(parents=True)
+    dw.dest.write_text("EXISTING\n")
+    dw.cluster.su_exec(f"ALTER ROLE {ROLE} LOGIN")
+    dw.neon.passworded.add(ROLE)
+    r = run(dw, fresh=False)
+    assert r.returncode == 6 and "ROTATION" in r.stderr and dw.neon.posts == [] and can_login(dw)
+    assert dw.dest.read_text() == "EXISTING\n" and not dw.mount.exists()
+    dw.neon.passworded.clear()
+    r = run(dw, fresh=False)
+    assert r.returncode == 6 and "no_password" in r.stderr and dw.neon.posts == []
