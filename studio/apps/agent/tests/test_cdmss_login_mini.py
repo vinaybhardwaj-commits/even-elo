@@ -29,7 +29,7 @@ pytestmark = [needs_env, pytest.mark.skipif(shutil.which("jq") is None or shutil
 
 class MockVercel:
     def __init__(self, owner_url):
-        self.owner_url, self.requests = owner_url, []
+        self.owner_url, self.requests, self.fail_reason = owner_url, [], None
         outer = self
 
         class H(BaseHTTPRequestHandler):
@@ -40,6 +40,11 @@ class MockVercel:
                 outer.requests.append((self.path, self.headers.get("authorization")))
                 if self.headers.get("authorization") != f"Bearer {VERCEL_TOKEN}":
                     return self._send(403, {"error": "forbidden"})
+                if outer.fail_reason and self.path.startswith("/v9/"):
+                    self.send_response(500, outer.fail_reason)
+                    self.send_header("content-length", "0")
+                    self.end_headers()
+                    return
                 if re.fullmatch(r"/v9/projects/even-cdmss/env\?teamId=team_[A-Za-z0-9]+", self.path):
                     return self._send(200, {"envs": [
                         {"id": "e1", "key": "DATABASE_URL_UNPOOLED", "target": ["production"]},
@@ -126,7 +131,7 @@ def no_secrets(w, r, *extra):
 def test_refuses_test_overrides_and_non_mac_without_the_test_flag(world):
     r = run(world, env={"LOGIN_MINI_TEST": "0"})
     assert r.returncode == 2 and "test-only override" in r.stderr
-    clean = {k: v for k, v in world.env.items() if not k.startswith("LOGIN_MINI_") and k != "VERCEL_API_BASE"}
+    clean = {k: v for k, v in world.env.items() if not k.startswith("LOGIN_MINI_") and k not in ("VERCEL_API_BASE", "NEON_API_BASE", "PSQL")}
     r = subprocess.run(["bash", str(WRAPPER)], capture_output=True, text=True, env=clean)
     assert r.returncode == 2 and "Mac Mini" in r.stderr and world.vercel.requests == [] and stublog(world) == ""
     r = subprocess.run(["bash", str(WRAPPER)], capture_output=True, text=True, env={**clean, "CDMSS_POSTCHECK_SQL": "/x"})
@@ -248,3 +253,63 @@ def test_the_wrapper_never_puts_a_secret_on_a_command_line():
     assert "TOKEN" not in re.sub(r"\n#.*", "", t.split("<<'PY'")[0])               # no token variable in the shell part
     assert t.index("umask 077") < t.index("hdiutil attach") and "/bin/rm -P" in t and "libexec/gnubin" in t
     assert re.search(r"trap 'exit 129' HUP\ntrap 'exit 130' INT\ntrap 'exit 143' TERM", t)
+
+
+HOST_OR_FILE_ENV = {
+    "NEON_API_BASE": "https://evil.example/api/v2", "SQL_FILE": "/tmp/x.sql", "PSQL": "/tmp/evil-psql", "LOGIN_MINI_LOG": "/tmp/x.log",
+    "LOGIN_MINI_RELAY_HOST": "pooled", "STUDIO_ROLES_SHM": "/tmp", "XDG_RUNTIME_DIR": "/tmp", "CDMSS_ALLOW_TEST_POSTCHECK": "1",
+    "PGHOST": "evil.example", "PGSERVICEFILE": "/tmp/svc", "PGSYSCONFDIR": "/tmp", "HTTPS_PROXY": "http://evil.example:3128",
+    "https_proxy": "http://evil.example:3128", "CURL_CA_BUNDLE": "/tmp/ca", "PYTHONPATH": "/tmp", "PYTHONSTARTUP": "/tmp/s.py",
+    "GIT_DIR": "/tmp/g", "BASH_ENV": "/tmp/b", "LD_PRELOAD": "/tmp/l.so", "DYLD_INSERT_LIBRARIES": "/tmp/l.dylib",
+}
+
+
+@pytest.mark.parametrize("name", sorted(HOST_OR_FILE_ENV))
+def test_every_host_file_or_binary_redirect_is_refused_outside_test_mode(world, name):
+    clean = {k: v for k, v in world.env.items() if not k.startswith("LOGIN_MINI_") and k not in ("VERCEL_API_BASE", "NEON_API_BASE", "PSQL")}
+    r = subprocess.run(["bash", str(WRAPPER)], capture_output=True, text=True, env={**clean, name: HOST_OR_FILE_ENV[name]})
+    assert r.returncode == 2 and name in r.stderr and ("refusing" in r.stderr), r.stderr
+    assert world.vercel.requests == [] and world.neon.requests == [] and stublog(world) == ""   # nothing ran, no secret sent anywhere
+
+
+def test_readme_names_exactly_the_refused_variables_and_the_code_refuses_them():
+    code = WRAPPER.read_text()
+    loop = re.search(r"for v in (.*?); do\n    if \[\[ -n", code, re.S).group(1).replace("\\\n", " ")
+    refused = set(loop.split())
+    readme = (OPS / "README.md").read_text()
+    section = readme[readme.index("## Test-only overrides"):]
+    documented = set(re.findall(r"\b[A-Z][A-Z0-9_]{2,}\b", section.split("and every variable")[0]))
+    assert refused <= documented
+    assert {"LOGIN_MINI_LOG", "LOGIN_MINI_RELAY_HOST", "NEON_API_BASE", "SQL_FILE", "PSQL"} <= refused
+    assert "LOGIN_MINI_RELAY_HOST=pooled|owner" not in readme   # the README no longer advertises a knob the code refuses
+
+
+def test_python_stderr_reaches_the_log_only_through_the_filter(world):
+    secret_reason = "postgres://leak:SECRETPW@h/db password=abc bearer xyz"
+    world.vercel.fail_reason = secret_reason
+    r = run(world)
+    assert r.returncode == 2 and "could not pull" in r.stderr
+    log = world.log.read_text()
+    for leak in ("SECRETPW", "postgres://", "password", "bearer", VERCEL_TOKEN):
+        assert leak not in log and leak not in r.stdout + r.stderr, leak
+    assert "Traceback" in log                                    # the rest of python's stderr is still there for debugging
+    assert not (world.mount / "py.err").exists() and "wipe py.err" in stublog(world) and not world.mount.exists()
+
+
+def test_nologin_mode_pulls_the_owner_url_itself_runs_nologin_and_wipes_everything(world):
+    world.cdmss.su_exec(f"ALTER ROLE {ROLE} LOGIN")
+    r = run(world, "--nologin")
+    assert r.returncode in (0, 5), r.stderr
+    assert not role_login(world)
+    log = stublog(world)
+    assert "wipe owner-url" in log and "hdiutil detach /dev/diskSTUB" in log and not world.mount.exists() and world.neon.posts == []
+    assert "relay-url" not in log
+    assert r.returncode == 5 or "NOLOGIN" in r.stdout
+    no_secrets(world, r)
+
+
+def test_nologin_mode_refuses_a_pooled_url_too(world):
+    world.vercel.owner_url = "postgresql://o:p@ep-x-pooler.ap-south-1.aws.neon.tech/db"
+    world.cdmss.su_exec(f"ALTER ROLE {ROLE} LOGIN")
+    r = run(world, "--nologin")
+    assert r.returncode == 3 and role_login(world)   # nothing ran, so the role was not touched

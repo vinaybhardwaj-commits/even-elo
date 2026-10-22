@@ -141,9 +141,10 @@ def test_full_flow_password_issued_by_neon_then_login_then_the_dsn_really_works(
     owner = owner_file(tmp_path, cdmss.owner_url, "flowo")
     out = tmp_path / "relay-url"
     assert not role_login(cdmss)
-    r = nr.run("reset-password", str(keyfile), f"@{pf}", "auto", ROLE, str(out), "--dsn-from", str(owner))
-    assert r.returncode == 0, r.stderr
+    reset = nr.run("reset-password", str(keyfile), f"@{pf}", "auto", ROLE, str(out), "--dsn-from", str(owner))
+    assert reset.returncode == 0, reset.stderr
     pw = mock.issued[ROLE]
+    assert_nowhere(nr, reset, pw, quote(pw, safe=""), API_KEY)  # reset-password's own stdout/stderr and process side leak nothing (v1 gap)
     assert not role_login(cdmss)  # a password alone does not enable LOGIN
     r, _ = rr(cdmss, tmp_path, "--login", tag="login")
     assert r.returncode == 0 and "LOGIN enabled" in r.stdout, r.stderr
@@ -157,7 +158,8 @@ def test_full_flow_password_issued_by_neon_then_login_then_the_dsn_really_works(
             c.execute("SELECT 1 FROM public.opd_note_audits")
         with pytest.raises(psycopg.errors.ReadOnlySqlTransaction):
             c.execute("CREATE TEMP TABLE t(i int)")
-    assert_nowhere(nr, r, pw, quote(pw, safe=""), API_KEY)
+    assert_nowhere(nr, r, pw, quote(pw, safe=""), API_KEY)   # run-roles --login output
+    assert pw not in r.stdout + r.stderr and pw not in reset.stdout + reset.stderr
     # rotation: nologin first, reset again, login again
     r, _ = rr(cdmss, tmp_path, "--nologin", tag="nologin")
     assert r.returncode in (0, 5) and not role_login(cdmss)

@@ -21,19 +21,24 @@ the checkout `~/oc/gov-orch/wt-banner` (the wrapper does `git fetch` + `checkout
 ops/cdmss/run-login-mini.sh          # 1. issue the password, enable LOGIN
 # ... the relay lane moves /Volumes/cdmssloginram/relay-url to the Asus ...
 ops/cdmss/run-login-mini.sh --detach # 2. wipe it (rm -P) and detach the RAM disk
+ops/cdmss/run-login-mini.sh --nologin # rotation step 0 (see below)
 ```
 
 What step 1 does, in order (detail goes to `~/oc/gov-orch/scratch/cdmss-login.log`, filtered of urls and "password"; the terminal gets status lines only):
 1. `umask 077`; creates a RAM disk (`hdiutil attach -nomount ram://65536`, `diskutil erasevolume HFS+ cdmssloginram`), mounted at `/Volumes/cdmssloginram`; refuses to start if that mount already exists.
 2. Pulls `DATABASE_URL_UNPOOLED` and `NEON_PROJECT_ID` of Vercel project `even-cdmss` (production) through the Vercel API with the CLI token, in python, straight into `owner-url` and `project.env` (mode 600) on the RAM disk. Nothing goes through argv or stdout.
 3. Refuses a **pooled** owner url (host containing `-pooler`, or `pgbouncer=true`) with exit 3, before anything runs: the post-check needs the database owner on a direct connection.
-4. `neon-role.sh reset-password KEY @project.env auto studio_cdmss_ro relay-url --dsn-from owner-url --host auto`: Neon generates the password; the branch is the project's default branch; the url's host is the branch's read_write endpoint from the API (`LOGIN_MINI_RELAY_HOST=pooled|owner` changes that; the host for the Asus is a relay-lane decision). Exit 4 means the API cannot see the SQL-created role: nothing changed, stop and tell gov-orch.
+4. `neon-role.sh reset-password KEY @project.env auto studio_cdmss_ro relay-url --dsn-from owner-url --host auto`: Neon generates the password; the branch is the project's default branch; the url's host is the branch's read_write endpoint from the API. That is fixed in the Mini wrapper (there is no environment knob); a pooled or owner-url host for the Asus is a relay-lane change to the wrapper, not an override. The log gets python's and the scripts' output through one filter that drops url, "password", bearer and token lines. Exit 4 means the API cannot see the SQL-created role: nothing changed, stop and tell gov-orch.
 5. `run-roles.sh --role studio_cdmss_ro --login owner-url`: LOGIN plus the cdmss post-check in ONE transaction. A neon_superuser membership or a broken privilege fence refuses LOGIN and the role is set NOLOGIN again.
 6. Wipes `owner-url` and `project.env` (`/bin/rm -P`) on every exit path including HUP/INT/TERM. On failure it also wipes `relay-url` and detaches the RAM disk.
 
 **The relay URL.** `/Volumes/cdmssloginram/relay-url` (mode 600) is the only copy of the password-bearing url. On success it, and only it, stays on the still-attached RAM disk; the wrapper prints just its path and status. It is moved to the Asus by the later relay lane, which then runs `run-login-mini.sh --detach`. Do not copy it anywhere else, and do not leave the disk attached overnight. If the password is lost, run the whole thing again: `run-roles.sh --role studio_cdmss_ro --nologin` first (rotation), then step 1.
 
-Rotation: `STUDIO_ROLES_SHM=<ramdisk> ops/neon/run-roles.sh --role studio_cdmss_ro --nologin OWNER_URL_FILE`, then `run-login-mini.sh`.
+Rotation (password lost, or to rotate): `ops/cdmss/run-login-mini.sh --nologin`, then `ops/cdmss/run-login-mini.sh`. `--nologin` does what steps 1-3 do (fresh RAM disk, owner url pulled from Vercel straight onto it, pooled url refused), runs `run-roles.sh --role studio_cdmss_ro --nologin` on that file (the role is set NOLOGIN in its own committed statement and its live sessions are ended; exit 5 means some sessions could not be ended and must be ended by hand before trusting the rotation), then wipes and detaches. You never place `OWNER_URL_FILE` yourself: it exists only inside the script, on the RAM disk. Do not run `run-roles.sh` by hand against a url file on the ordinary disk.
+`rm -P` may not really overwrite on recent macOS/APFS-era systems; detaching the RAM disk is the real wipe, which is why the wrapper detaches on every path.
 
 ## Test-only overrides
-`LOGIN_MINI_*` paths/commands, `VERCEL_API_BASE` and `CDMSS_POSTCHECK_SQL` exist only for the Linux tests with stubs. The wrapper refuses to start if any is set without `LOGIN_MINI_TEST=1`, and `run-roles.sh` refuses `CDMSS_POSTCHECK_SQL` without `CDMSS_ALLOW_TEST_POSTCHECK=1`.
+These exist only for the Linux tests with stubs. They are honoured with `LOGIN_MINI_TEST=1` only; in any other run `run-login-mini.sh` refuses to start (exit 2) if one is set:
+`LOGIN_MINI_REPO LOGIN_MINI_SKIP_GIT LOGIN_MINI_MOUNT LOGIN_MINI_SECURE_RM LOGIN_MINI_AUTH_JSON LOGIN_MINI_NEON_KEY LOGIN_MINI_LOG LOGIN_MINI_RELAY_HOST LOGIN_MINI_NOT_MAC VERCEL_API_BASE NEON_API_BASE SQL_FILE PSQL CDMSS_POSTCHECK_SQL CDMSS_ALLOW_TEST_POSTCHECK STUDIO_ROLES_SHM XDG_RUNTIME_DIR BASH_ENV ENV`,
+and every variable that redirects a host, file or binary under the tools it runs: `PG*` (libpq), `CURL_*` and `*_proxy`/`*_PROXY`, `PYTHON*`, `GIT_*`, `LD_*`, `DYLD_*`. `HOME` and `PATH` are not refused.
+Separately, `ops/neon/run-roles.sh` refuses `CDMSS_POSTCHECK_SQL` unless `CDMSS_ALLOW_TEST_POSTCHECK=1`.
