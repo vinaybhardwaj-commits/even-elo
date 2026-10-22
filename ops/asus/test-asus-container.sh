@@ -53,7 +53,7 @@ for n in neonstub.test neonstub2.test neonstub6.test; do
   printf 'subjectAltName=DNS:%s' "$n" >"$PKI/$n.ext"
   openssl x509 -req -in "$PKI/$n.csr" -CA "$PKI/ca.crt" -CAkey "$PKI/ca.key" -CAcreateserial -out "$PKI/$n.crt" -days 3 -extfile "$PKI/$n.ext" 2>/dev/null
 done
-mkstub() { # mkstub CONTAINER CERTNAME ENDPOINT_ID  -> a PostgreSQL 16 with TLS; roles take the Neon "endpoint=<id>$password" form
+mkstub() { # mkstub CONTAINER CERTNAME ENDPOINT_ID  -> a PostgreSQL 16 with TLS; roles take the plain password (the relay sends it with SNI; Neon rejects the endpoint= form then, 21 Oct)
   docker run -d --name "$1" --cap-add NET_ADMIN "$IMG" sleep infinity >/dev/null || return 1
   docker exec "$1" mkdir -p /etc/ssl/pg
   docker cp "$PKI/$2.crt" "$1:/etc/ssl/pg/server.crt"; docker cp "$PKI/$2.key" "$1:/etc/ssl/pg/server.key"
@@ -64,8 +64,8 @@ mkstub() { # mkstub CONTAINER CERTNAME ENDPOINT_ID  -> a PostgreSQL 16 with TLS;
     pg_ctlcluster 16 main start && sleep 2'
   # SQL on stdin: a password in argv would end up in the journal as the _CMDLINE of runuser's PAM session message
   docker exec -i "$1" runuser -u postgres -- psql -q <<SQL
-create role neon_gov login password 'endpoint=$3\$govpw';
-create role neon_studio login password 'endpoint=$3\$studiopw';
+create role neon_gov login password 'govpw';
+create role neon_studio login password 'studiopw';
 create database govdb owner neon_gov;
 create database studiodb owner neon_studio;
 SQL
@@ -101,7 +101,7 @@ x 'chown postgres:postgres /etc/ssl/pg/server.*; chmod 600 /etc/ssl/pg/server.ke
    ip -6 addr add fd00:6::1/128 dev lo
    pg_ctlcluster 16 main restart && sleep 3' || echo "v6 stub start failed"
 xi 'runuser -u postgres -- psql -q' <<'SQL' || echo "v6 stub setup failed"
-create role neon_gov6 login password 'endpoint=neonstub6$govpw';
+create role neon_gov6 login password 'govpw';
 create database govdb6 owner neon_gov6;
 SQL
 docker cp "$PKI/ca.crt" "$C:/usr/local/share/ca-certificates/studio-ops-test-ca.crt"
@@ -294,7 +294,7 @@ check "relay logs reach the journal (no AF_UNIX needed)" "journalctl -u studio-p
 check "relay is configured with verify-full and the system CA" "grep -q '^server_tls_sslmode = verify-full' /run/studio-pgrelay/pgbouncer.ini && grep -q '^server_tls_ca_file = /etc/ssl/certs/ca-certificates.crt' /run/studio-pgrelay/pgbouncer.ini"
 check "relay ini is 0600 studio-pgrelay on tmpfs; the Neon password is persisted only in neon.env" '[ "$(stat -c "%a %U" /run/studio-pgrelay/pgbouncer.ini)" = "600 studio-pgrelay" ] && [ "$(grep -rl govpw /etc /opt /var 2>/dev/null | sort)" = /etc/studio-pgrelay/neon.env ]'
 check "agent uid cannot reach the Neon address directly" "! $AS timeout 6 bash -c '</dev/tcp/$NEONIP/5432'"
-check "agent uid cannot reach the SECOND endpoint even with valid credentials" "! $AS env PGPASSWORD='endpoint=neonstub2\$govpw' PGCONNECT_TIMEOUT=6 psql -Atq 'host=$STUB2IP port=5432 user=neon_gov dbname=govdb sslmode=require' -c 'select 1'"
+check "agent uid cannot reach the SECOND endpoint even with valid credentials" "! $AS env PGPASSWORD=govpw PGCONNECT_TIMEOUT=6 psql -Atq 'host=$STUB2IP port=5432 user=neon_gov dbname=govdb sslmode=require' -c 'select 1'"
 check "agent uid cannot reach the second endpoint through the proxy either (host not allowlisted, :5432)" "! $AS curl -s -m 8 -x http://127.0.0.1:8888 https://neonstub2.test:5432/ -o /dev/null"
 check "the relay cannot be pointed elsewhere: unknown database names are rejected" "! $AS env PGPASSWORD=$GPW $PQ 'host=127.0.0.1 port=6432 user=agent_gov dbname=govdb sslmode=disable' -c 'select 1' && ! $AS env PGPASSWORD=$GPW $PQ 'host=127.0.0.1 port=6432 user=agent_gov dbname=neonstub2.test sslmode=disable' -c 'select 1'"
 check "startup parameters cannot redirect the relay (options=...)" "! $AS env PGPASSWORD=$GPW $PQ 'host=127.0.0.1 port=6432 user=agent_gov dbname=gov sslmode=disable options=-chost%3Dneonstub2.test' -c 'select 1'"
