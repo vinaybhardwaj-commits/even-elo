@@ -1,43 +1,54 @@
-# DB13 read access for Governance Studio — runbook
+# DB13 nightly extract: runbook (V's pivot, 22 Oct 2026)
 
-Basis: fable ruling G-D1..G-D5 (22 Oct 2026). Facts below marked UNVERIFIED have not been checked against DB13.
+Nothing goes to Even IT. The job uses only the access the Mini already holds for Human RAG (`~/.config/hrag/ada.env`:
+`ADA_HOST SSH_USER SSH_KEY PG_HOST PG_PORT PG_DB PG_USER PG_PASSWORD DATA_BACKEND`). `PG_USER` is V's per-person role
+(`pg_read_all_data`, no CREATEROLE); the job adds its own protection: every DB13 session is a READ ONLY transaction.
 
-## Who owns what
-| Item | Owner | Evidence required |
+## What runs where
+| Piece | Where | What |
 |---|---|---|
-| Role `gov_studio_ro`, schema `gov_studio`, the 8 views | **Even IT (Shubh)** | Written confirmation (email or Slack link) pasted into the gate file that the role and views are theirs to own. Without it nothing below starts. |
-| ada account + `authorized_keys` line | Even IT | Same confirmation. |
-| Password for the role | Even IT sets it; gov-orch stores it only with the relay user | never in a repo, ticket or chat |
-| Asus relay key, tunnel unit, nftables rule | separate ops lane (not this pack) | Opus refute in container sandbox first |
-| Extract job | gov-orch | Opus refute before it touches DB13 |
+| `ops/db13/extract/` (`spec.py` = the 8 column-scoped SELECTs with metric ids; `job.py`; `cli.py`) | the Mini | one ssh tunnel + one Postgres connection; batches; writes governance Neon |
+| `ops/neon/0012_studio_dw.sql` | governance Neon, run by the DB owner | schema `studio_dw`, role `studio_dw_writer` (NOLOGIN), `studio_ro.dw_*` views |
+| `com.even.studio-dw-extract.plist` + `run-extract.sh` | the Mini | launchd 22:30 daily; the job also refuses outside 22:00-07:00 IST when started as `scheduled` |
 
-We never hold DB13 admin, never get writes, never get another database.
+## What the job does
+1. Reads `ada.env` (must be 0600) at runtime; values are never printed or logged. Errors print the exception CLASS only.
+2. Opens ONE `ssh -N -L 127.0.0.1:<free>:PG_HOST:PG_PORT` to ada (BatchMode, strict host key) and ONE connection (`sslmode=disable`: the PG hop has no TLS, ssh carries it).
+3. `BEGIN TRANSACTION READ ONLY ISOLATION LEVEL REPEATABLE READ`; `SET statement_timeout='60s'`; `SET idle_in_transaction_session_timeout='30s'`; then `SHOW transaction_read_only` must be `on` and `statement_timeout` `1min`, **else it stops before any data query** (exit 2). REPEATABLE READ gives one snapshot for the whole run; the run lasts minutes, so DB13's vacuum horizon is held that long. Keep runs off-peak.
+4. Records `SELECT now(), pg_current_snapshot()` from inside that transaction ("DB13 as of").
+5. Per table, keyset batches (`WHERE key > last ORDER BY key LIMIT 2000`), at most 2 queries per second (hard cap in code), and stops on the first error (the run row is marked `failed` with the error class). Keys: `_id` for `individuals-prescriptions` and `kx_*`, `presc_uid`, `uid`; the diagnosis table pages over distinct `_parent_id`. All of these are UNVERIFIED as indexed except the `kx_*` `_id`; confirm with `EXPLAIN` in the first supervised run.
+6. Incremental = rows whose filter column is newer than the previous successful run's DB13 snapshot time (`uploaded_at`, `modified_at`, `updated_at`, `bill_date_time` with a 7-day lookback); tables without one (`doctors`, the diagnosis table) are always full. First run, or `--full`: everything; `--full` also deletes destination rows that vanished at the source. Column types of the filter columns are UNVERIFIED; a mismatch fails the run safely.
+7. Writes `studio_dw.*` and one `studio_dw.extract_runs` row per run: `run_id, mode, started_at, ended_at, status, db13_snapshot_now, db13_snapshot, rows` (per table)`, watermarks, queries, error_class`.
+Logs hold counts and timings only (`table=... rows=... batches=... seconds=...`), never row data.
 
-## Order (G-D5)
-1. Even IT runs `0001_gov_studio_ro.sql` as the DB admin (one transaction; it rolls back by itself if the post-check finds a leak). Then runs the two query blocks at the bottom of the file and sends the output. Rows in 8a = other databases where PUBLIC still has CONNECT: Even IT revokes them or states in writing why not.
-2. Even IT sets the password: `\password gov_studio_ro` in psql (client-side SCRAM), or Cloud SQL IAM auth if the host is Cloud SQL (UNVERIFIED). If the role was created via gcloud: `REVOKE cloudsqlsuperuser FROM gov_studio_ro;`.
-3. Even IT adds the ada key line (below). Fable GO already given; Asus change next.
-4. First connection: run `VERIFY.sql` only. Follow its STOP RULE.
-5. Only then the extract job.
-
-## ada authorized_keys line (no shell)
+## Commands (on the Mini)
+```bash
+ops/db13/extract/run-extract.sh verify              # FIRST: see VERIFY.md; stop on any FAIL
+ops/db13/extract/run-extract.sh run                 # on demand, incremental, same caps, any time
+ops/db13/extract/run-extract.sh run --full          # full refresh (also --tables doctors,surgery_cases)
+ops/db13/extract/run-extract.sh scheduled           # what launchd calls (off-peak only)
 ```
-restrict,port-forwarding,permitopen="<PG_HOST>:<PG_PORT>" ssh-ed25519 <ASUS RELAY-USER PUBLIC KEY> gov-studio-relay
-```
-`restrict` turns off pty, agent/X11 forwarding and commands; `port-forwarding` re-enables only forwarding; `permitopen` pins the one target (PG on 5433). Give the account a no-login shell (`/usr/sbin/nologin`) as well. Tunnel from the Asus: `ssh -N -L 127.0.0.1:<LOCAL_PORT>:<PG_HOST>:<PG_PORT> <user>@ada`.
+Governance DSN for `studio_dw_writer`: a 0600 file at `~/.config/studio-dw-extract/writer-url` (override `STUDIO_DW_DSN_FILE`), produced by the Neon-API password step below. One run at a time (flock).
+
+## Install order
+1. Owner runs `0012_studio_dw.sql` (after 0001 and 0003): `SQL_FILE=ops/neon/0012_studio_dw.sql ops/neon/run-roles.sh OWNER_URL_FILE`. One transaction; the post-check rolls it back if `studio_gov_ro` can read any `studio_dw` table, or the writer holds anything outside `studio_dw`.
+2. Password and LOGIN for `studio_dw_writer` exactly as for `studio_gov_ro` (ops/neon README: `neon-role.sh reset-password`, then enable LOGIN; the Neon API must be able to see SQL-created roles, still UNVERIFIED). Put the DSN in the 0600 file; never in a repo.
+3. Opus refute of the job, then `verify`, then one supervised `run --full`, then install the plist:
+   `sed "s#__REPO__#$PWD#" ops/db13/extract/com.even.studio-dw-extract.plist > ~/Library/LaunchAgents/com.even.studio-dw-extract.plist && launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.even.studio-dw-extract.plist` (set the Mini's timezone to IST).
 
 ## Kill switch
-Even IT deletes that one line from ada's `authorized_keys`. The tunnel dies and cannot be reopened; no one on our side needs to cooperate. Secondary: `ALTER ROLE gov_studio_ro NOLOGIN;`. Full removal: `DROP OWNED BY gov_studio_ro; DROP ROLE gov_studio_ro;` then `DROP SCHEMA gov_studio CASCADE;`.
+- Flag file: `touch ~/.config/studio-dw-extract/DISABLED` (every start exits 3 before touching anything); remove it to resume.
+- Unload: `launchctl bootout gui/$(id -u)/com.even.studio-dw-extract` and delete the plist.
+- Hard stop: `ALTER ROLE studio_dw_writer NOLOGIN` (owner), or remove V's ada key access as before.
 
-## Rotate the password
-Even IT: `\password gov_studio_ro`, hand the new secret to the relay user's credential store out of band, restart the tunnel/extract unit. Rotate on any staff change on either side or after any VERIFY failure. Do not rotate by pasting plaintext into SQL.
+## Reading the data
+Screens and chat read only `studio_ro.dw_*` and `studio_ro.dw_extract_status` (as `studio_gov_ro`); "DB13 as of" = `max(db13_snapshot_now)` of the latest `status='ok'` run. `studio_gov_ro` has no access to `studio_dw` itself.
 
-## Asus side (summary only; built later by another lane)
-- One new egress exception: outbound TCP/22 to ada's exact IP(s), allowed only for the relay uid. The agent user is refused; the ops refute must show a refused connect as the agent user.
-- Key generated on the Asus for the relay user, 0600, never leaves. Tunnel = systemd unit as the relay user. Per-session bytes logged in the post-session check.
+## What the extract holds (PHI)
+Per the ruling there is no PHI gating. Beyond the catalogue columns it carries `uhid` (discharged, billing), `age`, `individual_uid`, `uid`/`consult_uid`/`kx_encounter_id`, and doctor `email`. Never: patient names, addresses, kin, phones; doctors' bank, proofs, mobile, tariffs; money columns. A new column needs a catalogue entry first.
 
-## Load rules (live production primary)
-One tunnel and one connection per job; at most 2 queries/second; 60 s statement timeout (also set on the role); batch by key. Unindexed large scans (all of `individuals-prescriptions`, 4.4 GB) off-peak by default (22:00–07:00 IST), but an operator may run on demand at the same caps. Key `individuals-prescriptions` by `_parent_id` or `uploaded_at`; `kx_*` are indexed on `_id` only. Record per run: start, end, rows per view, DB13 snapshot time. Screens/chat never query DB13 live.
+## Load rules
+One tunnel, one connection, <= 2 qps, 60 s timeout, off-peak by default (22:00-07:00 IST); on-demand allowed at the same caps. `individuals-prescriptions` is 4.4 GB without uid/time indexes: the job pages on `_id` and filters on `uploaded_at`, so an incremental run may walk the `_id` index; watch the first supervised run's timings.
 
-## If VERIFY fails
-Stop at the first deviation. Close the connection; do not retry or "just check one more thing". Send Even IT and gov-orch the exact statement and output. If a write succeeded or any public table was readable: Even IT pulls the ada key line first. Fix is Even IT re-running `0001` (idempotent) and re-granting nothing by hand; then repeat VERIFY from the top with a fresh connection.
+## If something fails
+The job exits non-zero and the run row says `failed` with an error class (no data). Do not retry in a loop. A `REFUSED` (exit 2) means DB13's session was not read-only: leave it disabled and tell gov-orch.
