@@ -60,14 +60,14 @@ def test_missing_owner_file_and_secret_never_on_argv(cdmss, tmp_path):
 
 
 def test_a_failed_postcheck_rolls_the_whole_run_back(cdmss, tmp_path):
-    """A view that leaks a PHI column (not in the allowlist, in the denylist) makes 0003 fail: nothing from the run survives."""
+    """A view that leaks an LLM-trace column (not in the allowlist, in the secrets/trace denylist) makes 0003 fail: nothing from the run survives."""
     d = tmp_path / "sql"
     d.mkdir()
     for f in OPS.glob("0*.sql"):
         shutil.copy(f, d / f.name)
     views = (d / SQL_VIEWS.name).read_text()
     marker = "-- GRANTS: USAGE on the schema"
-    leak = "CREATE VIEW cdmss_ro.leak WITH (security_barrier = true) AS SELECT o.uhid FROM public.ot_note_audits o;\n"
+    leak = "CREATE VIEW cdmss_ro.leak WITH (security_barrier = true) AS SELECT o.trace_id FROM public.ot_note_audits o;\n"
     (d / SQL_VIEWS.name).write_text(views.replace(marker, leak + marker, 1))
     f = url_file(tmp_path, cdmss.owner_url)
     p = run(cdmss, [str(f)], {"CDMSS_RO_SQL_DIR": str(d)})

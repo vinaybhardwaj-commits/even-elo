@@ -29,7 +29,9 @@ def code(path):
 def test_no_password_and_never_login():
     for f in (SQL_ROLE, SQL_VIEWS, SQL_POST):
         c = code(f)
-        assert not re.search(r"\bPASSWORD\b|\bpassword\b|rolepw|verifier", c, re.I), f.name
+        # 0003 names "password" only inside its secrets denylist regex; a password CLAUSE is what is banned everywhere
+        pat = r"\bPASSWORD\s*(=|')|ENCRYPTED|rolepw|verifier" if f == SQL_POST else r"\bPASSWORD\b|\bpassword\b|rolepw|verifier"
+        assert not re.search(pat, c, re.I), f.name
         assert not re.search(r"(?<!NO)LOGIN\b", c), f"{f.name} must never enable LOGIN"
     assert "NOLOGIN" in code(SQL_ROLE)
     wrapper = RUN_WRAPPER.read_text()

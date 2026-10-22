@@ -4,11 +4,10 @@
 --
 -- Every view is owner-owned (security_invoker NOT set) and security_barrier. The role gets USAGE on schema cdmss_ro and
 -- SELECT on exactly these views, and NOTHING on any base table. Columns are listed explicitly; no SELECT *.
--- Left out on purpose (G-21/G-22, PHI or free text): uhid, patient_name, member_id/member_uid/individual_uid, document_id,
--- consult_uid, kx_encounter_id (OPD), form_uid, payer_*, every note/finding/narrative/commentary/real_course/report/
--- extracted_json/component_json/snapshot/envelope/cm_note body, surgeon_raw, feedback comments, response/ruling text.
--- Join keys kept: opd uid, ip_uid, episode/readmission encounter ids, ot uid (encounter-level, not person-level keys).
---
+-- PHI POLICY (gov-orch ruling, V 13/21 Oct; confirmed by the user): governance has no PHI gating, so identity keys (uhid,
+-- individual_uid, member ids, consult_uid, kx_encounter_id, document_id) and the stored finding text / evidence / rationale /
+-- quote columns ARE exposed. Still left out: secrets and tokens, raw prompts, LLM traces (trace_id, raw_judge_error,
+-- stage_timings, model-call parameters). ccb_briefs.doctor_uid is UNVERIFIED-live (in no migration or runtime DDL): omitted.
 -- Canonical rules baked in (lib/audit-canonical.ts CANONICAL_RANK_SQL; lib/stewardship-canonical.ts OPD_CANON_WHERE):
 --   rank = grader tier (qwen/-mini LAST) > highest engine version (numeric, component-wise) > reference model > latest audited_at.
 --   The version tail is cast to int[] ONLY behind a shape guard inside a CASE, so a suffixed or odd version cannot raise.
@@ -86,6 +85,8 @@ SELECT DISTINCT ON (a.app_source, a.uid)
   a.id AS audit_id,
   a.app_source,
   a.uid,
+  a.consult_uid,
+  a.kx_encounter_id,
   a.doctor_uid,
   a.note_date,
   (a.note_date AT TIME ZONE 'Asia/Kolkata')::date AS note_day_ist,
@@ -112,6 +113,13 @@ SELECT DISTINCT ON (a.app_source, a.uid)
   a.n_context_dependent,
   a.n_interaction_alerts,
   a.complexity_band,
+  a.pdqi9,
+  a.scorecard,
+  a.completeness_items,
+  a.missing_fields,
+  a.complexity_inputs,
+  a.findings,
+  a.suggestions,
   a.engine_version,
   CASE WHEN a.model LIKE 'qwen%' OR a.engine_version LIKE '%-mini' THEN 'local' ELSE 'cloud' END AS grader_tier,
   (a.model IN ('google/gemini-2.5-pro', 'gemini-2.5-pro')) AS is_reference_model,
@@ -152,13 +160,16 @@ SELECT a.engine_version,
 FROM public.opd_note_audits a
 GROUP BY a.engine_version;
 
--- Finding-level, non-text keys only (subject / rationale / evidence are NOT exposed). Built on the canonical rows.
+-- Finding-level rows unnested from the canonical notes (subject, evidence, rationale included).
 CREATE VIEW cdmss_ro.opd_finding WITH (security_barrier = true) AS
 SELECT c.audit_id, c.app_source, c.uid, c.doctor_uid, c.note_day_ist, c.engine_version,
        f.n AS finding_no,
+       f.e->>'subject' AS subject,
        f.e->>'domain' AS domain,
        f.e->>'verdict' AS verdict,
        CASE WHEN f.e->>'confidence' ~ '^-?[0-9]+(\.[0-9]+)?$' THEN (f.e->>'confidence')::numeric END AS confidence,
+       f.e->'evidence' AS evidence,
+       f.e->>'rationale' AS rationale,
        f.e->>'source' AS source,
        CASE WHEN f.e->>'informational' IN ('true', 'false') THEN (f.e->>'informational')::boolean END AS informational,
        f.e->>'signal_type' AS signal_type,
@@ -174,12 +185,14 @@ CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(a.findings) = 'ar
   WITH ORDINALITY AS f(e, n);
 
 -- ---------------------------------------------------------------------------------------------------------------
--- F2 IPD discharge audit. One row per (app_source, document_id) by the same rank (document_id itself is not exposed).
+-- F2 IPD discharge audit. One row per (app_source, document_id) by the same rank .
 CREATE VIEW cdmss_ro.ipd_discharge_audit WITH (security_barrier = true) AS
 SELECT DISTINCT ON (a.app_source, a.document_id)
   a.id AS audit_id,
   a.app_source,
+  a.document_id,
   a.ip_uid,
+  a.member_id,
   a.speciality,
   COALESCE(NULLIF(btrim(a.speciality), ''), 'Unassigned') AS speciality_label,
   a.discharge_type,
@@ -192,6 +205,9 @@ SELECT DISTINCT ON (a.app_source, a.document_id)
   a.completeness_pct,
   a.n_findings, a.n_low_value, a.n_context_dependent,
   a.billed_total,
+  a.findings,
+  a.suggestions,
+  a.report,
   a.engine_version,
   CASE WHEN a.model LIKE 'qwen%' OR a.engine_version LIKE '%-mini' THEN 'local' ELSE 'cloud' END AS grader_tier,
   a.model,
@@ -222,6 +238,7 @@ SELECT DISTINCT ON (a.app_source, a.encounter_id)
   a.app_source,
   a.encounter_id,
   a.ip_uid,
+  a.member_id,
   a.facility_name,
   COALESCE(fn.site_code, pf.site_code, 'UNMAPPED') AS site_code,
   CASE WHEN fn.site_code IS NOT NULL THEN 'facility_name' WHEN pf.site_code IS NOT NULL THEN 'encounter_prefix' ELSE 'none' END AS site_basis,
@@ -243,6 +260,12 @@ SELECT DISTINCT ON (a.app_source, a.encounter_id)
   a.expectations_evaluated,
   a.checkpoint_count,
   a.run_seq,
+  a.findings,
+  a.real_course,
+  a.commentary,
+  a.admission_context,
+  a.evidence_tiers,
+  a.error_detail,
   a.engine_version,
   a.audited_at
 FROM public.ipd_episode_audits a
@@ -263,7 +286,7 @@ ORDER BY a.app_source, a.encounter_id,
   a.audited_at DESC NULLS LAST,
   a.id;
 
--- F4/F5 OT document audit. One row per (app_source, uid). NO note, component_json, uhid, encounter_id or surgeon_raw.
+-- F4/F5 OT document audit. One row per (app_source, uid).
 -- hospital_uid has no name lookup in code, so site_code is UNMAPPED until site_dim gains evidence-backed rows.
 CREATE VIEW cdmss_ro.ot_note_audit WITH (security_barrier = true) AS
 SELECT DISTINCT ON (a.app_source, a.uid)
@@ -271,16 +294,22 @@ SELECT DISTINCT ON (a.app_source, a.uid)
   a.app_source,
   a.note_class,
   a.uid,
+  a.encounter_id,
+  a.uhid,
   a.hospital_uid,
   a.facility_id,
   'UNMAPPED'::text AS site_code,
   'none'::text AS site_basis,
   a.surgery_name,
+  a.surgeon_raw,
   a.note_day,
   a.doctor_uid,
   a.map_status,
   (a.map_status = 'mapped' AND a.doctor_uid IS NOT NULL) AS surgeon_mapped,
   a.n_findings,
+  a.findings,
+  a.note,
+  a.component_json,
   a.engine_version,
   a.model,
   a.audited_at
@@ -292,14 +321,19 @@ ORDER BY a.app_source, a.uid,
   a.audited_at DESC NULLS LAST,
   a.id;
 
--- F8 Pre-op risk. Newest engine version per (app_source, episode_key). NO patient_name, uhid, individual_uid, age, sex,
--- procedure, why/missing/situation lines, snapshot, extraction or narrative. `hospital` is "name or uid": it resolves
+-- F8 Pre-op risk. Newest engine version per (app_source, episode_key). `hospital` is "name or uid": it resolves
 -- only if it is literally one of the facility_name strings; otherwise UNMAPPED.
 CREATE VIEW cdmss_ro.preop_finding WITH (security_barrier = true) AS
 SELECT DISTINCT ON (a.app_source, a.episode_key)
   a.id AS finding_id,
   a.app_source,
   a.episode_key,
+  a.individual_uid,
+  a.uhid,
+  a.patient_name,
+  a.age,
+  a.sex,
+  a.procedure,
   a.engine_version,
   a.hospital,
   COALESCE(fn.site_code, 'UNMAPPED') AS site_code,
@@ -317,6 +351,12 @@ SELECT DISTINCT ON (a.app_source, a.episode_key)
   a.pac_verdict,
   a.version_no,
   a.reviewed_at,
+  a.why_line,
+  a.missing_line,
+  a.situation_line,
+  a.snapshot,
+  a.extraction,
+  a.narrative,
   a.computed_at,
   a.created_at,
   a.updated_at
@@ -331,16 +371,21 @@ ORDER BY a.app_source, a.episode_key,
   a.updated_at DESC NULLS LAST,
   a.id;
 
--- F7 Readmission. Newest engine version per (app_source, dedup_key) (dedup_key itself is not exposed). NO uhid, member_uid,
--- form_uid, payer_*, cm_note, finding, omission_evidence, lab_source_provenance, last_error. Site = index encounter prefix.
+-- F7 Readmission. Newest engine version per (app_source, dedup_key) Site = index encounter prefix.
 CREATE VIEW cdmss_ro.readmission_finding WITH (security_barrier = true) AS
 SELECT DISTINCT ON (a.app_source, a.dedup_key)
   a.id AS finding_id,
   a.app_source,
+  a.dedup_key,
   a.engine_version,
   a.finding_class,
   a.index_encounter_id,
   a.readmit_encounter_id,
+  a.uhid,
+  a.member_uid,
+  a.form_uid,
+  a.payer_index,
+  a.payer_readmit,
   COALESCE(pf.site_code, 'UNMAPPED') AS site_code,
   CASE WHEN pf.site_code IS NOT NULL THEN 'encounter_prefix' ELSE 'none' END AS site_basis,
   a.lane,
@@ -363,6 +408,20 @@ SELECT DISTINCT ON (a.app_source, a.dedup_key)
   a.n_omissions,
   a.needs_human_review,
   a.lab_tier,
+  a.cm_note,
+  a.finding,
+  a.omission_evidence,
+  a.lab_source_provenance,
+  a.last_error,
+  a.clinical_review_decision,
+  a.clinical_review_clock_class,
+  a.clinical_review_lt24h_kind,
+  a.clinical_review_exclusion_claim,
+  a.clinical_review_quote,
+  a.clinical_review_actor,
+  a.clinical_review_at,
+  a.clinical_review_turn_id,
+  a.clinical_review_model,
   a.audited_at,
   a.created_at
 FROM public.readmission_findings a
@@ -400,21 +459,21 @@ CREATE VIEW cdmss_ro.lvc_rule_event WITH (security_barrier = true) AS
 SELECT e.id AS event_id, e.rule_ref, e.version, e.event, e.effective_at, e.ratified_by, e.created_at
 FROM public.lvc_rule_activation_events e;
 
--- Worklists (V8): thread headers only. NO latest_response / ruling (free text).
+-- Worklists (V8): thread headers plus latest_response / ruling.
 CREATE VIEW cdmss_ro.gov_signal WITH (security_barrier = true) AS
 SELECT s.signal_id, s.app_source, s.reference, s.doctor_uid, s.signal_type, s.importance, s.response_required, s.status,
-       s.window_from, s.window_to, s.sla_due_at, s.note_class, s.created_at, s.updated_at
+       s.source_triage_ref, s.window_from, s.window_to, s.sla_due_at, s.latest_response, s.ruling, s.note_class, s.created_at, s.updated_at
 FROM public.opd_gov_signal s;
 
--- CCB briefs (60-day conversion input): headline columns only. NO uhid, individual_uid, kx_encounter_id, envelope.
--- presc_uid is the OPD note key. (doctor_uid / doctor_speciality exist live only if a later ALTER ran: not used here.)
+-- CCB briefs (60-day conversion input), envelope included. doctor_uid / doctor_speciality are UNVERIFIED-live (in no migration
+-- and no runtime DDL), so NOT selected; add them after an information_schema check.
 CREATE VIEW cdmss_ro.ccb_brief WITH (security_barrier = true) AS
-SELECT b.id AS brief_id, b.app_source, b.presc_uid, b.note_date, b.coverage, b.priority, b.pitch_allowed, b.n_findings,
-       b.n_cited, b.citation_coverage_pct, b.distinct_sources, b.engine_version, b.created_at
+SELECT b.id AS brief_id, b.app_source, b.presc_uid, b.individual_uid, b.uhid, b.kx_encounter_id, b.note_date, b.coverage, b.priority, b.pitch_allowed, b.n_findings,
+       b.n_cited, b.citation_coverage_pct, b.distinct_sources, b.envelope, b.engine_version, b.created_at
 FROM public.ccb_briefs b;
 
 -- Doctor directory (STAFF identity, not patient PHI). Two sources, two speciality vocabularies (G-06): both are exposed
--- under their own names. alias_uids / mobile_last4 / has_email are left out.
+-- under their own names. alias_uids is exposed (mobile-collapsed twins); mobile_last4 / has_email are left out.
 CREATE VIEW cdmss_ro.doctor_dim WITH (security_barrier = true) AS
 SELECT COALESCE(d.doctor_uid, r.doctor_uid) AS doctor_uid,
        COALESCE(d.doctor_name, r.name) AS doctor_name,
@@ -424,6 +483,7 @@ SELECT COALESCE(d.doctor_uid, r.doctor_uid) AS doctor_uid,
        r.audit_active,
        r.operational_active,
        r.disabled,
+       r.alias_uids,
        d.updated_at AS directory_updated_at,
        r.updated_at AS roster_updated_at
 FROM public.doctor_directory d

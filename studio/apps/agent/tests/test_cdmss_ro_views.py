@@ -214,13 +214,13 @@ def test_opd_pdqi9_assessed_flag(data):
     assert q(data, "SELECT scorecard_recorded FROM cdmss_ro.opd_note_audit WHERE uid='u-pqe'") == [(False,)]
 
 
-def test_opd_finding_exposes_structure_not_text(data):
+def test_opd_finding_exposes_structure_and_text(data):
     rows = q(data, "SELECT finding_no, domain, verdict, confidence, informational, signal_type, lvc_category, direction, concept_id, rule_ref FROM cdmss_ro.opd_finding WHERE uid='u-find' ORDER BY finding_no")
     assert rows[0] == (1, "appropriateness", "low_value", Decimal('0.8'), False, "antibiotic_stewardship", "antibiotic", "overuse", "overuse:order:cbc", "R5")
     assert rows[1][3] is None and rows[1][4] is None and len(rows) == 3  # junk confidence / informational -> NULL, no error
     assert col(data, "opd_finding", "uid", "uid IN ('u-fnull','u-fobj')") == []
-    dump = json.dumps(q(data, "SELECT * FROM cdmss_ro.opd_finding"), default=str)
-    assert "SECRET" not in dump
+    subj, ev, rat = q(data, "SELECT subject, evidence, rationale FROM cdmss_ro.opd_finding WHERE uid='u-find' AND finding_no=1")[0]
+    assert (subj, ev, rat) == ("SECRET-SUBJECT", ["SECRET-EVIDENCE"], "SECRET-RATIONALE")  # text is exposed by ruling
 
 
 # ---------------------------------------------------------------- other families, sites
@@ -271,6 +271,20 @@ def test_doctor_dim_has_roster_only_doctors_and_no_aliases(data):
     assert {r[0] for r in q(data, "SELECT doctor_uid FROM cdmss_ro.doctor_dim")} == {"D1", "D2"}
 
 
-def test_no_fixture_secret_is_reachable_through_any_view(data):
-    dump = json.dumps({v: q(data, f"SELECT * FROM cdmss_ro.{v}") for v in VIEWS}, default=str)
-    assert "SECRET" not in dump
+def test_identity_and_text_columns_are_exposed_by_ruling(data):
+    """gov-orch ruling 21 Oct: no PHI gating. Identity keys and stored finding text are readable through the views."""
+    def one(view, cols, where="true"):
+        return q(data, f"SELECT {cols} FROM cdmss_ro.{view} WHERE {where}")
+    assert one("ot_note_audit", "uhid, note, surgeon_raw, component_json", "uid='ot1'") == [("UHID-SECRET", "NOTE-SECRET", "SURGEON-SECRET", {"a": 1})]
+    assert one("preop_finding", "patient_name, uhid", "episode_key='ep1'") == [("NAME-SECRET", "UHID-SECRET")]
+    assert one("readmission_finding", "uhid, cm_note, finding", "index_encounter_id='IP-9'") == [("UHID-SECRET", "CMNOTE-SECRET", {"x": 1})]
+    assert one("ipd_discharge_audit", "document_id, member_id, report", "ip_uid='IP-1250'")[0][1:] == ("MEMBER-SECRET", {"x": "REPORT-SECRET"})
+    assert one("ipd_episode_audit", "real_course", "encounter_id='e1'") == [("COURSE-SECRET",)]
+    assert one("gov_signal", "latest_response, ruling") == [({"t": "RESPONSE-SECRET"}, {"t": "RULING-SECRET"})]
+    assert one("ccb_brief", "individual_uid, uhid, envelope") == [("IND-SECRET", "UHID-SECRET", {"x": "ENV-SECRET"})]
+    assert one("opd_note_audit", "consult_uid, kx_encounter_id, pdqi9", "uid='u-pqf'")[0][2] == {"accurate": 3}
+    assert one("doctor_dim", "alias_uids", "doctor_uid='D1'") == [(["D9"],)]
+    cols = [r[0] for r in q(data, "SELECT column_name FROM information_schema.columns WHERE table_schema='cdmss_ro'")]
+    assert not [c for c in cols if re.search(r"secret|token|password|api_?key|prompt|trace|raw_judge|stage_timings", c)]
+    assert {"clinical_review_decision", "clinical_review_quote", "clinical_review_model"} <= set(allowlist()["readmission_finding"])
+    assert "doctor_uid" not in allowlist()["ccb_brief"]  # UNVERIFIED-live: in no migration or runtime DDL

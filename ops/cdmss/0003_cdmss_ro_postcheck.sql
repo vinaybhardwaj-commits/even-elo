@@ -4,7 +4,7 @@
 --   2. cdmss_ro contains views only, each with SELECT and nothing else for the role (exact ACL);
 --   3. COLUMN ALLOWLIST: every column of every cdmss_ro view is in the list below and every listed column exists
 --      (a view or column added to 0002 without editing this list fails the run, and so does a missing one);
---   4. no column name from the PHI/free-text denylist appears anywhere in cdmss_ro.
+--   4. no secret / token / prompt / LLM-trace column name appears anywhere in cdmss_ro (PHI is allowed by ruling).
 -- The allowlist is the contract for what the CDMSS module can read. Widening it is a reviewed edit of THIS file.
 \set ECHO none
 \set QUIET on
@@ -58,20 +58,20 @@ BEGIN
   SELECT v.view_name, c.col
   FROM (VALUES
   ('ams_formulary', 'item_code generic generic_canon dosage_form major_grouping minor_grouping audit_category restricted high_risk lasa ved'),
-  ('ccb_brief', 'brief_id app_source presc_uid note_date coverage priority pitch_allowed n_findings n_cited citation_coverage_pct distinct_sources engine_version created_at'),
-  ('doctor_dim', 'doctor_uid doctor_name directory_speciality roster_specialty channel audit_active operational_active disabled directory_updated_at roster_updated_at'),
-  ('gov_signal', 'signal_id app_source reference doctor_uid signal_type importance response_required status window_from window_to sla_due_at note_class created_at updated_at'),
-  ('ipd_discharge_audit', 'audit_id app_source ip_uid speciality speciality_label discharge_type los_days discharged_at discharged_day_ist care_value_index band score_appropriateness score_efficiency score_safety score_cost score_documentation score_patient_centred completeness_pct n_findings n_low_value n_context_dependent billed_total engine_version grader_tier model provider audited_at site_code site_basis'),
-  ('ipd_episode_audit', 'audit_id app_source encounter_id ip_uid facility_name site_code site_basis speciality speciality_label admitted_at discharged_at los_days discharge_type divergence_index divergence_band band_uncertain scoring_status completeness_pct n_findings n_divergence_pass n_fidelity_pass n_omission n_commission n_timing n_sequencing n_divergent n_context_dependent n_unassessable n_concordant n_low_value n_dropped_invalid n_parse_failed capped_count penalty_total expectations_evaluated checkpoint_count run_seq engine_version audited_at'),
+  ('ccb_brief', 'brief_id app_source presc_uid individual_uid uhid kx_encounter_id note_date coverage priority pitch_allowed n_findings n_cited citation_coverage_pct distinct_sources envelope engine_version created_at'),
+  ('doctor_dim', 'doctor_uid doctor_name directory_speciality roster_specialty channel audit_active operational_active disabled alias_uids directory_updated_at roster_updated_at'),
+  ('gov_signal', 'signal_id app_source reference doctor_uid signal_type importance response_required status source_triage_ref window_from window_to sla_due_at latest_response ruling note_class created_at updated_at'),
+  ('ipd_discharge_audit', 'audit_id app_source document_id ip_uid member_id speciality speciality_label discharge_type los_days discharged_at discharged_day_ist care_value_index band score_appropriateness score_efficiency score_safety score_cost score_documentation score_patient_centred completeness_pct n_findings n_low_value n_context_dependent billed_total findings suggestions report engine_version grader_tier model provider audited_at site_code site_basis'),
+  ('ipd_episode_audit', 'audit_id app_source encounter_id ip_uid member_id facility_name site_code site_basis speciality speciality_label admitted_at discharged_at los_days discharge_type divergence_index divergence_band band_uncertain scoring_status completeness_pct n_findings n_divergence_pass n_fidelity_pass n_omission n_commission n_timing n_sequencing n_divergent n_context_dependent n_unassessable n_concordant n_low_value n_dropped_invalid n_parse_failed capped_count penalty_total expectations_evaluated checkpoint_count run_seq findings real_course commentary admission_context evidence_tiers error_detail engine_version audited_at'),
   ('lvc_concept', 'concept_id direction action target n_strings volume review_lane first_seen last_seen'),
   ('lvc_rule', 'rule_id region society specialty action_type category status merged_into source_release_year proposed_by ratified_by ratified_at created_at updated_at is_live statement'),
   ('lvc_rule_event', 'event_id rule_ref version event effective_at ratified_by created_at'),
   ('opd_engine_version', 'engine_version shape_ok in_family n_rows n_excluded first_audited_at last_audited_at'),
-  ('opd_finding', 'audit_id app_source uid doctor_uid note_day_ist engine_version finding_no domain verdict confidence source informational signal_type lvc_category direction concept_id rule_ref finding_ref stable_ref'),
-  ('opd_note_audit', 'audit_id app_source uid doctor_uid note_date note_day_ist prescription_type consult_type note_quality_index raw_band displayed_band score_documentation score_note_quality score_appropriateness score_prescribing_safety score_patient_centred pdqi9_assessed pdqi9_assessed_basis scorecard_recorded completeness_pct n_missing_mandatory n_findings n_low_value n_context_dependent n_interaction_alerts complexity_band engine_version grader_tier is_reference_model model provider audited_at'),
-  ('ot_note_audit', 'audit_id app_source note_class uid hospital_uid facility_id site_code site_basis surgery_name note_day doctor_uid map_status surgeon_mapped n_findings engine_version model audited_at'),
-  ('preop_finding', 'finding_id app_source episode_key engine_version hospital site_code site_basis department surgeon surgery_date tier rcri_lo rcri_hi mfi_lo mfi_hi cci_lo cci_hi needs_review booking_only pac_on_file pac_status pac_finalized_at pac_verdict version_no reviewed_at computed_at created_at updated_at'),
-  ('readmission_finding', 'finding_id app_source engine_version finding_class index_encounter_id readmit_encounter_id site_code site_basis lane tags gap_days index_department readmit_department index_doctor readmit_doctor index_discharge_at readmit_admit_at audit_status not_auditable_reason planned same_condition avoidable preventable_injury negligence judgement_rule_version n_omissions needs_human_review lab_tier audited_at created_at'),
+  ('opd_finding', 'audit_id app_source uid doctor_uid note_day_ist engine_version finding_no subject domain verdict confidence evidence rationale source informational signal_type lvc_category direction concept_id rule_ref finding_ref stable_ref'),
+  ('opd_note_audit', 'audit_id app_source uid consult_uid kx_encounter_id doctor_uid note_date note_day_ist prescription_type consult_type note_quality_index raw_band displayed_band score_documentation score_note_quality score_appropriateness score_prescribing_safety score_patient_centred pdqi9_assessed pdqi9_assessed_basis scorecard_recorded completeness_pct n_missing_mandatory n_findings n_low_value n_context_dependent n_interaction_alerts complexity_band pdqi9 scorecard completeness_items missing_fields complexity_inputs findings suggestions engine_version grader_tier is_reference_model model provider audited_at'),
+  ('ot_note_audit', 'audit_id app_source note_class uid encounter_id uhid hospital_uid facility_id site_code site_basis surgery_name surgeon_raw note_day doctor_uid map_status surgeon_mapped n_findings findings note component_json engine_version model audited_at'),
+  ('preop_finding', 'finding_id app_source episode_key individual_uid uhid patient_name age sex procedure engine_version hospital site_code site_basis department surgeon surgery_date tier rcri_lo rcri_hi mfi_lo mfi_hi cci_lo cci_hi needs_review booking_only pac_on_file pac_status pac_finalized_at pac_verdict version_no reviewed_at why_line missing_line situation_line snapshot extraction narrative computed_at created_at updated_at'),
+  ('readmission_finding', 'finding_id app_source dedup_key engine_version finding_class index_encounter_id readmit_encounter_id uhid member_uid form_uid payer_index payer_readmit site_code site_basis lane tags gap_days index_department readmit_department index_doctor readmit_doctor index_discharge_at readmit_admit_at audit_status not_auditable_reason planned same_condition avoidable preventable_injury negligence judgement_rule_version n_omissions needs_human_review lab_tier cm_note finding omission_evidence lab_source_provenance last_error clinical_review_decision clinical_review_clock_class clinical_review_lt24h_kind clinical_review_exclusion_claim clinical_review_quote clinical_review_actor clinical_review_at clinical_review_turn_id clinical_review_model audited_at created_at'),
   ('site_dim', 'vocabulary match_kind raw_value site_code code_evidence'),
   ('site_observed', 'source vocabulary raw_value site_code n_rows')
   ) AS v(view_name, cols), LATERAL regexp_split_to_table(v.cols, ' ') AS c(col);
@@ -93,16 +93,13 @@ BEGIN
     RAISE EXCEPTION 'postcheck: view count % differs from the allowlist', n_views;
   END IF;
 
-  -- DENYLIST: PHI / free-text column names must never appear in cdmss_ro, allowlisted or not.
+  -- DENYLIST: secrets, tokens, raw prompts and LLM traces must never appear in cdmss_ro, allowlisted or not (PHI is allowed:
+  -- governance has no PHI gating, gov-orch ruling 21 Oct).
   SELECT string_agg(i.table_name || '.' || i.column_name, ', ') INTO bad
     FROM information_schema.columns i
    WHERE i.table_schema = 'cdmss_ro'
-     AND i.column_name IN ('uhid', 'patient_name', 'member_id', 'member_uid', 'individual_uid', 'document_id', 'consult_uid',
-         'kx_encounter_id', 'form_uid', 'payer_index', 'payer_readmit', 'cm_note', 'finding', 'findings', 'note', 'component_json',
-         'surgeon_raw', 'real_course', 'commentary', 'report', 'snapshot', 'narrative', 'envelope', 'extracted_json', 'comment',
-         'rationale', 'evidence', 'subject', 'latest_response', 'ruling', 'age', 'sex', 'procedure', 'why_line', 'missing_line',
-         'situation_line', 'omission_evidence', 'lab_source_provenance', 'last_error', 'error_detail', 'raw_judge_error',
-         'admission_context', 'mobile_last4', 'alias_uids', 'dedup_key');
-  IF bad IS NOT NULL THEN RAISE EXCEPTION 'postcheck: denylisted column present: %', bad; END IF;
+     AND (i.column_name ~* '(secret|token|password|passwd|api_?key|credential|prompt|trace|stage_timings|raw_judge)'
+          OR i.column_name IN ('model_checkpoint', 'model_judge', 'retrieval_query'));
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'postcheck: secret/trace column present: %', bad; END IF;
 END
 $$;
