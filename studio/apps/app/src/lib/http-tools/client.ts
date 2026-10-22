@@ -50,7 +50,7 @@ export async function callToolRoute(
 export const HTTP_TOOL_DESCRIPTIONS: Record<HttpToolName, string> = {
   eiris_incidents:
     "e-IRIS incident register (safety/M&M). view=summary: open and closed counts by severity plus all-time totals and M&M case counts. " +
-    "view=list: incidents with id, status, dates, severity, RCA flag. Read-only. Present the result as a table with its source.",
+    "view=list: incidents with id, status, dates, severity, RCA flag. since/until filter by reported date; a summary with a range counts only those incidents, by severity and by type (category). Read-only. Present the result as a table with its source.",
   eiris_incident_detail:
     "One e-IRIS incident by id (e.g. EHRC-INC-2026-0001): classification, dates, SLA state, patient and reporter details, narrative, immediate action, RCA root cause and CAPA actions. Read-only.",
   opd_signals:
@@ -70,6 +70,8 @@ export const HTTP_TOOL_CLIENT_PARAMS = {
     view: z.enum(["summary", "list"]).optional().describe("summary (default) or list"),
     status: z.enum(["open", "closed"]).optional(),
     severity: z.string().optional().describe("severity name, e.g. major"),
+    since: z.string().optional().describe("reported on or after this date: YYYY-MM-DD (Asia/Kolkata day) or ISO date-time"),
+    until: z.string().optional().describe("reported on or before this date: YYYY-MM-DD (whole day) or ISO date-time"),
     limit: z.number().optional().describe("max incidents, 1-200"),
   }),
   eiris_incident_detail: z.object({ incident_id: z.string().describe("Incident id such as EHRC-INC-2026-0001") }),
@@ -84,6 +86,8 @@ export const HTTP_TOOL_CLIENT_PARAMS = {
     doctor_uid: z.string().optional().describe("CDMSS doctor uid"),
     hospital: z.string().optional().describe("hospital code, e.g. EHRC"),
     window_days: z.number().optional().describe("look-back window, 1-365 (default 30)"),
+    since: z.string().optional().describe("routed on or after this date: YYYY-MM-DD (Asia/Kolkata day) or ISO date-time"),
+    until: z.string().optional().describe("routed on or before this date: YYYY-MM-DD (whole day) or ISO date-time"),
     limit: z.number().optional().describe("max threads, 1-200"),
   }),
   audit_finding_detail: z.object({ reference: z.string().describe("Thread reference such as EHRC-AUD-2026-0042") }),

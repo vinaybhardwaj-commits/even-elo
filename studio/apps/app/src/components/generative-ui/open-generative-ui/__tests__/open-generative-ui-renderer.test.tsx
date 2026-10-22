@@ -1,4 +1,5 @@
-import { render, cleanup, act } from "@testing-library/react";
+import { render, cleanup, act, screen } from "@testing-library/react";
+import "@testing-library/jest-dom/vitest";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React from "react";
 import { z } from "zod";
@@ -13,7 +14,7 @@ import {
   LOADING_PHRASES,
   type OpenGenUIContent,
 } from "../index";
-import { THROTTLE_MS } from "../renderer";
+import { SANDBOX_FAILED_TEXT, SANDBOX_READY_TIMEOUT_MS, THROTTLE_MS } from "../renderer";
 import { CSP_CONTENT, PREVIEW_FRAME_CONTENT } from "../frame-content";
 
 // The react-core v2 dist entry imports index.css, which vitest's node loader
@@ -378,6 +379,38 @@ describe("OpenGenUIActivityRenderer", () => {
     );
     await flushImport();
     expect(exprCalls()).toEqual(["expr1()", "expr2()", "expr3()"]);
+  });
+
+  it("exposes its state on the page and names the frame: loading until the final sandbox is ready, then rendered", async () => {
+    // The frame's document is opaque to the page, so a check for an svg or canvas from the page finds nothing even
+    // when the chart is drawn; data-ogui-state and the frame's title are what the page can see.
+    const { container } = renderRenderer({ initialHeight: 200, html: ["<svg></svg>"], htmlComplete: true, generating: false });
+    await flushImport();
+    const frame = container.querySelector("[data-ogui-state]") as HTMLElement;
+    expect(frame.dataset.oguiState).toBe("loading");
+    expect(frame).toHaveAttribute("aria-label", "Generated visual");
+    await resolveSandboxReady();
+    expect(frame.dataset.oguiState).toBe("rendered");
+    expect(mockIframe.title).toBe("Generated visual");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("a final sandbox that never reports ready is shown as failed with a visible message, not an empty box", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const { container } = renderRenderer({ initialHeight: 200, html: ["<svg></svg>"], htmlComplete: true, generating: false });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(mockCreate).toHaveBeenCalled();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(SANDBOX_READY_TIMEOUT_MS);
+      });
+      expect((container.querySelector("[data-ogui-state]") as HTMLElement).dataset.oguiState).toBe("failed");
+      expect(screen.getByRole("alert")).toHaveTextContent(SANDBOX_FAILED_TEXT);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("updates container height on every __ogui_resize message from the sandbox iframe", async () => {

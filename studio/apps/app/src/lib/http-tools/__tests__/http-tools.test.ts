@@ -103,6 +103,28 @@ describe("HTTP read tools", () => {
     expect(sev.rows.map((x) => x.id)).toEqual(["EHRC-INC-2026-0002"]);
   });
 
+  it("eiris_incidents since/until: a range summary counts only those incidents, by severity and type, with no all-time totals", async () => {
+    const r = await runHttpTool("eiris_incidents", { since: "2026-09-15", until: "2026-10-22" }, ACTOR);
+    const p = SourceTablePayload.parse(r.body);
+    expect(p.rows).toEqual([
+      { scope: "severity", key: "major", open: 1, closed: 1, total: 2 },
+      { scope: "type", key: "Fall", open: 1, closed: 0, total: 1 },
+      { scope: "type", key: "Med", open: 0, closed: 1, total: 1 },
+      { scope: "range", key: "2026-09-15..2026-10-22", open: 1, closed: 1, total: 2 },
+    ]);
+    // The all-time stats are neither fetched nor shown for a range.
+    expect(calls.some((c) => c.url.endsWith("/stats"))).toBe(false);
+    expect(audits().at(-1).params).toEqual({ since: "2026-09-15", until: "2026-10-22" });
+    const list = SourceTablePayload.parse((await runHttpTool("eiris_incidents", { view: "list", until: "2026-09-30" }, ACTOR)).body);
+    expect(list.rows.map((x) => x.id)).toEqual(["EHRC-INC-2026-0002", "EHRC-INC-2026-0003"]);
+  });
+
+  it("eiris_incidents refuses malformed dates", async () => {
+    for (const since of ["last month", "2026-13-01", "22/10/2026", "2026-10-22; drop"]) {
+      expect((await runHttpTool("eiris_incidents", { since }, ACTOR)).status).toBe(422);
+    }
+  });
+
   it("eiris_incidents summary survives a stats outage", async () => {
     const base = upstream;
     upstream = (url) => (url.endsWith("/stats") ? json({}, 500) : base(url));

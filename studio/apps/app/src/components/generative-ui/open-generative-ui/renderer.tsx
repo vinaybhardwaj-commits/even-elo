@@ -20,6 +20,10 @@ import { loadWebsandbox, type SandboxInstance } from "./websandbox-loader";
 export const THROTTLE_MS = 1000;
 const MIN_HEIGHT = 50;
 const MAX_HEIGHT = 4000;
+/** A final sandbox that has not reported ready by then (module load failed, bootstrap blocked) is shown as failed. */
+export const SANDBOX_READY_TIMEOUT_MS = 10_000;
+export const SANDBOX_FAILED_TEXT = "This visual could not be displayed. Ask again to retry.";
+export const FRAME_LABEL = "Generated visual";
 
 /**
  * Clamp a sandbox-reported height to the allowed range. Returns null for
@@ -137,6 +141,8 @@ interface InnerProps {
 }
 
 function styleIframe(iframe: HTMLIFrameElement) {
+  // The frame's document is opaque to the page (sandboxed, no same-origin), so the frame itself carries the name.
+  iframe.title = FRAME_LABEL;
   iframe.style.width = "100%";
   iframe.style.height = "100%";
   iframe.style.border = "none";
@@ -147,6 +153,8 @@ const OpenGenUIActivityRendererInner = React.memo(
   function OpenGenUIActivityRendererInner({ content }: InnerProps) {
     const initialHeight = content.initialHeight ?? 200;
     const [autoHeight, setAutoHeight] = useState<number | null>(null);
+    // Outcome of the final sandbox, keyed by the html it was built for: a new final frame reads as pending.
+    const [finalOutcome, setFinalOutcome] = useState<{ html: string; status: "ready" | "failed" } | null>(null);
     const sandboxFunctions = useSandboxFunctions();
 
     const localApi = useMemo(() => {
@@ -256,6 +264,9 @@ const OpenGenUIActivityRendererInner = React.memo(
       }
 
       let cancelled = false;
+      const readyTimer = setTimeout(() => {
+        if (!cancelled && !sandboxReadyRef.current) setFinalOutcome({ html: fullHtml, status: "failed" });
+      }, SANDBOX_READY_TIMEOUT_MS);
 
       executedIndexRef.current = 0;
       jsFunctionsInjectedRef.current = false;
@@ -291,6 +302,7 @@ const OpenGenUIActivityRendererInner = React.memo(
           sandbox.promise.then(() => {
             if (cancelled) return;
             sandboxReadyRef.current = true;
+            setFinalOutcome({ html: fullHtml, status: "ready" });
 
             sandbox.run(MEASUREMENT_JS);
 
@@ -305,10 +317,12 @@ const OpenGenUIActivityRendererInner = React.memo(
         })
         .catch((err: unknown) => {
           console.error("[OpenGenUI] Failed to load sandbox module:", err);
+          if (!cancelled) setFinalOutcome({ html: fullHtml, status: "failed" });
         });
 
       return () => {
         cancelled = true;
+        clearTimeout(readyTimer);
         window.removeEventListener("message", onMessage);
         if (previewSandboxRef.current) {
           previewSandboxRef.current.destroy();
@@ -376,7 +390,11 @@ const OpenGenUIActivityRendererInner = React.memo(
 
     const height = autoHeight ?? initialHeight;
     const isGenerating = content.generating !== false;
+    const finalState = fullHtml && finalOutcome?.html === fullHtml ? finalOutcome.status : "pending";
+    const failed = finalState === "failed";
     const showLoading = isGenerating && !hasVisibleSandbox;
+    // Readable from the page (and by a test or probe) even though the frame's document is not.
+    const state = failed ? "failed" : fullHtml ? (finalState === "ready" ? "rendered" : "loading") : hasPreview ? "preview" : "loading";
     const loadingPhrase = useLoadingPhrase(showLoading);
 
     const isComplete = !isGenerating && !!content.htmlComplete;
@@ -396,6 +414,10 @@ const OpenGenUIActivityRendererInner = React.memo(
     const frame = (
       <div
         ref={containerRef}
+        role="group"
+        aria-label={FRAME_LABEL}
+        aria-busy={state === "loading" || state === "preview"}
+        data-ogui-state={state}
         style={{
           position: "relative",
           width: "100%",
@@ -411,6 +433,14 @@ const OpenGenUIActivityRendererInner = React.memo(
           transition: "height 200ms ease-out",
         }}
       >
+        {failed && (
+          <p
+            role="alert"
+            style={{ position: "absolute", inset: 0, margin: 0, display: "flex", alignItems: "center", justifyContent: "center", padding: "12px", textAlign: "center", fontSize: "13px", color: "var(--color-text-secondary, #666)", background: "var(--color-background-secondary, #f7f6f3)" }}
+          >
+            {SANDBOX_FAILED_TEXT}
+          </p>
+        )}
         {showLoading && (
           <div
             style={{

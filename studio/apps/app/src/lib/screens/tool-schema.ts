@@ -44,6 +44,9 @@ export type SourceTablePayload = z.infer<typeof SourceTablePayload>;
 const uuid = z.string().uuid();
 const limit = z.number().int().min(1).max(200);
 const windowDays = z.number().int().min(1).max(365);
+/** A date (YYYY-MM-DD, read as an Asia/Kolkata calendar day) or an ISO date-time with an optional offset. */
+export const DATE_BOUND_RE = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d{1,6})?)?(Z|[+-]\d{2}:\d{2})?)?$/;
+const dateBound = z.string().regex(DATE_BOUND_RE).refine((v) => !Number.isNaN(Date.parse(v.length === 10 ? `${v}T00:00:00Z` : v)));
 
 // Strict: unknown keys are refused, so a caller cannot smuggle SQL, a staff id or anything else.
 export const SCREEN_TOOL_PARAMS = {
@@ -123,6 +126,8 @@ export const HTTP_TOOL_PARAMS = {
       view: z.enum(["summary", "list"]).optional(),
       status: z.enum(["open", "closed"]).optional(),
       severity: z.string().max(40).optional(),
+      since: dateBound.optional(),
+      until: dateBound.optional(),
       limit: limit.optional(),
     })
     .strict(),
@@ -141,6 +146,8 @@ export const HTTP_TOOL_PARAMS = {
       doctor_uid: z.string().regex(DOCTOR_UID_RE).optional(),
       hospital: z.string().regex(HOSPITAL_CODE_RE).optional(),
       window_days: windowDays.optional(),
+      since: dateBound.optional(),
+      until: dateBound.optional(),
       limit: limit.optional(),
     })
     .strict(),

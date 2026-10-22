@@ -5,7 +5,7 @@
 // note and actor, finding rationale and subject, timeline notes. A timeline actor is still reduced to its class.
 
 import type { SourceTablePayload } from "@/lib/screens/tool-schema";
-import { makePayload, type PayloadMeta } from "./transform";
+import { inRange, makePayload, type PayloadMeta } from "./transform";
 
 type Cell = string | number | boolean | null;
 type Row = Record<string, Cell>;
@@ -129,6 +129,8 @@ export interface FindingsFilter {
   view?: AuditView;
   status?: string;
   hospital?: string;
+  since?: string;
+  until?: string;
   limit: number;
 }
 
@@ -137,7 +139,7 @@ export function toFindingsPayload(meta: PayloadMeta, body: unknown, f: FindingsF
   const view = f.view ?? "attention";
   const all = threadsFromRoster(body);
   const rows = all
-    .filter((t) => inView(t, view) && (!f.status || t.status === f.status) && (!f.hospital || t.hospital === f.hospital))
+    .filter((t) => inView(t, view) && (!f.status || t.status === f.status) && (!f.hospital || t.hospital === f.hospital) && inRange(t.routed_at, f))
     .sort((a, b) => Number(needsAttention(b)) - Number(needsAttention(a)) || (b.routed_at ?? "").localeCompare(a.routed_at ?? ""))
     .slice(0, f.limit)
     .map((t): Row => ({
