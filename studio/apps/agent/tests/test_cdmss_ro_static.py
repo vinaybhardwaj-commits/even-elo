@@ -52,8 +52,8 @@ def test_role_file_asserts_the_limits():
 def test_views_file_shape():
     c = code(SQL_VIEWS)
     views = re.findall(r"CREATE VIEW (cdmss_ro\.[a-z_]+) WITH \(security_barrier = true\) AS", c)
-    assert len(views) == 17 == len(re.findall(r"\bCREATE VIEW\b", c)) == len(set(views))
-    assert len(re.findall(r"^DROP VIEW IF EXISTS", c, re.M)) == 17
+    assert len(views) == 16 == len(re.findall(r"\bCREATE VIEW\b", c)) == len(set(views))
+    assert len(re.findall(r"^DROP VIEW IF EXISTS", c, re.M)) == 17  # 16 + the retired lvc_rule_event
     assert "security_invoker" not in c
     assert not re.search(r"SELECT\s+\*\s+FROM|\b[a-z]\.\*", c), "no SELECT * / alias.*: columns are listed"
     assert not re.search(r"^\s*(INSERT INTO|UPDATE |DELETE FROM|TRUNCATE |ALTER TABLE|CREATE TABLE)", c, re.M)
@@ -77,4 +77,4 @@ def test_migration_failures_are_the_documented_ones(cdmss):
     assert got2 == SECOND_PASS_FAILS, got2 ^ SECOND_PASS_FAILS
     # every table the views read exists after the build
     rows = cdmss.su_exec("SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname='cdmss_ro' AND c.relkind='v'")
-    assert rows[0][0] == 17
+    assert rows[0][0] == 16

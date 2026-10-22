@@ -41,7 +41,7 @@ def test_owner_run_is_idempotent_and_leaves_the_role_nologin(cdmss, tmp_path):
         p = run(cdmss, [str(f)])
         assert p.returncode == 0, p.stderr
         assert "post-check passed" in p.stdout and "no password" in p.stdout
-    assert view_count(cdmss) == 17
+    assert view_count(cdmss) == 16
     assert cdmss.su_exec("SELECT rolcanlogin FROM pg_roles WHERE rolname='studio_cdmss_ro'") == [(False,)]
     p = run(cdmss, ["--check", str(f)])
     assert p.returncode == 0 and "nothing changed" in p.stdout
@@ -51,7 +51,7 @@ def test_refuses_a_superuser(cdmss, tmp_path):
     f = url_file(tmp_path, cdmss.su_cdmss, "su")
     p = run(cdmss, [str(f)])
     assert p.returncode == 3 and "superuser" in p.stderr
-    assert view_count(cdmss) == 17  # nothing was touched
+    assert view_count(cdmss) == 16  # nothing was touched
 
 
 def test_missing_owner_file_and_secret_never_on_argv(cdmss, tmp_path):
@@ -73,7 +73,7 @@ def test_a_failed_postcheck_rolls_the_whole_run_back(cdmss, tmp_path):
     p = run(cdmss, [str(f)], {"CDMSS_RO_SQL_DIR": str(d)})
     assert p.returncode != 0 and "postcheck" in p.stderr
     names = {r[0] for r in cdmss.su_exec("SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='cdmss_ro'")}
-    assert "leak" not in names and view_count(cdmss) == 17  # rolled back; the earlier good views are intact
+    assert "leak" not in names and view_count(cdmss) == 16  # rolled back; the earlier good views are intact
     # and the shipped files still pass afterwards
     assert run(cdmss, ["--check", str(f)]).returncode == 0
 

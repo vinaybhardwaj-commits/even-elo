@@ -105,4 +105,4 @@ for f in "${files[@]}"; do args+=(-f "$sql_dir/$f"); done
 PGSERVICEFILE="$tmp/svc" "$psql_bin" -X -q --single-transaction -v ON_ERROR_STOP=1 "${args[@]}" "service=owner" >/dev/null
 
 if [[ $check -eq 1 ]]; then echo "studio_cdmss_ro: post-check passed (nothing changed)"
-else echo "studio_cdmss_ro: role (NOLOGIN, no password) + 17 views created/refreshed and post-check passed; next: issue the password via the Neon API, then enable LOGIN"; fi
+else echo "studio_cdmss_ro: role (NOLOGIN, no password) + 16 views created/refreshed and post-check passed; next: issue the password via the Neon API, then enable LOGIN"; fi

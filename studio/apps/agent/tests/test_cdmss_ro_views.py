@@ -14,7 +14,7 @@ from tests.cdmss_harness import ROLE, SQL_POST, cdmss, needs_env  # noqa: F401  
 pytestmark = needs_env
 
 VIEWS = (
-    "ams_formulary ccb_brief doctor_dim gov_signal ipd_discharge_audit ipd_episode_audit lvc_concept lvc_rule lvc_rule_event "
+    "ams_formulary ccb_brief doctor_dim gov_signal ipd_discharge_audit ipd_episode_audit lvc_concept lvc_rule "
     "opd_engine_version opd_finding opd_note_audit ot_note_audit preop_finding readmission_finding site_dim site_observed"
 ).split()
 
@@ -170,7 +170,7 @@ def test_role_settings_and_no_membership(data):
 
 def test_security_barrier_owner_owned_no_invoker(data):
     rows = data.su_exec("SELECT c.relname, c.reloptions, pg_get_userbyid(c.relowner) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='cdmss_ro'")
-    assert len(rows) == 17
+    assert len(rows) == 16
     for name, opts, owner in rows:
         assert "security_barrier=true" in opts and not any("security_invoker" in o for o in opts), name
         assert owner == "neondb_owner"
