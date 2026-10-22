@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, renderHook, waitFor } from "@testing-library/react";
-import { SCREEN_CACHE_TTL_MS, clearScreenCache, useScreenTool } from "./use-screen-tool";
+import { SCREEN_CACHE_TTL_MS, clearScreenCache, describeScreenError, useScreenTool } from "./use-screen-tool";
 
 const ok = () =>
   new Response(
@@ -69,5 +69,34 @@ describe("useScreenTool cache", () => {
     const retried = renderHook(() => useScreenTool("overview_counts", {}));
     await waitFor(() => expect(retried.result.current.status).toBe("ok"));
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("a dropped connection is retried once before it is shown; a timeout and a refusal are shown at once", async () => {
+    // Live: first load of Physicians / Physician 360 showed "The agent is unreachable"; a manual Retry fixed it.
+    const err = (code: string, status = 502) => new Response(JSON.stringify({ ok: false, error: code }), { status });
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValueOnce(err("agent_unreachable")).mockImplementation(async () => ok());
+    const healed = renderHook(() => useScreenTool("overview_counts", {}));
+    await waitFor(() => expect(healed.result.current.status).toBe("ok"), { timeout: 3000 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    healed.unmount();
+
+    clearScreenCache();
+    fetchMock.mockReset();
+    fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch")).mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    const down = renderHook(() => useScreenTool("overview_counts", {}));
+    await waitFor(() => expect(down.result.current).toMatchObject({ status: "error", code: "agent_unreachable" }), { timeout: 3000 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    down.unmount();
+
+    for (const [code, status] of [["agent_timeout", 504], ["rate_limited", 429]] as const) {
+      fetchMock.mockReset();
+      fetchMock.mockResolvedValueOnce(err(code, status));
+      const shown = renderHook(() => useScreenTool("overview_counts", {}));
+      await waitFor(() => expect(shown.result.current).toMatchObject({ status: "error", code }));
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      shown.unmount();
+    }
+    expect(describeScreenError("agent_timeout")).toBe("The agent took too long to answer. Retry in a moment.");
   });
 });

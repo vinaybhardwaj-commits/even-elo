@@ -4,6 +4,7 @@ import { agentHeaders } from "@/lib/zone/actor-token";
 import { ACTOR_ID_HEADER, ACTOR_ROLE_HEADER } from "@/lib/zone/authorize";
 import { SCREEN_TOOL_PARAMS, SourceTablePayload, isGovernanceTool, isHttpTool } from "@/lib/screens/tool-schema";
 import { runHttpTool } from "@/lib/http-tools/run";
+import { fetchAgent, isTimeout } from "@/lib/agent-fetch";
 
 // Screen reads (M1). A fixed Studio layout asks for ONE named governance read tool with typed params; this
 // route forwards it to the agent's POST /agent/tools/<name> with the same service token and actor JWT the
@@ -71,17 +72,22 @@ export const POST = async (req: NextRequest, ctx: { params: Promise<{ tool: stri
 
   let res: Response;
   try {
-    res = await fetch(`${normalizeLanggraphUrl(agentUrl).replace(/\/+$/, "")}/tools/${tool}`, {
-      method: "POST",
-      headers: { ...headers, "Content-Type": "application/json" },
-      body: JSON.stringify(parsed.data),
-      cache: "no-store",
-      // Never follow redirects from the agent service (same as the chat route). Fail closed.
-      redirect: "error",
-      signal: AbortSignal.timeout(AGENT_TIMEOUT_MS),
-    });
-  } catch {
-    return fail(502, "agent_unreachable");
+    // A stale kept-alive socket is retried once inside fetchAgent (the first read after an idle spell).
+    res = await fetchAgent(
+      `${normalizeLanggraphUrl(agentUrl).replace(/\/+$/, "")}/tools/${tool}`,
+      {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify(parsed.data),
+        cache: "no-store",
+        // Never follow redirects from the agent service (same as the chat route). Fail closed.
+        redirect: "error",
+      },
+      AGENT_TIMEOUT_MS,
+    );
+  } catch (err) {
+    // Slow is not down: a timeout says so, so the screen does not report a running agent as unreachable.
+    return isTimeout(err) ? fail(504, "agent_timeout") : fail(502, "agent_unreachable");
   }
 
   if (res.status === 429) return fail(429, "rate_limited", { "Retry-After": "60" });
