@@ -15,7 +15,8 @@ from pathlib import Path
 
 STALE_LIMIT = 20
 STALE_AGE_S = 2 * 3600
-CLEAN_CMD = "find {tmp} -maxdepth 1 -name 'neon-emu-*' -mmin +120 -exec rm -rf {{}} +"
+STALE_PREFIXES = ("neon-emu-", "studio-pg-", "studio-live-staff-", "studio-pins-", "studio-real-schema-")
+CLEAN_CMD = "find {tmp} -maxdepth 1 \\( " + " -o ".join(f"-name '{p}*'" for p in STALE_PREFIXES) + " \\) -mmin +120 -exec rm -rf {{}} +"
 
 _lock = threading.Lock()
 _root = None
@@ -29,7 +30,7 @@ def temp_root() -> Path:
 def stale_dirs(now=None):
     now = now or time.time()
     out = []
-    for p in temp_root().glob("neon-emu-*"):
+    for p in (q for pre in STALE_PREFIXES for q in temp_root().glob(pre + "*")):
         try:
             if p != _root and now - p.stat().st_mtime > STALE_AGE_S:
                 out.append(p)
@@ -44,7 +45,7 @@ def guard():
     if n > STALE_LIMIT:
         cmd = CLEAN_CMD.format(tmp=temp_root())
         raise RuntimeError(
-            f"{n} stale neon-emu-* dirs older than 2 h in {temp_root()} (limit {STALE_LIMIT}). Earlier runs leaked pgserver "
+            f"{n} stale pgserver test dirs older than 2 h in {temp_root()} (limit {STALE_LIMIT}). Earlier runs leaked pgserver "
             f"clusters. Check nobody else is using them, then clean up with:\n  {cmd}"
         )
 
@@ -115,12 +116,10 @@ def install_handlers():
     atexit.register(cleanup_all)
     if threading.current_thread() is not threading.main_thread():
         return
-    prev = signal.getsignal(signal.SIGTERM)
-
     def on_term(signum, frame):
         cleanup_all()
-        if callable(prev):
-            prev(signum, frame)
-        raise SystemExit(128 + signum)
+        # Do not raise into a running test: re-deliver the signal with the default action so the run really ends (exit 143).
+        signal.signal(signum, signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
 
     signal.signal(signal.SIGTERM, on_term)
