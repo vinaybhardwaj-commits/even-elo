@@ -113,7 +113,10 @@ if [ -z "$since" ]; then
   if [ -n "$ts" ] && since=$(date -d "$ts" '+%Y-%m-%d %H:%M:%S' 2>/dev/null); then src="agent start"; else since=""; fi
 fi
 jargs=(--no-pager -a -o cat)
-if [ -n "$since" ]; then jargs+=(--since "$since"); echo "egress session: since $since ($src)"; else echo "egress session: whole journal (no agent start time, no STUDIO_SESSION_SINCE)"; fi
+if [ -n "$since" ]; then
+  jargs+=(--since "$since"); echo "egress session: since $since ($src)"
+  [ "$src" != "agent start" ] || echo "  (the window starts at the agent's LAST start: a restart mid-session truncates it; for the whole session run with STUDIO_SESSION_SINCE=\"YYYY-MM-DD HH:MM:SS\" set to its start)"
+else echo "egress session: whole journal (no agent start time, no STUDIO_SESSION_SINCE)"; fi
 sqlog=$(mktemp); pflog=$(mktemp)
 if journalctl "${jargs[@]}" -t squid >"$sqlog" 2>"$errfile" && journalctl "${jargs[@]}" -u studio-prefilter >"$pflog" 2>>"$errfile" && [ ! -s "$errfile" ]; then
   awk -v hosts="$( [ -r /etc/studio-proxy/hosts.txt ] && tr '\n' ' ' </etc/studio-proxy/hosts.txt )" '

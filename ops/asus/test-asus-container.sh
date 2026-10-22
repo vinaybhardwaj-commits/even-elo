@@ -272,9 +272,13 @@ check "dropped hellos never became a tunnel at squid (no new TCP_TUNNEL line)" "
 if [ "$INTERNET" = 1 ]; then
   check "synthetic hello WITHOUT ECH to the allowed name passes the pre-filter: the far side answers (TLS record back)" "r=\$($PFC api.typesafe.ai:443 plain); [[ \$r == reply:* ]]"
   check "synthetic hello with no extensions at all is not dropped by the pre-filter (cannot carry ECH; the far side may still refuse it)" "n=\$(journalctl -u studio-prefilter --no-pager -o cat | grep -c 'prefilter drop'); $PFC api.typesafe.ai:443 noext >/dev/null; sleep 1; [ \"\$(journalctl -u studio-prefilter --no-pager -o cat | grep -c 'prefilter drop')\" = \"\$n\" ]"
+  check "F1: clean first hello, the far side answers, then a SECOND hello with ECH 0xfe0d on the same tunnel: dropped after the first reply" "[ \"\$($PFC api.typesafe.ai:443 hrr-ech)\" = dropped-after-first-reply ] && sleep 1 && journalctl -u studio-prefilter --no-pager -o cat | grep -q 'prefilter drop reason=ech target=api.typesafe.ai:443 ext=0xfe0d phase=after-first-hello'"
+  check "F3: the agent's own venv Python (httpx / ssl, X25519MLKEM768-era hello) through the pre-filter gets an HTTP status from api.typesafe.ai" "$AS env HTTPS_PROXY=http://127.0.0.1:8888 NO_PROXY=127.0.0.1 /opt/studio-agent/current/venv/bin/python -c 'import httpx,sys; r=httpx.get(\"https://api.typesafe.ai/\", timeout=20); print(r.status_code); sys.exit(0 if r.status_code else 1)'"
+  check "F3: ... and botocore/urllib3 to Bedrock (unsigned: 403 is the expected application answer)" "$AS env HTTPS_PROXY=http://127.0.0.1:8888 AWS_EC2_METADATA_DISABLED=true /opt/studio-agent/current/venv/bin/python -c 'import urllib3,sys; r=urllib3.ProxyManager(\"http://127.0.0.1:8888\").request(\"GET\",\"https://bedrock-runtime.ap-south-1.amazonaws.com/\", timeout=20, retries=False); print(r.status); sys.exit(0 if r.status else 1)'"
   check "normal hello (openssl) through the pre-filter to an allowed name gets a real TLS handshake and a certificate" "timeout 20 $SCL -connect api.typesafe.ai:443 -servername api.typesafe.ai </dev/null 2>&1 | grep -q 'Verification\\|subject='"
   check "normal hello through the pre-filter reaches the application: curl via the proxy gets an HTTP status" "$AS curl -s -m 15 -o /dev/null -w '%{http_code}' -x http://127.0.0.1:8888 https://api.typesafe.ai/ | grep -qv 000"
 fi
+check "F2: another local uid (nobody) cannot reach the pre-filter (nft: only the agent and relay uids), the agent uid can" "! runuser -u nobody -- timeout 5 bash -c '</dev/tcp/127.0.0.1/8888' && $AS timeout 5 bash -c '</dev/tcp/127.0.0.1/8888' && nft list table inet studio_agent | grep -E 'tcp dport 8888 ip daddr 127.0.0.1 meta skuid != ' | grep -q 'counter packets [1-9]'"
 check "pre-filter unit: no AF_UNIX, loopback only, own user, hardened (NoNewPrivileges, empty caps, MemoryDenyWriteExecute)" 'u=$(systemctl cat studio-prefilter); grep -q "^User=studio-prefilter" <<<"$u" && grep -q "^IPAddressAllow=127.0.0.1/32$" <<<"$u" && grep -q "^RestrictAddressFamilies=AF_INET AF_INET6$" <<<"$u" && grep -q "^NoNewPrivileges=yes" <<<"$u" && grep -q "^CapabilityBoundingSet=$" <<<"$u" && grep -q "^MemoryDenyWriteExecute=yes" <<<"$u"'
 if [ "$INTERNET" = 1 ]; then
   check "R3-3.2: SNI-mismatch termination is logged (bump=terminate, sni=example.com, in= out= present)" "journalctl -t squid --no-pager -o cat | grep -Eq 'CONNECT api.typesafe.ai:443 sni=example.com in=[0-9]+ out=[0-9]+ bump=terminate'"
@@ -447,6 +451,7 @@ CAN=CANARY-PATIENT-7731904
 PSC=/root/asus/post-session-check.sh
 x 'systemctl start studio-agent-egress-refresh.service'
 check "clean run exits 0" "printf %s $CAN | $PSC"
+check "F5: the default window names the agent start it used and how to override it" "o=\$(printf %s $CAN | $PSC); grep -q 'egress session: since .*(agent start)' <<<\"\$o\" && grep -q 'STUDIO_SESSION_SINCE' <<<\"\$o\""
 x "printf %s $CAN | STUDIO_SESSION_SINCE='2020-01-01 00:00:00' $PSC" >"$WORK/psc.egress" 2>&1; rc=$?
 echo "     post-session egress report:"; grep '^egress' "$WORK/psc.egress" | sed 's/^/       /'
 [ "$rc" = 0 ] && grep -q '^egress session: since 2020-01-01' "$WORK/psc.egress" && ok "R3-3.2: post-session-check reports the egress session header (clean run still exit 0)" || bad "post-session egress header (rc=$rc)"

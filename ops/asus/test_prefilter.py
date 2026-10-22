@@ -2,9 +2,10 @@
 """Synthetic-byte tests for studio-ech-prefilter.py (no network except loopback). Also usable as a client:
 
   test_prefilter.py client PORT TARGET KIND     # CONNECT TARGET via 127.0.0.1:PORT, send a synthetic hello of KIND, print the outcome
-KIND: plain | ech | ech-draft02 | ech-draftff02 | garbage | oversize | truncated | dup | fragmented | noext
+KIND: hrr-ech (clean hello, the far side's answer, then a second hello with ECH) | plain | ech | ech-draft02 | ech-draftff02 | garbage | oversize | truncated | dup | fragmented | noext
 Outcomes: "dropped" (connection closed with no TLS reply), "reply:<first byte hex>" (the far side answered), "refused".
 """
+import asyncio
 import importlib.util
 import os
 import socket
@@ -130,6 +131,199 @@ class Parse(unittest.TestCase):
         self.bad(b"\x16\x03\x01\x40\x01" + b"\x01\xff\xff\xff" + b"\x00" * 100, None)
 
 
+HRR_RANDOM = bytes.fromhex("cf21ad74e59a6111be1d8c021e65b891c2a211167abb8c5e079e09e2c8a8339c")
+
+
+def hrr_record():
+    """A server HelloRetryRequest: ServerHello with the fixed HRR random, supported_versions 1.3 and a key_share selected group."""
+    exts = ext(43, b"\x03\x04") + ext(51, b"\x00\x1d")
+    body = b"\x03\x03" + HRR_RANDOM + b"\x20" + b"\x01" * 32 + b"\x13\x01" + b"\x00" + struct.pack(">H", len(exts)) + exts
+    return record(b"\x02" + len(body).to_bytes(3, "big") + body)
+
+
+CCS = b"\x14\x03\x03\x00\x01\x01"
+
+
+class Stream(unittest.TestCase):
+    """What the filter does with client bytes AFTER the first ClientHello (HelloRetryRequest second hello, pipelined hellos)."""
+
+    def feed(self, *chunks):
+        cs, out = pf.ClientStream(), b""
+        for c in chunks:
+            o, why = cs.feed(c)
+            if why:
+                return out, why
+            out += o
+        return out, None
+
+    def test_clean_second_hello_passes_byte_for_byte(self):
+        data = CCS + make("plain")
+        out, why = self.feed(data)
+        self.assertIsNone(why)
+        self.assertEqual(out, data)
+
+    def test_second_hello_with_ech_after_hrr_is_dropped(self):
+        for k in ("ech", "ech-draft02", "ech-draftff02", "fragmented"):
+            out, why = self.feed(CCS + make(k))
+            self.assertEqual(why[0], "ech", k)
+            self.assertNotIn(b"\x16", out[:0] or b"")  # nothing of the hello was released
+            self.assertEqual(out, b"", k)
+
+    def test_second_hello_split_over_tcp_segments_and_records(self):
+        full = CCS + make("ech")
+        for cut in (3, 7, 12, 40, len(full) - 1):
+            out, why = self.feed(full[:cut], full[cut:])
+            self.assertEqual(why[0] if why else None, "ech", cut)
+        frag = make("fragmented")
+        out, why = self.feed(frag[:20], frag[20:])
+        self.assertEqual(why[0], "ech")
+
+    def test_first_half_of_a_split_hello_is_withheld_until_the_whole_passes(self):
+        hs = handshake(hello_body([sni_ext("api.typesafe.ai"), ext(0xFE0D, b"\x00" * 40)]))
+        recs = record(hs[:30]) + record(hs[30:])
+        cs = pf.ClientStream()
+        o, why = cs.feed(recs[: 5 + 30])
+        self.assertEqual((o, why), (b"", None))
+        o, why = cs.feed(recs[5 + 30:])
+        self.assertEqual((o, why[0]), (b"", "ech"))
+
+    def test_malformed_second_hello_and_bad_records_dropped(self):
+        self.assertEqual(self.feed(make("dup"))[1][0], "malformed:duplicate-extension")
+        self.assertEqual(self.feed(b"GET / HTTP/1.1\r\n\r\n")[1][0], "malformed:bad-record-header")
+        self.assertEqual(self.feed(b"\x17\x03\x03\xff\xff")[1][0], "malformed:bad-record-length")
+        self.assertEqual(self.feed(make("plain") + b"\x00" * 5)[1][0], "malformed:bad-record-header")
+        self.assertEqual(self.feed(record(handshake(hello_body([sni_ext("a")])) + b"\x00"))[1][0], "malformed:trailing-bytes")
+
+    def test_application_data_ccs_and_non_hello_handshakes_pass(self):
+        app = b"\x17\x03\x03" + struct.pack(">H", 100) + b"\x01" * 100
+        done = record(b"\x14\x00\x00\x0c" + b"\x07" * 12)           # a plaintext Finished-shaped handshake message
+        cke = record(b"\x10\x00\x00\x42" + b"\x05" * 0x42)           # ClientKeyExchange
+        cipher_like = b"\x16\x03\x03" + struct.pack(">H", 40) + b"\x01\xff\xff\xff" + b"\x09" * 36   # ciphertext starting 0x01 with a huge "length"
+        data = CCS + app + done + cke + cipher_like + app
+        out, why = self.feed(data)
+        self.assertIsNone(why)
+        self.assertEqual(out, data)
+
+    def test_first_hello_may_not_use_more_than_eight_records(self):
+        hs = handshake(hello_body([sni_ext("api.typesafe.ai")]))
+        recs = b"".join(record(hs[i:i + 8]) for i in range(0, len(hs), 8))
+        self.assertGreater(len(recs) // 13, pf.MAX_FIRST_RECORDS)
+        self.assertEqual(pf.parse_client_hello(recs), (pf.BAD, "too-many-records"))
+        two = record(hs[:30]) + record(hs[30:])
+        self.assertEqual(pf.parse_client_hello(two)[0], pf.OK)
+
+
+class Live(unittest.IsolatedAsyncioTestCase):
+    """The filter in-process between a client and a stub 'squid' that answers CONNECT with 200 and then plays a TLS server."""
+
+    async def asyncSetUp(self):
+        self.saved = (pf.UPSTREAM, pf.sem, pf.IDLE_SECONDS, pf.IDLE_CHECK)
+        self.rx = []
+        self.stub_conns = []
+        self.hrr = False
+        self.stub = await asyncio.start_server(self._stub, "127.0.0.1", 0)
+        pf.UPSTREAM = ("127.0.0.1", self.stub.sockets[0].getsockname()[1])
+        pf.sem = asyncio.Semaphore(4)
+        self.srv = await asyncio.start_server(pf.handle, "127.0.0.1", 0)
+        self.port = self.srv.sockets[0].getsockname()[1]
+
+    async def asyncTearDown(self):
+        self.srv.close()
+        self.stub.close()
+        pf.UPSTREAM, pf.sem, pf.IDLE_SECONDS, pf.IDLE_CHECK = self.saved
+
+    async def _stub(self, r, w):
+        self.stub_conns.append(w)
+        await r.readuntil(b"\r\n\r\n")
+        w.write(b"HTTP/1.1 200 Connection established\r\n\r\n")
+        first = True
+        try:
+            while True:
+                d = await r.read(65536)
+                if not d:
+                    break
+                self.rx.append(d)
+                if first and self.hrr:
+                    w.write(hrr_record())
+                first = False
+        except ConnectionError:
+            pass
+
+    async def open(self, target="api.typesafe.ai:443"):
+        r, w = await asyncio.open_connection("127.0.0.1", self.port)
+        w.write(f"CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n\r\n".encode())
+        head = await asyncio.wait_for(r.readuntil(b"\r\n\r\n"), 5)
+        self.assertTrue(head.startswith(b"HTTP/1.1 200"))
+        return r, w
+
+    async def closed(self, r, within=5):
+        try:
+            return await asyncio.wait_for(r.read(65536), within) == b""
+        except ConnectionError:
+            return True
+
+    async def test_ch1_clean_hrr_ch2_with_ech_is_dropped_and_never_reaches_the_server(self):
+        self.hrr = True
+        r, w = await self.open()
+        ch1 = make("plain")
+        w.write(ch1)
+        got = await asyncio.wait_for(r.readexactly(len(hrr_record())), 5)
+        self.assertEqual(got, hrr_record())          # CH1 and the HRR crossed untouched
+        w.write(CCS + make("ech"))
+        self.assertTrue(await self.closed(r))
+        await asyncio.sleep(0.2)
+        self.assertEqual(b"".join(self.rx), ch1)      # the stub server never saw CH2
+
+    async def test_ch1_clean_hrr_ch2_clean_passes_byte_for_byte(self):
+        self.hrr = True
+        r, w = await self.open()
+        ch1, ch2 = make("plain"), CCS + make("plain")
+        w.write(ch1)
+        await asyncio.wait_for(r.readexactly(len(hrr_record())), 5)
+        w.write(ch2)
+        await asyncio.sleep(0.3)
+        self.assertEqual(b"".join(self.rx), ch1 + ch2)
+        w.close()
+
+    async def test_second_hello_pipelined_behind_the_first_without_waiting_for_the_server(self):
+        r, w = await self.open()
+        ch1 = make("plain")
+        w.write(ch1)
+        await asyncio.sleep(0.2)
+        w.write(make("ech"))
+        self.assertTrue(await self.closed(r))
+        self.assertEqual(b"".join(self.rx), ch1)
+
+    async def test_idle_tunnel_is_closed_and_frees_its_slot(self):
+        pf.IDLE_SECONDS, pf.IDLE_CHECK = 0.6, 0.1
+        pf.sem = asyncio.Semaphore(2)
+        a = await self.open()
+        a[1].write(make("plain"))
+        b = await self.open()
+        b[1].write(make("plain"))
+        await asyncio.sleep(0.2)
+        # both slots are held by idle tunnels: a third connection is refused at once
+        r, w = await asyncio.open_connection("127.0.0.1", self.port)
+        w.write(b"CONNECT api.typesafe.ai:443 HTTP/1.1\r\n\r\n")
+        self.assertTrue(await self.closed(r, 2))
+        # after the idle timeout both are closed by the filter and a new tunnel gets a slot
+        self.assertTrue(await self.closed(a[0], 4))
+        self.assertTrue(await self.closed(b[0], 4))
+        c = await self.open()
+        c[1].close()
+
+    async def test_traffic_in_either_direction_keeps_a_tunnel_alive(self):
+        pf.IDLE_SECONDS, pf.IDLE_CHECK = 0.6, 0.1
+        r, w = await self.open()
+        w.write(make("plain"))
+        for _ in range(8):                      # 1.6 s with a byte every 0.2 s: longer than IDLE_SECONDS
+            await asyncio.sleep(0.2)
+            w.write(b"\x17\x03\x03\x00\x01\x00")
+        await asyncio.sleep(0.3)
+        self.assertEqual(len(b"".join(self.rx)), len(make("plain")) + 8 * 6)
+        w.close()
+
+
 def client(port, target, kind):
     s = socket.create_connection(("127.0.0.1", port), timeout=20)
     s.sendall(f"CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n\r\n".encode())
@@ -148,6 +342,15 @@ def client(port, target, kind):
         print("refused")
         return 3
     try:
+        if kind == "hrr-ech":  # clean hello, wait for whatever the far side answers, then a second hello carrying ECH
+            s.sendall(make("plain", target.split(":")[0]))
+            if not s.recv(4096):
+                print("dropped")
+                return 0
+            s.sendall(make("ech", target.split(":")[0]))
+            d = s.recv(4096)
+            print("reply:%02x" % d[0] if d else "dropped-after-first-reply")
+            return 0
         s.sendall(make(kind, target.split(":")[0]))
         d = s.recv(4096)
     except (ConnectionError, socket.timeout):

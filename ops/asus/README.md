@@ -16,7 +16,7 @@ studio-agent (uid studio-agent) --127.0.0.1:8888--> studio-prefilter (ClientHell
   client's first TLS record(s) are read and parsed. The connection is **dropped** if the ClientHello carries extension `0xfe0d` (encrypted_client_hello) or the draft variants
   `0xfe02` / `0xff02`, or is malformed (lengths that do not add up, duplicate extension, trailing bytes, not a handshake record), larger than 16 KiB, or late (10 s). Everything else
   is relayed byte for byte, hello included. Fail closed: non-CONNECT first bytes, an unreadable hello or a dead Squid never become a tunnel. Own uid, loopback-only, no AF_UNIX,
-  `BindsTo` Squid; the agent unit `BindsTo` the filter and the guard stops the agent if the filter is down. Journal lines: `prefilter drop reason=ech|malformed:<why>|hello-timeout|not-connect target=host:port [ext=0x..]`.
+  After the first hello it keeps framing the client's records and applies the same check to every later ClientHello-shaped handshake record (the second hello after a HelloRetryRequest, even pipelined); a tunnel idle in both directions for 300 s (`PREFILTER_IDLE_SECONDS`) is closed, and nft lets only the agent and relay uids reach `:8888`, so no other uid can hold its 64 slots. `BindsTo` Squid; the agent unit `BindsTo` the filter and the guard stops the agent if the filter is down. Journal lines: `prefilter drop reason=ech|malformed:<why>|hello-timeout|not-connect target=host:port [ext=0x..]`.
 - **Web egress (squid, on 127.0.0.1:8889 behind the filter).** Exactly two names: `bedrock-runtime.ap-south-1.amazonaws.com` and `api.typesafe.ai` (`/etc/studio-proxy/hosts.txt`, one exact name per line).
   `CONNECT` to `:443` only; plain HTTP, other ports and **IP-literal targets (v4 and v6) are denied first** and with a plain TCP reset (no `200`, no handshake with the proxy's
   throwaway certificate). Matching never uses reverse DNS (`dstdomain -n`): a spoofed PTR cannot turn an IP into an allowlisted name. `ssl_bump peek` reads the TLS ClientHello and
@@ -66,7 +66,7 @@ studio-agent (uid studio-agent) --127.0.0.1:8888--> studio-prefilter (ClientHell
   - The agent and relay are enabled and started only when the env, `neon.env` and the broker token are complete.
   - `--dry-run [--render-dir DIR]` makes the same decisions, prints actions, and runs `nft -c` and `squid -k parse`.
 - `post-session-check.sh` also prints (informational) `egress terminations` (no-SNI / SNI mismatch / denied CONNECT), `egress prefilter drops` and `egress tunnelled <name>:
-  tunnels, bytes_in, bytes_out` for every allowed name, since the agent's last start (`STUDIO_SESSION_SINCE="YYYY-MM-DD HH:MM:SS"` overrides).
+  tunnels, bytes_in, bytes_out` for every allowed name, since the agent's last start (`STUDIO_SESSION_SINCE="YYYY-MM-DD HH:MM:SS"` overrides; an agent restart mid-session truncates the default window, and the output says so).
 - `post-session-check.sh`: canary grep over /var, /tmp, /run and /opt/studio-agent (plain, .gz, .xz, .zst, file names; each path once) and the journal, plus egress-refresh age and
   log level. Exit 0 clean (`PURGED` label after `--purge-secrets`), 1 hit/violation, 3 inconclusive. Prints hashed paths only.
 - Tests: `test-asus-ops.sh` (offline, no root; also runs the t4 broker's unit tests) and `test-asus-container.sh` (docker; privileged ubuntu:24.04 systemd container, two fake Neon

@@ -793,7 +793,7 @@ else
 fi
 
 say "5. proxy, egress and relay layers (restarted only when their config changed)"
-run_t systemctl reset-failed studio-proxy.service studio-agent-nft.service "$RELAY.service" "$SVC.service"
+run_t systemctl reset-failed studio-proxy.service "$PREFILTER.service" studio-agent-nft.service "$RELAY.service" "$SVC.service"
 [ "$UNITS_CHANGED" = 0 ] || run systemctl daemon-reload
 run systemctl enable studio-proxy.service "$PREFILTER.service" studio-agent-nft.service studio-agent-egress-refresh.timer studio-agent-egress-guard.timer
 if [ "$PROXY_CHANGED" = 1 ] || ! systemctl is-active --quiet studio-proxy.service 2>/dev/null; then

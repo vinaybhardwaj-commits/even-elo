@@ -10,6 +10,13 @@ connection is dropped if the ClientHello
   - is malformed (any length that does not add up, duplicate extension, trailing bytes, not a TLS 1.x handshake record), or
   - is larger than MAX_HELLO bytes, or does not arrive within HELLO_TIMEOUT seconds.
 
+It then keeps framing everything the client sends as TLS records for the life of the tunnel and applies the same ClientHello check to
+every later handshake record that looks like a ClientHello (type 1, length <= 0xFFFF) - the second ClientHello after a HelloRetryRequest,
+sent after the server's reply or pipelined right behind the first. A bad record header, or a ClientHello that is malformed or carries
+a banned extension, drops the tunnel. (Ciphertext that merely starts with 0x01 and a small length - a TLS 1.2 Finished - is a ~1.5e-5
+false positive per TLS 1.2 handshake; TLS 1.3 never sends a handshake-type record after its second flight.) A tunnel with no bytes in
+either direction for IDLE_SECONDS is closed so idle tunnels cannot hold the MAX_CONNS slots.
+
 Everything else is relayed byte for byte, hello included. Nothing is decrypted or rewritten. Python standard library only;
 no files, no sockets other than the loopback listener and the loopback upstream. Log lines (stdout -> journal) carry the
 verdict, the reason and the CONNECT target, never payload bytes.
@@ -22,12 +29,16 @@ LISTEN = ("127.0.0.1", int(os.environ.get("PREFILTER_LISTEN_PORT", "8888")))
 UPSTREAM = ("127.0.0.1", int(os.environ.get("PREFILTER_UPSTREAM_PORT", "8889")))
 BLOCKED_EXT = {0xFE0D: "encrypted_client_hello", 0xFE02: "ech_draft", 0xFF02: "ech_draft"}
 MAX_HELLO = 16384          # handshake body bytes; a TLS record carries at most 2^14, so one record covers a normal hello
-MAX_BUFFER = MAX_HELLO + 4 + 5 * 8   # hello + handshake header + up to 8 record headers
+MAX_FIRST_RECORDS = 8      # the first hello may span at most this many records (enforced), so buffering is bounded by MAX_BUFFER
+MAX_BUFFER = MAX_HELLO + 4 + 5 * MAX_FIRST_RECORDS
+MAX_RECORD = 16640         # TLS 1.3 ciphertext record limit (2^14 + 256), for records after the first hello
 MAX_HEAD = 8192            # CONNECT request / Squid response head
 HEAD_TIMEOUT = 10.0
 HELLO_TIMEOUT = 10.0
 UPSTREAM_TIMEOUT = 30.0
 MAX_CONNS = 64
+IDLE_SECONDS = float(os.environ.get("PREFILTER_IDLE_SECONDS", "300"))  # no bytes either way for this long -> tunnel closed
+IDLE_CHECK = 10.0
 CONNECT_RE = re.compile(rb"CONNECT [!-~]{1,255} HTTP/1\.[01]\r\n")
 
 NEED_MORE, OK, BAD = "need-more", "ok", "bad"
@@ -38,11 +49,15 @@ def parse_client_hello(buf):
     body = bytearray()
     pos = 0
     want = None  # total handshake message length (4-byte header + body) once known
+    nrec = 0
     while want is None or len(body) < want:
         if len(buf) - pos < 5:
             return NEED_MORE, None
         rtype, vmaj, vmin = buf[pos], buf[pos + 1], buf[pos + 2]
         rlen = (buf[pos + 3] << 8) | buf[pos + 4]
+        nrec += 1
+        if nrec > MAX_FIRST_RECORDS:
+            return BAD, "too-many-records"
         if rtype != 0x16:
             return BAD, "not-handshake-record"
         if vmaj != 3 or vmin > 4:
@@ -139,22 +154,126 @@ async def read_head(reader, pending=b""):
     return buf[:k], buf[k:]
 
 
-async def pump(src, dst):
+class ClientStream:
+    """TLS record framing plus the ClientHello check for everything the client sends after its first hello."""
+
+    def __init__(self):
+        self.buf = bytearray()
+        self.frag = None      # a ClientHello-shaped handshake message that spans records, until complete
+        self.held = b""       # its records, withheld until the whole message has passed the check
+
+    def feed(self, data):
+        """Returns (bytes safe to forward, None), or (b"", (reason, extra)) when the tunnel must be dropped."""
+        self.buf += data
+        out = bytearray()
+        while len(self.buf) >= 5:
+            rtype, vmaj, vmin = self.buf[0], self.buf[1], self.buf[2]
+            rlen = (self.buf[3] << 8) | self.buf[4]
+            if rtype not in (0x14, 0x15, 0x16, 0x17) or vmaj != 3 or vmin > 4:
+                return b"", ("malformed:bad-record-header", "")
+            if rlen > MAX_RECORD or (rlen == 0 and rtype != 0x17):
+                return b"", ("malformed:bad-record-length", "")
+            if len(self.buf) < 5 + rlen:
+                break
+            why = self._record(rtype, bytes(self.buf[5:5 + rlen]))
+            if why:
+                return b"", why
+            rec = bytes(self.buf[:5 + rlen])
+            del self.buf[:5 + rlen]
+            if self.frag is not None:
+                self.held += rec
+            else:
+                out += self.held + rec
+                self.held = b""
+        return bytes(out), None
+
+    def _record(self, rtype, p):
+        if self.frag is not None:
+            if rtype != 0x16:
+                return ("malformed:hello-interrupted", "")
+            self.frag += p
+            return self._frag_check()
+        if rtype != 0x16 or not p or p[0] != 1:
+            return None
+        if len(p) >= 4 and int.from_bytes(p[1:4], "big") > 0xFFFF:
+            return None  # not ClientHello-shaped (e.g. ciphertext that happens to start with 0x01)
+        self.frag = bytearray(p)
+        return self._frag_check()
+
+    def _frag_check(self):
+        f = self.frag
+        if len(f) < 4:
+            return None  # even the handshake header is split over records: wait for the rest
+        n = int.from_bytes(f[1:4], "big")
+        if n > 0xFFFF:
+            return ("malformed:oversize", "")
+        if len(f) < 4 + n:
+            return None
+        if len(f) > 4 + n:
+            return ("malformed:trailing-bytes", "")
+        self.frag = None
+        status, info = _parse_body(bytes(f[4:]))
+        if status == BAD:
+            return ("malformed:" + info, "")
+        hit = [t for t in info if t in BLOCKED_EXT]
+        if hit:
+            return ("ech", "ext=" + ",".join(f"0x{t:04x}" for t in hit))
+        return None
+
+
+class IdleTimeout(Exception):
+    pass
+
+
+async def read_active(reader, act):
+    """reader.read(), but raises IdleTimeout when the tunnel (act[0] = last byte in either direction) has been silent too long."""
+    loop = asyncio.get_running_loop()
+    while True:
+        try:
+            data = await asyncio.wait_for(reader.read(65536), IDLE_CHECK)
+        except asyncio.TimeoutError:
+            if loop.time() - act[0] > IDLE_SECONDS:
+                raise IdleTimeout()
+            continue
+        act[0] = loop.time()
+        return data
+
+
+def abort(*writers):
+    for w in writers:
+        try:
+            w.transport.abort()
+        except (OSError, AttributeError):
+            pass
+
+
+async def pump(src, dst, act, peer, target, cs=None):
+    """Relay src -> dst. With cs set (client side) the bytes are checked as TLS records first."""
     try:
         while True:
-            data = await src.read(65536)
+            data = await read_active(src, act)
             if not data:
                 break
-            dst.write(data)
-            await dst.drain()
+            if cs is not None:
+                data, why = cs.feed(data)
+                if why:
+                    log("drop", why[0], target, (why[1] + " " if why[1] else "") + "phase=after-first-hello")
+                    abort(dst, peer)
+                    return
+            if data:
+                dst.write(data)
+                await dst.drain()
+    except IdleTimeout:
+        log("drop", "idle-timeout", target)
+        abort(dst, peer)
+        return
     except (ConnectionError, OSError, asyncio.CancelledError):
         pass
-    finally:
-        try:
-            if dst.can_write_eof():
-                dst.write_eof()
-        except (OSError, RuntimeError):
-            pass
+    try:
+        if dst.can_write_eof():
+            dst.write_eof()
+    except (OSError, RuntimeError):
+        pass
 
 
 def close(*writers):
@@ -231,7 +350,8 @@ async def handle(creader, cwriter):
                 return
             up_w.write(buf)
             await up_w.drain()
-            await asyncio.gather(pump(creader, up_w), pump(up_r, cwriter))
+            act = [asyncio.get_running_loop().time()]
+            await asyncio.gather(pump(creader, up_w, act, cwriter, target, ClientStream()), pump(up_r, cwriter, act, up_w, target))
         except (ConnectionError, OSError):
             pass
         finally:
