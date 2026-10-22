@@ -34,6 +34,9 @@ SQL_LOGIN = OPS / "0003_login.sql"
 PROBE = AGENT / "tests" / "test_lc1_live_probe.py"
 APP_PROBE = AGENT / "tests" / "test_studio_app_role_probe.py"
 PROJECT, BRANCH = "proj-quiet-1234", "br-main-5678"
+# A second Neon project (the CDMSS database): a default branch + a non-default one, each with a read_write endpoint.
+CDMSS_PROJECT, CDMSS_BRANCH, CDMSS_BRANCH_DEV = "proj-cdmss-9999", "br-cdmss-main-1111", "br-cdmss-dev-2222"
+CDMSS_HOST = "ep-cdmss-main-1.ap-south-1.aws.neon.tech"
 API_KEY = "napi_KEY_do_not_leak_0123456789abcdef"
 
 needs_pg = pytest.mark.skipif(importlib.util.find_spec("pgserver") is None or not OPS.exists(), reason="needs pgserver and ops/neon")
@@ -171,16 +174,26 @@ class MockNeon:
                 outer.requests.append((self.command, self.path, self.headers.get("authorization"), body))
                 if self.headers.get("authorization") != f"Bearer {API_KEY}":
                     return self._send(401, {"message": "unauthorized"})
-                base = f"/api/v2/projects/{PROJECT}/branches/{BRANCH}"
                 path = self.path
+                mp = re.match(r"/api/v2/projects/([^/]+)/branches/([^/]+)/roles", path)
+                pair = (mp.group(1), mp.group(2)) if mp else None
+                base = f"/api/v2/projects/{pair[0]}/branches/{pair[1]}" if pair in ((PROJECT, BRANCH), (CDMSS_PROJECT, CDMSS_BRANCH), (CDMSS_PROJECT, CDMSS_BRANCH_DEV)) else f"/api/v2/projects/{PROJECT}/branches/{BRANCH}"
                 if self.command == "GET" and path == "/api/v2/projects":
-                    return self._send(200, {"projects": [{"id": PROJECT, "name": "Even Studio", "region_id": "aws-ap-south-1", "owner": {"email": "x@y"}}]})
+                    return self._send(200, {"projects": [{"id": PROJECT, "name": "Even Studio", "region_id": "aws-ap-south-1", "owner": {"email": "x@y"}},
+                                                          {"id": CDMSS_PROJECT, "name": "Even CDMSS", "region_id": "aws-ap-south-1", "owner": {"email": "x@y"}}]})
                 if self.command == "GET" and path == f"/api/v2/projects/{PROJECT}/branches":
                     return self._send(200, {"branches": [{"id": BRANCH, "name": "main", "connection_uri": "postgres://SECRET"}]})
+                if self.command == "GET" and path == f"/api/v2/projects/{CDMSS_PROJECT}/branches":
+                    return self._send(200, {"branches": [{"id": CDMSS_BRANCH, "name": "main", "default": True, "connection_uri": "postgres://SECRET"},
+                                                         {"id": CDMSS_BRANCH_DEV, "name": "dev", "default": False, "connection_uri": "postgres://SECRET"}]})
+                if self.command == "GET" and path == f"/api/v2/projects/{CDMSS_PROJECT}/endpoints":
+                    return self._send(200, {"endpoints": [{"id": "ep-cdmss-main-1", "branch_id": CDMSS_BRANCH, "type": "read_write", "host": CDMSS_HOST, "password_hash": "SECRET"},
+                                                          {"id": "ep-cdmss-main-ro", "branch_id": CDMSS_BRANCH, "type": "read_only", "host": "ep-cdmss-ro.ap-south-1.aws.neon.tech"},
+                                                          {"id": "ep-cdmss-dev-1", "branch_id": CDMSS_BRANCH_DEV, "type": "read_write", "host": "ep-cdmss-dev-1.ap-south-1.aws.neon.tech"}]})
                 if self.command == "GET" and path == f"{base}/roles":
                     names = ["neondb_owner"]
                     if outer.cluster:
-                        names = [r[0] for r in outer.cluster.su_exec("SELECT rolname FROM pg_roles WHERE rolname IN ('neondb_owner','studio_gov_ro','studio_app') ORDER BY 1")]
+                        names = [r[0] for r in outer.cluster.su_exec("SELECT rolname FROM pg_roles WHERE rolname IN ('neondb_owner','studio_gov_ro','studio_app','studio_cdmss_ro') ORDER BY 1")]
                     return self._send(200, {"roles": [{"name": x, "password": "LISTED-PW"} for x in names if x not in outer.hidden]})
                 m = re.fullmatch(re.escape(base) + r"/roles/([a-z_0-9]+)/reset_password", path)
                 if self.command == "POST" and m:

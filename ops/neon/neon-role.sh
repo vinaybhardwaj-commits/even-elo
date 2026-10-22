@@ -6,8 +6,14 @@
 # never printed, never on argv, never in the environment.
 #
 #   neon-role.sh discover       API_KEY_FILE
-#   neon-role.sh reset-password API_KEY_FILE PROJECT_ID BRANCH_ID ROLE OUT_FILE [--dsn-from OWNER_URL_FILE]
+#   neon-role.sh resolve        API_KEY_FILE PROJECT                      branch ids/names + endpoint ids/hosts of one project (no secrets)
+#   neon-role.sh reset-password API_KEY_FILE PROJECT BRANCH ROLE OUT_FILE [--dsn-from OWNER_URL_FILE [--host auto|pooled]]
 #   (--allow-disk-tmp may precede the subcommand)
+#   PROJECT is an id, or @FILE: a 0600/0400 file holding the id, or a dotenv line NEON_PROJECT_ID=... (what `vercel env pull` writes
+#   for the even-cdmss project, so a second Neon project needs no code change). The file is never echoed: it may hold other secrets.
+#   BRANCH is an id, or `auto`: the project's default branch (or its only branch); anything ambiguous exits 2 and changes nothing.
+#   --host auto|pooled (needs --dsn-from) replaces the owner url's host with the API-discovered read_write endpoint of the branch
+#   (`pooled` inserts -pooler after the first label, Neon's pooled-host convention); without it the owner url's host is kept.
 #
 # reset-password first lists the branch's roles: if ROLE is not visible to the API the script exits 4
 # ("role not visible to Neon API") and changes NOTHING (no reset call is made).
@@ -21,7 +27,7 @@
 set -euo pipefail
 umask 077
 
-usage() { echo "usage: $0 [--allow-disk-tmp] discover KEYFILE | reset-password KEYFILE PROJECT BRANCH ROLE OUT [--dsn-from OWNER_URL_FILE]" >&2; exit 2; }
+usage() { echo "usage: $0 [--allow-disk-tmp] discover KEYFILE | resolve KEYFILE PROJECT | reset-password KEYFILE PROJECT|@FILE BRANCH|auto ROLE OUT [--dsn-from OWNER_URL_FILE [--host auto|pooled]]" >&2; exit 2; }
 
 allow_disk=0
 if [[ ${1:-} == --allow-disk-tmp ]]; then allow_disk=1; shift; fi
@@ -85,6 +91,40 @@ api() { # api METHOD PATH [JSON_BODY]  -> response body on stdout; non-2xx fails
 }
 
 valid_id() { [[ $1 =~ ^[A-Za-z0-9._-]{1,128}$ ]]; }
+
+# project_id ARG: ARG itself, or the id inside @FILE (bare token, or a NEON_PROJECT_ID= dotenv line). Prints the id only.
+project_id() {
+  local a=$1 f v
+  if [[ $a != @* ]]; then printf '%s' "$a"; return 0; fi
+  f=${a#@}
+  [[ -f $f && -r $f ]] || { echo "project file not readable" >&2; return 2; }
+  [[ $(stat -c '%a' "$f") == 600 || $(stat -c '%a' "$f") == 400 ]] || { echo "project file must be mode 600 (it may hold other secrets)" >&2; return 2; }
+  v=$(sed -n 's/^NEON_PROJECT_ID=//p' "$f" | head -n 1 | tr -d "\"'\r ")
+  if [[ -z $v ]]; then v=$(grep -c . "$f" | grep -qx 1 && tr -d "\"'\r \n" < "$f" || true); fi
+  [[ -n $v ]] || { echo "no NEON_PROJECT_ID in the project file" >&2; return 2; }
+  printf '%s' "$v"
+}
+
+# resolve_branch PROJECT ARG: ARG itself, or `auto` = the default branch (else the only branch). Ids only.
+resolve_branch() {
+  local project=$1 a=$2 ids n
+  if [[ $a != auto ]]; then printf '%s' "$a"; return 0; fi
+  ids=$(api GET "/projects/$project/branches" | jq -r '[.branches[]? | select(.default == true or .primary == true)] as $d
+        | (if ($d | length) >= 1 then $d else [.branches[]?] end) | .[].id')
+  n=$(printf '%s\n' "$ids" | grep -c . || true)
+  if [[ $n != 1 ]]; then echo "cannot pick a branch automatically ($n candidates): pass the branch id" >&2; return 2; fi
+  printf '%s' "$ids"
+}
+
+# endpoint_host PROJECT BRANCH: host of the branch's read_write endpoint (exactly one required).
+endpoint_host() {
+  local hosts n
+  hosts=$(api GET "/projects/$1/endpoints" | jq -r --arg b "$2" '.endpoints[]? | select(.branch_id == $b and .type == "read_write") | .host')
+  n=$(printf '%s\n' "$hosts" | grep -c . || true)
+  if [[ $n != 1 ]]; then echo "expected exactly one read_write endpoint for the branch, found $n" >&2; return 2; fi
+  [[ $hosts =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] || { echo "endpoint host has an unexpected shape" >&2; return 2; }
+  printf '%s' "$hosts"
+}
 valid_role() { [[ $1 =~ ^[a-z_][a-z0-9_]{0,62}$ ]]; }
 
 case $cmd in
@@ -103,13 +143,33 @@ case $cmd in
       done
     done <<< "$projects"
     ;;
+  resolve)
+    [[ $# -eq 1 ]] || usage
+    project=$(project_id "$1") || exit 2
+    valid_id "$project" || { echo "invalid project id" >&2; exit 2; }
+    api GET "/projects/$project/branches" | jq -r '.branches[]? | ["branch", .id, (.name // ""), (if (.default or .primary) then "default" else "-" end)] | @tsv' | tr -c 'A-Za-z0-9._\t\n/-' '?'
+    api GET "/projects/$project/endpoints" | jq -r '.endpoints[]? | ["endpoint", .id, .branch_id, .type, .host] | @tsv' | tr -c 'A-Za-z0-9._\t\n/-' '?'
+    ;;
   reset-password)
     [[ $# -ge 4 ]] || usage
     project=$1; branch=$2; role=$3; out_file=$4; shift 4
-    dsn_from=
-    if [[ ${1:-} == --dsn-from ]]; then dsn_from=${2:-}; shift 2 || usage; fi
-    [[ $# -eq 0 ]] || usage
-    if ! valid_id "$project" || ! valid_id "$branch"; then echo "invalid project or branch id" >&2; exit 2; fi
+    dsn_from= host_mode=
+    while [[ $# -gt 0 ]]; do
+      case $1 in
+        --dsn-from) dsn_from=${2:-}; shift 2 || usage ;;
+        --host) host_mode=${2:-}; shift 2 || usage ;;
+        *) usage ;;
+      esac
+    done
+    [[ -z $host_mode || ( -n $dsn_from && ( $host_mode == auto || $host_mode == pooled ) ) ]] || { echo "--host auto|pooled needs --dsn-from" >&2; exit 2; }
+    project=$(project_id "$project") || exit 2
+    valid_id "$project" || { echo "invalid project id" >&2; exit 2; }
+    branch=$(resolve_branch "$project" "$branch") || exit 2
+    if ! valid_id "$branch"; then echo "invalid project or branch id" >&2; exit 2; fi
+    if [[ -n $host_mode ]]; then
+      new_host=$(endpoint_host "$project" "$branch") || exit 2
+      [[ $host_mode == pooled ]] && new_host=${new_host%%.*}-pooler.${new_host#*.}
+    fi
     valid_role "$role" || { echo "invalid role name" >&2; exit 2; }
     [[ ! -e $out_file ]] || { echo "refusing to overwrite $out_file" >&2; exit 2; }
     if [[ -n $dsn_from ]]; then [[ -f $dsn_from && -r $dsn_from ]] || { echo "owner url file not readable" >&2; exit 2; }; fi
@@ -131,6 +191,7 @@ case $cmd in
       rest=${raw#*://}
       authority=${rest%%/*}
       rest=${authority##*@}${rest#"$authority"}
+      if [[ -n $host_mode ]]; then rest=$new_host/${rest#*/}; fi
       "${resp_cmd[@]}" | jq -r --arg s "$scheme" --arg r "$role" --arg rest "$rest" \
         'select(.role.password) | $s + $r + ":" + (.role.password | @uri) + "@" + $rest' > "$out_file"
     fi

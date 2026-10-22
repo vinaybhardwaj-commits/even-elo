@@ -13,7 +13,9 @@
 #   the role's live sessions (NOLOGIN only stops new connections); if that is denied the exit code is 5.
 #
 #   --role studio_gov_ro (default, governance DB: 0001_roles.sql) | studio_app (studio DB: 0002_studio_app_role.sql;
-#   its table grants come from apply_migration.py, run before step 3)
+#   its table grants come from apply_migration.py, run before step 3) | studio_cdmss_ro (CDMSS Neon database: only --login and
+#   --nologin here; its setup is ops/cdmss/run-cdmss-ro.sh. --login also runs ops/cdmss/0003_cdmss_ro_postcheck.sql in the same
+#   transaction, so LOGIN is never enabled while the fence is broken. Password: neon-role.sh with PROJECT=@even-cdmss env file)
 #   --nologin                          set the role NOLOGIN in its own committed statement, then END its live
 #                                      sessions (pg_terminate_backend); exit 5 + a warning naming the role and the
 #                                      sessions left if the owner may not signal them (never silent)
@@ -47,12 +49,17 @@ done
 case $role in
   studio_gov_ro) setup_sql=0001_roles.sql; probe_table=physicians; probe_priv=SELECT ;;
   studio_app) setup_sql=0002_studio_app_role.sql; probe_table=studio_audit; probe_priv=INSERT ;;
-  *) echo "--role must be studio_gov_ro or studio_app" >&2; exit 2 ;;
+  studio_cdmss_ro) setup_sql=; probe_table=cdmss_ro.site_dim; probe_priv=SELECT; extra_login_sql=${CDMSS_POSTCHECK_SQL:-$here/../cdmss/0003_cdmss_ro_postcheck.sql} ;;
+  *) echo "--role must be studio_gov_ro, studio_app or studio_cdmss_ro" >&2; exit 2 ;;
 esac
+extra_login_sql=${extra_login_sql:-}
 if [[ $login -eq 1 && $nologin -eq 1 ]]; then echo "--login and --nologin are exclusive" >&2; exit 2; fi
 if [[ $nologin -eq 1 ]]; then sql_file=${SQL_FILE:-$here/0004_nologin.sql}
 elif [[ $login -eq 1 ]]; then sql_file=${SQL_FILE:-$here/0003_login.sql}
-else sql_file=${SQL_FILE:-$here/$setup_sql}; fi
+else
+  [[ -n $setup_sql ]] || { echo "$role has no setup file here: create it with ops/cdmss/run-cdmss-ro.sh; this script only does --login / --nologin for it" >&2; exit 2; }
+  sql_file=${SQL_FILE:-$here/$setup_sql}
+fi
 nologin_sql=$here/0004_nologin.sql
 terminate_sql=$here/0005_terminate.sql
 sessions_sql=$here/0006_sessions.sql
@@ -61,10 +68,11 @@ if [[ $dry -eq 1 ]]; then
   echo "-- dry run: nothing is connected; no password is generated, read or sent by this script"
   echo "-- would: $psql_bin -X -q --single-transaction -v ON_ERROR_STOP=1 -v role=$role -v probe_table=$probe_table -v probe_priv=$probe_priv -f $sql_file (service file from the owner url, on tmpfs)"
   cat "$sql_file"
+  if [[ $login -eq 1 && -n $extra_login_sql ]]; then echo "-- ==== then, same transaction: $extra_login_sql"; cat "$extra_login_sql"; fi
   exit 0
 fi
 
-[[ $# -eq 1 ]] || { echo "usage: $0 [--allow-disk-tmp] [--login|--nologin] [--role studio_gov_ro|studio_app] OWNER_URL_FILE | --dry-run" >&2; exit 2; }
+[[ $# -eq 1 ]] || { echo "usage: $0 [--allow-disk-tmp] [--login|--nologin] [--role studio_gov_ro|studio_app|studio_cdmss_ro] OWNER_URL_FILE | --dry-run" >&2; exit 2; }
 owner_file=$1
 [[ -f $owner_file && -r $owner_file ]] || { echo "owner url file not readable" >&2; exit 2; }
 
@@ -112,9 +120,11 @@ chmod 600 "$tmp/svc"
 
 psql_run() { # psql_run SQL_FILE [--single-transaction]: stdout discarded, errors on stderr
   local file=$1; shift
+  local extra=()
+  if [[ $login -eq 1 && $nologin -eq 0 && -n $extra_login_sql && $file == "$sql_file" ]]; then extra=(-f "$extra_login_sql"); fi
   PGSERVICEFILE="$tmp/svc" "$psql_bin" -X -q "$@" -v ON_ERROR_STOP=1 \
     -v "role=$role" -v "probe_table=$probe_table" -v "probe_priv=$probe_priv" \
-    -f "$file" "service=owner" >/dev/null
+    -f "$file" ${extra[@]+"${extra[@]}"} "service=owner" >/dev/null
 }
 psql_count() { # psql_count SQL_FILE: prints the single number the file selects
   PGSERVICEFILE="$tmp/svc" "$psql_bin" -X -q -At -v ON_ERROR_STOP=1 -v "role=$role" -f "$1" "service=owner"
