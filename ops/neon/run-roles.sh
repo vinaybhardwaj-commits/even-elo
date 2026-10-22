@@ -28,6 +28,7 @@
 # OWNER_URL_FILE: 0600 file with the OWNER's DIRECT url. psql reads it as a service file on tmpfs
 # ($XDG_RUNTIME_DIR, else /dev/shm), so nothing secret is on any command line.
 # Env: PSQL (default psql), SQL_FILE (override the SQL file), STUDIO_ROLES_SHM (tmpfs fallback dir).
+#      CDMSS_POSTCHECK_SQL (+ CDMSS_ALLOW_TEST_POSTCHECK=1): TEST-ONLY replacement for the studio_cdmss_ro --login post-check; refused otherwise.
 set -euo pipefail
 umask 077
 
@@ -49,10 +50,15 @@ done
 case $role in
   studio_gov_ro) setup_sql=0001_roles.sql; probe_table=physicians; probe_priv=SELECT ;;
   studio_app) setup_sql=0002_studio_app_role.sql; probe_table=studio_audit; probe_priv=INSERT ;;
-  studio_cdmss_ro) setup_sql=; probe_table=cdmss_ro.site_dim; probe_priv=SELECT; extra_login_sql=${CDMSS_POSTCHECK_SQL:-$here/../cdmss/0003_cdmss_ro_postcheck.sql} ;;
+  studio_cdmss_ro) setup_sql=; probe_table=cdmss_ro.site_dim; probe_priv=SELECT; extra_login_sql=$here/../cdmss/0003_cdmss_ro_postcheck.sql ;;
   *) echo "--role must be studio_gov_ro, studio_app or studio_cdmss_ro" >&2; exit 2 ;;
 esac
 extra_login_sql=${extra_login_sql:-}
+# CDMSS_POSTCHECK_SQL swaps the post-check that fences studio_cdmss_ro: TEST ONLY, refused unless CDMSS_ALLOW_TEST_POSTCHECK=1.
+if [[ -n ${CDMSS_POSTCHECK_SQL:-} ]]; then
+  [[ ${CDMSS_ALLOW_TEST_POSTCHECK:-0} == 1 ]] || { echo "CDMSS_POSTCHECK_SQL is a test-only override: refusing (needs CDMSS_ALLOW_TEST_POSTCHECK=1)" >&2; exit 2; }
+  [[ -n $extra_login_sql ]] && extra_login_sql=$CDMSS_POSTCHECK_SQL
+fi
 if [[ $login -eq 1 && $nologin -eq 1 ]]; then echo "--login and --nologin are exclusive" >&2; exit 2; fi
 if [[ $nologin -eq 1 ]]; then sql_file=${SQL_FILE:-$here/0004_nologin.sql}
 elif [[ $login -eq 1 ]]; then sql_file=${SQL_FILE:-$here/0003_login.sql}
