@@ -60,3 +60,10 @@ def test_refuses_without_the_role_and_rolls_back_when_a_credential_column_is_rea
     cluster.su_exec("GRANT SELECT ON public.profiles TO studio_gov_ro", db="neondb")
     r, _ = run_roles(cluster, tmp_path, sql_file=SQL_ROLE_FLAGS, tag="wide-profiles")
     assert r.returncode != 0 and "table-wide SELECT" in r.stderr
+
+
+def test_rolls_back_when_the_role_holds_any_privilege_on_profile_hospital_roles(cluster, tmp_path):
+    assert run_roles(cluster, tmp_path, tag="roles")[0].returncode == 0
+    cluster.su_exec("GRANT SELECT (role) ON public.profile_hospital_roles TO studio_gov_ro", db="neondb")
+    r, _ = run_roles(cluster, tmp_path, sql_file=SQL_ROLE_FLAGS, tag="phr")
+    assert r.returncode != 0 and "privilege on profile_hospital_roles" in r.stderr

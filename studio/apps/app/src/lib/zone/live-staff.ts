@@ -29,8 +29,6 @@ SELECT p.status, p.is_super_admin, p.is_sgc_member, p.is_site_medical_head, p.is
 FROM profiles_with_roles p
 WHERE p.id = $1::uuid
 LIMIT 1`;
-const WIDE_RETRY_MS = 60_000;
-let wideDeniedAt = 0;
 
 let cached: { url: string; query: Query } | null = null;
 
@@ -38,11 +36,13 @@ function queryFor(url: string): Query {
   if (cached?.url === url) return cached.query;
   const sql = neon(url);
   const query: Query = async (profileId) => {
-    if (Date.now() - wideDeniedAt >= WIDE_RETRY_MS) {
+    // Nothing is remembered between requests. A transient error on the wide read is retried once; a missing grant
+    // (SQLSTATE 42501, 0011 not applied) is deterministic, so it goes straight to the narrow read for THIS request.
+    for (let attempt = 0; attempt < 2; attempt++) {
       try {
         return (await sql(LIVE_STAFF_WIDE_SQL, [profileId])) as unknown as Row[];
-      } catch {
-        wideDeniedAt = Date.now(); // not granted (or a blip): read the narrow row, retry the wide one in a minute
+      } catch (err) {
+        if ((err as { code?: unknown } | null)?.code === "42501") break;
       }
     }
     return (await sql(LIVE_STAFF_SQL, [profileId])) as unknown as Row[];

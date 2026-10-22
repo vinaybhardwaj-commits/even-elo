@@ -69,6 +69,10 @@ BEGIN
   IF bad IS NOT NULL THEN
     RAISE EXCEPTION 'studio_gov_ro cannot read profiles_with_roles columns (%): rolling back', bad;
   END IF;
+  IF to_regclass('public.profile_hospital_roles') IS NOT NULL
+     AND has_any_column_privilege('studio_gov_ro', 'public.profile_hospital_roles', 'SELECT,INSERT,UPDATE,REFERENCES') THEN
+    RAISE EXCEPTION 'studio_gov_ro holds a privilege on profile_hospital_roles: rolling back';
+  END IF;
   SELECT string_agg(a.attname, ', ') INTO bad
   FROM pg_attribute a
   WHERE a.attrelid = 'public.profiles'::regclass AND a.attnum > 0 AND NOT a.attisdropped
