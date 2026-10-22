@@ -46,6 +46,21 @@ describe("ScreenFrame assistant panel", () => {
     expect(screen.getByRole("button", { name: "Ask the assistant" })).toHaveFocus();
   });
 
+  it("narrow: Escape already handled inside the chat, or ending an IME composition, leaves the panel open", () => {
+    render(<ScreenFrame title="Programme overview">body</ScreenFrame>);
+    fireEvent.click(screen.getByRole("button", { name: "Ask the assistant" }));
+    const chat = screen.getByTestId("chat");
+    const stop = (e: KeyboardEvent) => e.preventDefault();
+    chat.addEventListener("keydown", stop);
+    fireEvent.keyDown(chat, { key: "Escape" });
+    expect(panelOpen()).toBe("true");
+    chat.removeEventListener("keydown", stop);
+    fireEvent.keyDown(chat, { key: "Escape", isComposing: true });
+    expect(panelOpen()).toBe("true");
+    fireEvent.keyDown(chat, { key: "Escape" });
+    expect(panelOpen()).toBe("false");
+  });
+
   it("wide: Escape leaves the docked panel alone (it covers nothing)", () => {
     setWide(true);
     render(<ScreenFrame title="Programme overview">body</ScreenFrame>);

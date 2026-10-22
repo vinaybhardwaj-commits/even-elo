@@ -119,9 +119,49 @@ describe("HTTP read tools", () => {
     expect(list.rows.map((x) => x.id)).toEqual(["EHRC-INC-2026-0002", "EHRC-INC-2026-0003"]);
   });
 
-  it("eiris_incidents refuses malformed dates", async () => {
-    for (const since of ["last month", "2026-13-01", "22/10/2026", "2026-10-22; drop"]) {
-      expect((await runHttpTool("eiris_incidents", { since }, ACTOR)).status).toBe(422);
+  it("eiris_incidents range: flagged only when the upstream list came back full (300) and stops after since; list and summary", async () => {
+    // 300 incidents, newest first, one per hour back from 22 Oct 10:00 UTC: the oldest is 9 Oct 23:00 UTC.
+    const full = Array.from({ length: 300 }, (_, i) => ({
+      id: `EHRC-INC-2026-${String(1000 + i)}`,
+      reported_at: new Date(Date.parse("2026-10-22T10:00:00Z") - i * 3_600_000).toISOString(),
+      severity: "minor",
+      status: "open",
+      type_name: "Fall",
+    }));
+    const base = upstream;
+    upstream = (url) => (url.endsWith("/api/office/incidents") ? json({ incidents: full }) : base(url));
+    const note = "e-IRIS returned incidents back to 2026-10-09T23:00:00.000Z only; earlier ones in the range are not included";
+
+    const sum = SourceTablePayload.parse((await runHttpTool("eiris_incidents", { since: "2026-10-01" }, ACTOR)).body);
+    expect(sum.rows.at(-2)).toEqual({ scope: "range", key: "2026-10-01..now", open: 300, closed: 0, total: 300 });
+    expect(sum.rows.at(-1)).toEqual({ scope: "range_incomplete", key: note, open: null, closed: null, total: null });
+    expect(sum.incomplete).toBe(note);
+
+    const list = SourceTablePayload.parse((await runHttpTool("eiris_incidents", { view: "list", since: "2026-10-01", limit: 5 }, ACTOR)).body);
+    expect(list.row_count).toBe(5);
+    expect(list.incomplete).toBe(note);
+
+    // A full list that reaches back past since covers the range: no flag.
+    const covered = SourceTablePayload.parse((await runHttpTool("eiris_incidents", { view: "list", since: "2026-10-15" }, ACTOR)).body);
+    expect(covered.incomplete).toBeUndefined();
+
+    // A short list (3 rows, oldest 10 Sep) is the whole table, however late its oldest row: no flag.
+    upstream = base;
+    const short = SourceTablePayload.parse((await runHttpTool("eiris_incidents", { since: "2026-09-01" }, ACTOR)).body);
+    expect(short.rows.some((r) => r.scope === "range_incomplete")).toBe(false);
+    expect(short.incomplete).toBeUndefined();
+  });
+
+  it("eiris_incidents refuses malformed and impossible dates", async () => {
+    for (const since of [
+      "last month", "2026-13-01", "22/10/2026", "2026-10-22; drop",
+      // Impossible dates that Date would roll over (30 Feb is 2 Mar), and impossible times and offsets.
+      "2026-02-30", "2026-04-31", "2027-02-29", "2026-10-22T24:00", "2026-10-22T10:60", "2026-10-22T10:00:60Z", "2026-10-22T10:00+15:00", "2026-10-22T10:00+05:60",
+    ]) {
+      expect((await runHttpTool("eiris_incidents", { since }, ACTOR)).status, since).toBe(422);
+    }
+    for (const since of ["2028-02-29", "2026-10-22T23:59:59.5+05:30", "2026-10-22T00:00Z", "2026-10-22T10:00-14:00"]) {
+      expect((await runHttpTool("eiris_incidents", { since }, ACTOR)).status, since).toBe(200);
     }
   });
 

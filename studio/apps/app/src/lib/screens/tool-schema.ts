@@ -38,6 +38,8 @@ export const SourceTablePayload = z.object({
   row_count: z.number().int().nonnegative(),
   // Paged tools only: the match count across all pages (absent past the last page).
   total: z.number().int().nonnegative().optional(),
+  // Date-range reads over a capped upstream list: what the rows do not cover, shown on the source line.
+  incomplete: z.string().max(300).optional(),
 });
 export type SourceTablePayload = z.infer<typeof SourceTablePayload>;
 
@@ -46,7 +48,18 @@ const limit = z.number().int().min(1).max(200);
 const windowDays = z.number().int().min(1).max(365);
 /** A date (YYYY-MM-DD, read as an Asia/Kolkata calendar day) or an ISO date-time with an optional offset. */
 export const DATE_BOUND_RE = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d{1,6})?)?(Z|[+-]\d{2}:\d{2})?)?$/;
-const dateBound = z.string().regex(DATE_BOUND_RE).refine((v) => !Number.isNaN(Date.parse(v.length === 10 ? `${v}T00:00:00Z` : v)));
+/** Round trip: Date rolls 2026-02-30 over to 2 March instead of failing, so the date and the clock time must come
+ *  back unchanged, and the offset must be a real one (at most ±14:00). */
+export function isRealDateBound(v: string): boolean {
+  if (!DATE_BOUND_RE.test(v)) return false;
+  const [date, time = ""] = v.split("T");
+  const d = new Date(`${date}T00:00:00Z`);
+  if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== date) return false;
+  if (!time) return true;
+  const [, hh, mm, ss = "00", oh = "00", om = "00"] = /^(\d{2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))?$/.exec(time) ?? [];
+  return +hh < 24 && +mm < 60 && +ss < 60 && +oh * 60 + +om <= 14 * 60 && +om < 60;
+}
+const dateBound = z.string().refine(isRealDateBound, "not a real date");
 
 // Strict: unknown keys are refused, so a caller cannot smuggle SQL, a staff id or anything else.
 export const SCREEN_TOOL_PARAMS = {

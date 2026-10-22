@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { boundMs, inRange } from "../transform";
+import { boundMs, inRange, instantMs, truncatedAt } from "../transform";
 import { findingsWindowDays } from "../run";
 
 describe("date ranges", () => {
@@ -13,6 +13,40 @@ describe("date ranges", () => {
     // Date-times keep their offset; without one they are Kolkata time.
     expect(boundMs("2026-10-01T10:00:00Z", false)).toBe(Date.parse("2026-10-01T10:00:00Z"));
     expect(boundMs("2026-10-01T10:00", false)).toBe(Date.parse("2026-10-01T04:30:00Z"));
+  });
+
+  it("upstream timestamps without an offset are Kolkata time whatever the server zone; other offset forms parse", () => {
+    const tz = process.env.TZ;
+    try {
+      for (const zone of ["UTC", "America/New_York"]) {
+        process.env.TZ = zone;
+        expect(instantMs("2026-10-01T10:00:00")).toBe(Date.parse("2026-10-01T04:30:00Z"));
+        expect(instantMs("2026-10-01 10:00:00")).toBe(Date.parse("2026-10-01T04:30:00Z"));
+        expect(instantMs("2026-10-01")).toBe(Date.parse("2026-09-30T18:30:00Z"));
+      }
+    } finally {
+      process.env.TZ = tz;
+    }
+    expect(instantMs("2026-10-01 10:00:00+00")).toBe(Date.parse("2026-10-01T10:00:00Z"));
+    expect(instantMs("2026-10-01T10:00:00.123+0530")).toBe(Date.parse("2026-10-01T04:30:00.123Z"));
+    expect(instantMs("2026-10-01T10:00:00z")).toBe(Date.parse("2026-10-01T10:00:00Z"));
+    // A space before the offset (or Z), as some Postgres / log formats print it.
+    expect(instantMs("2026-10-01 10:00:00 +05:30")).toBe(Date.parse("2026-10-01T04:30:00Z"));
+    expect(instantMs("2026-10-01T10:00:00 -0100")).toBe(Date.parse("2026-10-01T11:00:00Z"));
+    expect(instantMs("2026-10-01 10:00:00 Z")).toBe(Date.parse("2026-10-01T10:00:00Z"));
+    expect(instantMs("yesterday")).toBeNaN();
+    // A naive reported_at at 01:00 IST on 1 Oct is in a range from 1 Oct (it is 30 Sep 19:30 UTC).
+    expect(inRange("2026-10-01T01:00:00", { since: "2026-10-01" })).toBe(true);
+  });
+
+  it("truncation: flagged only when the list came back full and its oldest dated row is later than since", () => {
+    const rows = ["2026-10-05T00:00:00Z", "2026-09-10T10:00:00Z", null];
+    expect(truncatedAt(rows, "2026-09-01", 3)).toBe("2026-09-10T10:00:00Z");
+    expect(truncatedAt(rows, "2026-09-01", 4)).toBeNull(); // short of the cap: the whole table
+    expect(truncatedAt(rows, "2026-09-01")).toBeNull(); // default cap 300
+    expect(truncatedAt(["2026-10-05T00:00:00Z", "2026-08-31T23:00:00"], "2026-09-01", 2)).toBeNull();
+    expect(truncatedAt(["2026-10-05T00:00:00Z"], undefined, 1)).toBeNull();
+    expect(truncatedAt([], "2026-09-01", 0)).toBeNull();
   });
 
   it("with a range, rows without a date are out; without one, everything is in", () => {

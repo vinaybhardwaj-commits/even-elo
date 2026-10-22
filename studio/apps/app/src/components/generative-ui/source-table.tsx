@@ -36,7 +36,7 @@ export function SourceTable({ result }: { result: unknown }) {
       </div>
     );
   }
-  const { source, mode, synthetic, columns, rows, row_count } = parsed.value;
+  const { source, mode, synthetic, columns, rows, row_count, incomplete } = parsed.value;
   return (
     <figure className="my-2 text-xs" data-testid="source-table">
       <div className="overflow-x-auto rounded border border-gray-200 dark:border-zinc-700">
@@ -73,6 +73,7 @@ export function SourceTable({ result }: { result: unknown }) {
       <figcaption className="mt-1 text-gray-500">
         Source: {source.tool} · query {source.query_hash} · {row_count} row{row_count === 1 ? "" : "s"}
         {mode === "fixture" || synthetic ? " · SAMPLE DATA (live reads are off)" : " · live, read-only"}
+        {incomplete ? ` · INCOMPLETE: ${incomplete}` : ""}
       </figcaption>
     </figure>
   );

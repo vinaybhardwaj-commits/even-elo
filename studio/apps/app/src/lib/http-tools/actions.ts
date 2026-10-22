@@ -21,7 +21,7 @@ export function buildHttpToolActions(actor: Actor): RuntimeActions {
       name: "eiris_incidents",
       description:
         "e-IRIS incident register (safety/M&M). view=summary: open and closed counts by severity plus all-time totals and M&M case counts. " +
-        "view=list: incidents with id, status, dates, severity, RCA flag. since/until filter by reported date; a summary with a range counts only those incidents, by severity and by type (category). Read-only. Present the result as a table with its source.",
+        "view=list: incidents with id, status, dates, severity, RCA flag. since/until filter by reported date; a summary with a range counts only those incidents, by severity and by type (category); a range_incomplete row means e-IRIS did not return the whole range, so say the counts are partial. Read-only. Present the result as a table with its source.",
       parameters: [
         { name: "view", type: "string" as const, description: "summary (default) or list", required: false, enum: ["summary", "list"] },
         { name: "status", type: "string" as const, description: "open or closed", required: false, enum: ["open", "closed"] },

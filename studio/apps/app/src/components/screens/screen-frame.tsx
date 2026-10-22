@@ -56,7 +56,9 @@ export function ScreenFrame({ title, children }: { title: string; children: Reac
   useEffect(() => {
     if (!panelOpen || wide) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
+      // Not when something else already handled it (a menu or dialog inside the chat closing itself) or when the
+      // key ends an IME composition in the chat input.
+      if (e.key === "Escape" && !e.defaultPrevented && !e.isComposing) {
         setChoice(false);
         toggleRef.current?.focus();
       }

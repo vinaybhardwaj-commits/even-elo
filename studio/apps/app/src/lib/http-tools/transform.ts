@@ -33,12 +33,22 @@ export interface DateRange {
 const IST = "+05:30";
 const DAY_MS = 86_400_000;
 
+/** A timestamp in ms. Upstream and caller timestamps without an offset are Asia/Kolkata wall time, read so
+ *  explicitly (not in the server's zone); a bare date is Kolkata midnight. "2026-10-01 10:00:00+00" and
+ *  "2026-10-01 10:00:00 +05:30" (a space before the offset) are accepted. */
+export function instantMs(v: string): number {
+  const t = v.trim().replace(/^(\d{4}-\d{2}-\d{2}) (?=\d)/, "$1T");
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return Date.parse(`${t}T00:00:00${IST}`);
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(t)) return NaN;
+  const offset = /\s*([+-])(\d{2}):?(\d{2})?$/.exec(t.slice(16));
+  if (offset) return Date.parse(`${t.slice(0, 16 + offset.index)}${offset[1]}${offset[2]}:${offset[3] ?? "00"}`);
+  return Date.parse(/\s*Z$/i.test(t) ? t.replace(/\s+Z$/i, "Z") : `${t}${IST}`);
+}
+
 /** Start (inclusive) or end (exclusive) of a bound in ms. A bare date is an Asia/Kolkata calendar day, so
  *  until=2026-10-22 includes all of that day; a date-time without an offset is read as Asia/Kolkata too. */
 export function boundMs(v: string, end: boolean): number {
-  if (v.length === 10) return Date.parse(`${v}T00:00:00${IST}`) + (end ? DAY_MS : 0);
-  const hasOffset = /(Z|[+-]\d{2}:\d{2})$/.test(v);
-  return Date.parse(hasOffset ? v : `${v}${IST}`) + (end ? 1 : 0);
+  return instantMs(v) + (end ? (v.length === 10 ? DAY_MS : 1) : 0);
 }
 
 export const hasRange = (r: DateRange): boolean => Boolean(r.since || r.until);
@@ -46,12 +56,30 @@ export const hasRange = (r: DateRange): boolean => Boolean(r.since || r.until);
 /** True when the timestamp falls in the range. With a range set, a row without a parsable date is excluded. */
 export function inRange(at: string | null | undefined, r: DateRange): boolean {
   if (!hasRange(r)) return true;
-  const t = at ? Date.parse(at) : NaN;
+  const t = at ? instantMs(at) : NaN;
   if (Number.isNaN(t)) return false;
   if (r.since && t < boundMs(r.since, false)) return false;
   if (r.until && t >= boundMs(r.until, true)) return false;
   return true;
 }
+
+/** e-IRIS GET /api/office/incidents returns its newest 300 incidents and no more (as the MCP list tool notes). */
+export const EIRIS_LIST_CAP = 300;
+
+/** The upstream list is capped (newest first): when it came back full AND its oldest dated row is later than
+ *  `since`, earlier incidents in the range were not returned. Gives that oldest timestamp, else null (a short
+ *  list is the whole table, however recent its oldest row). */
+export function truncatedAt(ats: (string | null)[], since: string | undefined, cap = EIRIS_LIST_CAP): string | null {
+  if (!since || ats.length < cap) return null;
+  let oldest: { at: string; t: number } | null = null;
+  for (const at of ats) {
+    const t = at ? instantMs(at) : NaN;
+    if (!Number.isNaN(t) && (!oldest || t < oldest.t)) oldest = { at: at!, t };
+  }
+  return oldest && oldest.t > boundMs(since, false) ? oldest.at : null;
+}
+
+const incompleteNote = (cut: string) => `e-IRIS returned incidents back to ${cut} only; earlier ones in the range are not included`;
 
 export function makePayload(meta: PayloadMeta, columns: string[], rows: Row[]): SourceTablePayload {
   return {
@@ -105,6 +133,7 @@ export function toIncidentsPayload(meta: PayloadMeta, input: IncidentsInput): So
   const all = incidentRows(input.incidents);
   const sevFilter = input.severity?.toLowerCase();
   const range = { since: input.since, until: input.until };
+  const cut = truncatedAt(all.map((r) => str(r.reported_at)), range.since);
   const rows = all.filter((r) => {
     if (!inRange(str(r.reported_at), range)) return false;
     if (sevFilter && sevOf(r).toLowerCase() !== sevFilter) return false;
@@ -129,7 +158,8 @@ export function toIncidentsPayload(meta: PayloadMeta, input: IncidentsInput): So
       sla_state: str(r.sla_state),
       due_at: str(r.due_at),
     }));
-    return makePayload(meta, LIST_COLUMNS, out);
+    const payload = makePayload(meta, LIST_COLUMNS, out);
+    return cut ? { ...payload, incomplete: incompleteNote(cut) } : payload;
   }
 
   const bySev = new Map<string, { open: number; closed: number }>();
@@ -159,6 +189,11 @@ export function toIncidentsPayload(meta: PayloadMeta, input: IncidentsInput): So
     }
     const open = rows.filter((r) => !isClosedIncident(r)).length;
     out.push({ scope: "range", key: `${range.since ?? "start"}..${range.until ?? "now"}`, open, closed: rows.length - open, total: rows.length });
+    if (cut) {
+      // Say so rather than under-count: the counts above cover only what the capped list returned.
+      out.push({ scope: "range_incomplete", key: incompleteNote(cut), open: null, closed: null, total: null });
+      return { ...makePayload(meta, SUMMARY_COLUMNS, out), incomplete: incompleteNote(cut) };
+    }
     return makePayload(meta, SUMMARY_COLUMNS, out);
   }
   // Rows above come from the newest incidents the upstream list returns (it caps the list); the totals below

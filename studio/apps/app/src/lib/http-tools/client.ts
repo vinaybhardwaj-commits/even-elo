@@ -50,7 +50,7 @@ export async function callToolRoute(
 export const HTTP_TOOL_DESCRIPTIONS: Record<HttpToolName, string> = {
   eiris_incidents:
     "e-IRIS incident register (safety/M&M). view=summary: open and closed counts by severity plus all-time totals and M&M case counts. " +
-    "view=list: incidents with id, status, dates, severity, RCA flag. since/until filter by reported date; a summary with a range counts only those incidents, by severity and by type (category). Read-only. Present the result as a table with its source.",
+    "view=list: incidents with id, status, dates, severity, RCA flag. since/until filter by reported date; a summary with a range counts only those incidents, by severity and by type (category); a range_incomplete row means e-IRIS did not return the whole range, so say the counts are partial. Read-only. Present the result as a table with its source.",
   eiris_incident_detail:
     "One e-IRIS incident by id (e.g. EHRC-INC-2026-0001): classification, dates, SLA state, patient and reporter details, narrative, immediate action, RCA root cause and CAPA actions. Read-only.",
   opd_signals:

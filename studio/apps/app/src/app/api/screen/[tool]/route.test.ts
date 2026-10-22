@@ -164,6 +164,33 @@ describe("/studio/api/screen/[tool]", () => {
     expect(fetchMock.mock.calls.every(([url]) => !String(url).includes("evil.invalid"))).toBe(true);
   });
 
+  it("a stale kept-alive socket is retried once; a slow agent is agent_timeout, not unreachable", async () => {
+    // Live: Physicians and Physician 360 showed "The agent is unreachable" on first load; Retry fixed it.
+    const stale = () => new TypeError("fetch failed", { cause: Object.assign(new Error("other side closed"), { code: "UND_ERR_SOCKET" }) });
+    fetchMock.mockRejectedValueOnce(stale()).mockResolvedValueOnce(new Response(JSON.stringify(payload("overview_counts")), { status: 200 }));
+    expect((await call("overview_counts")).status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    // A failed re-send says the route already retried (the screen hook never retries it): 2 agent POSTs at most.
+    fetchMock.mockReset();
+    fetchMock.mockRejectedValueOnce(stale()).mockRejectedValueOnce(stale());
+    const down = await call("overview_counts");
+    expect(await down.json()).toEqual({ ok: false, error: "agent_unreachable_after_retry" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    fetchMock.mockReset();
+    fetchMock.mockRejectedValueOnce(stale()).mockRejectedValueOnce(new DOMException("timeout", "TimeoutError"));
+    expect(await (await call("overview_counts")).json()).toEqual({ ok: false, error: "agent_timeout" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    fetchMock.mockReset();
+    fetchMock.mockRejectedValueOnce(new DOMException("The operation was aborted due to timeout", "TimeoutError"));
+    const slow = await call("overview_counts");
+    expect(slow.status).toBe(504);
+    expect(await slow.json()).toEqual({ ok: false, error: "agent_timeout" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("adds a scheme to a bare-host AGENT_URL like the chat route", async () => {
     process.env.AGENT_URL = "agent.internal:8123/agent";
     fetchMock.mockResolvedValue(new Response(JSON.stringify(payload("overview_counts")), { status: 200 }));
