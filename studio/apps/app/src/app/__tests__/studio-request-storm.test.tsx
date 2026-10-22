@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { lazy, type ReactNode } from "react";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { z } from "zod";
 import "@testing-library/jest-dom/vitest";
@@ -194,5 +195,67 @@ describe("Studio overview: copilotkit request storm", () => {
     );
     await wait(1500);
     expect(runtimePosts().map((c) => c.rpc)).toEqual(["info"]);
+  });
+
+  it("overview, panel closed, whose client chunks arrive one by one fetches runtime info once", async () => {
+    // Live 1cc01fe: ~140 info calls in one burst on overview. Root cause (prod build, slow chunks): while a chunk below
+    // the providers suspends the first render, React re-renders the uncommitted root on every retry; each attempt
+    // builds a new CopilotKit core in a fresh ref, and each core fetches info (870 renders, 1 commit, 870 infos).
+    const realNow = Date.now.bind(Date);
+    vi.spyOn(Date, "now").mockImplementation(() => realNow() + 400_000);
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: (q: string) => ({ matches: false, media: q, addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {} }),
+    });
+    const chunk = (ms: number) =>
+      lazy(() => new Promise<{ default: (p: { children: ReactNode }) => ReactNode }>((r) => setTimeout(() => r({ default: ({ children }) => children }), ms)));
+    const [C1, C2, C3, C4, C5] = [30, 30, 30, 30, 30].map(chunk);
+    const trace = (window as unknown as { __studioCopilotGuard: Record<string, { calls: number }> }).__studioCopilotGuard;
+    const infoCallsBefore = trace.info?.calls ?? 0;
+    render(
+      <Providers>
+        <C1>
+          <C2>
+            <C3>
+              <C4>
+                <C5>
+                  <OverviewScreen />
+                </C5>
+              </C4>
+            </C3>
+          </C2>
+        </C1>
+      </Providers>,
+    );
+    // Each chunk resolves inside its own act() so React retries the render after every one.
+    for (let i = 0; i < 10; i++) await wait(100);
+    expect(screen.getByRole("heading", { name: "Programme overview" })).toBeInTheDocument();
+    expect(runtimePosts("info")).toHaveLength(1);
+    expect(trace.info.calls - infoCallsBefore).toBe(1);
+  });
+
+  it("a refused runtime info never leaves the chat without its agent: no 'Agent not found', the question runs", async () => {
+    // Live: refused infos left CopilotKit with no agents ("Agent default not found" x5), and the first question threw
+    // "Agent not found" through React render, taking the page down.
+    const realNow = Date.now.bind(Date);
+    vi.spyOn(Date, "now").mockImplementation(() => realNow() + 500_000);
+    // Fill the info window: the info this page makes next is refused by the guard.
+    for (let i = 0; i < 10; i++) await window.fetch("/studio/api/copilotkit", { method: "POST", body: JSON.stringify({ method: "info" }) });
+    net.calls.length = 0;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    render(
+      <Providers>
+        <OverviewScreen />
+      </Providers>,
+    );
+    await wait(300);
+    expect(runtimePosts("info")).toHaveLength(0);
+    const input = screen.getByPlaceholderText("Ask about anything on this screen…");
+    fireEvent.change(input, { target: { value: "How many open patient feedback records?" } });
+    fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+    await wait(500);
+    expect(runtimePosts("agent/run")).toHaveLength(1);
+    expect(screen.getByText("How many open patient feedback records?")).toBeInTheDocument();
+    expect(warn.mock.calls.flat().join(" ")).not.toMatch(/Agent default not found/);
   });
 });

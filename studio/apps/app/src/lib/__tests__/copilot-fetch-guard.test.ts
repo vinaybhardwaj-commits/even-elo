@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   BACKOFF_BASE_MS,
   COOLDOWN_MS,
+  FALLBACK_INFO,
   MAX_TOOL_FOLLOW_UPS,
   TOOL_LOOP_STOP_MESSAGE,
   WINDOW_MS,
@@ -81,11 +82,12 @@ describe("copilot fetch guard", () => {
   it("caps a loop of successful calls per method per window", async () => {
     const { real, tryRun, at } = setup(() => new Response("{}", { status: 200 }));
     const results: string[] = [];
-    for (let i = 0; i < 50; i++) results.push(await tryRun("info"));
-    expect(real).toHaveBeenCalledTimes(10);
-    expect(results.filter((r) => r === "refused")).toHaveLength(40);
+    // (info is capped the same way but never refused to the caller; see the info tests below.)
+    for (let i = 0; i < 50; i++) results.push(await tryRun("agent/run"));
+    expect(real).toHaveBeenCalledTimes(6);
+    expect(results.filter((r) => r === "refused")).toHaveLength(44);
     at(WINDOW_MS);
-    expect(await tryRun("info")).toBe("sent");
+    expect(await tryRun("agent/run")).toBe("sent");
   });
 
   it("leaves other requests alone", async () => {
@@ -124,6 +126,49 @@ describe("copilot fetch guard", () => {
     expect(real).toHaveBeenCalledTimes(1 + MAX_TOOL_FOLLOW_UPS);
     await run("user", "r11");
     expect(real).toHaveBeenCalledTimes(2 + MAX_TOOL_FOLLOW_UPS);
+  });
+
+  it("never fails an info call: refused or failed info is answered with the last successful info response", async () => {
+    const INFO = JSON.stringify({ version: "x", agents: { default: { name: "default" } } });
+    let fail = false;
+    const { real, guarded, at } = setup(() => {
+      if (fail) throw new TypeError("network error");
+      return new Response(INFO, { status: 200, headers: { "Content-Type": "application/json", "X-Runtime": "1" } });
+    });
+    const info = () => guarded(URL_, post("info"));
+    expect(await (await info()).text()).toBe(INFO);
+    // A burst far past the window limit: 10 reach the network, the rest are served locally, none throws.
+    const burst = await Promise.all(Array.from({ length: 140 }, info));
+    expect(real).toHaveBeenCalledTimes(10);
+    for (const res of burst) {
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe(INFO);
+    }
+    expect(burst.at(-1)!.headers.get("X-Runtime")).toBe("1");
+    // A network failure of an admitted info is answered from the cache as well.
+    at(WINDOW_MS + COOLDOWN_MS);
+    fail = true;
+    expect(await (await info()).text()).toBe(INFO);
+  });
+
+  it("before any info succeeded, a refused info waits for the one in flight; with none, it gets the fallback naming the default agent", async () => {
+    const INFO = JSON.stringify({ version: "x", agents: { default: { name: "default" } } });
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const { real, guarded } = setup(async () => {
+      await gate;
+      return new Response(INFO, { status: 200 });
+    });
+    const pending = Array.from({ length: 15 }, () => guarded(URL_, post("info")));
+    release();
+    for (const res of await Promise.all(pending)) expect(await res.text()).toBe(INFO);
+    expect(real).toHaveBeenCalledTimes(10);
+
+    const down = setup(() => {
+      throw new TypeError("network error");
+    });
+    const res = await down.guarded(URL_, post("info"));
+    expect(await res.json()).toEqual(FALLBACK_INFO);
   });
 
   it("traces calls per method, with the stacks of repeated calls only", async () => {
