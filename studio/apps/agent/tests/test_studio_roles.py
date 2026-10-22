@@ -31,7 +31,7 @@ def test_grant_list_agrees_across_sql_tools_and_probe():
     used -= {"jsonb_array_elements", "generate_series"}
     probe = re.search(r"GOV_TABLES = \(([^)]*)\)", PROBE.read_text()).group(1)
     probe_tables = tuple(t.strip().strip('"') for t in probe.split(",") if t.strip())
-    assert set(granted) == set(studio_tools.GOVERNANCE_TABLES) == set(probe_tables) == used and len(granted) == 6
+    assert set(granted) == set(studio_tools.GOVERNANCE_TABLES) == set(probe_tables) == used and len(granted) == 5
     assert re.findall(r"GRANT SELECT \(([a-z_, ]+)\) ON ([a-z_]+) TO studio_gov_ro;", sql) == [
         ("id, status, is_super_admin", "profiles_with_roles"),
         ("id, must_change_pin", "profiles"),
@@ -189,6 +189,10 @@ def test_full_flow_gov_ro_setup_reset_login_probe_and_no_secret_anywhere(cluster
     assert v7.returncode == 0, v7.stderr
     v8, _ = run_roles(cluster, tmp_path, sql_file=OPS / "0008_ungate_views.sql", tag="ungate-views")
     assert v8.returncode == 0, v8.stderr
+    v9, _ = run_roles(cluster, tmp_path, sql_file=OPS / "0009_incidents_view.sql", tag="incidents-view")
+    assert v9.returncode == 0, v9.stderr
+    v10, _ = run_roles(cluster, tmp_path, sql_file=OPS / "0010_incidents_revoke.sql", tag="incidents-revoke")
+    assert v10.returncode == 0, v10.stderr
     pw = neon.issued["studio_gov_ro"]
     assert role_row(cluster, "studio_gov_ro")[0] is False  # still NOLOGIN after the reset
     l, _ = run_roles(cluster, tmp_path, "--login", tag="login")

@@ -35,6 +35,8 @@ Each file is run as the owner over the DIRECT url (`SQL_FILE=ops/neon/<file> ops
 4. `studio/apps/agent/migrations/0001_studio.sql`: Studio state tables, applied with `apply_migration.py` (see the studio_app note above).
 5. `0007_docaudits_views.sql`: NEW, owner must apply (section below). Needed by the Document audits screen. Not yet applied live; the file was edited in place for the ungate ruling (adds `finding_body`, `evidence_excerpt`, `response_comment`, `authored_by_name`, `pdf_url`).
 6. `0008_ungate_views.sql`: NEW, owner must apply AFTER 0003 and 0007 (section below). Appends the free-text columns to five 0003 views. The Studio tools that read those columns fail until it is applied, so apply it before the matching deploy.
+7. `0009_incidents_view.sql`: NEW, owner must apply AFTER 0003 (section below). ADDITIVE: creates `studio_ro.incident_register` and its grant, revokes nothing, so the running agent keeps working. Run it, then deploy the agent (`incident_summary` and `overview_counts` read the view), then step 8.
+8. `0010_incidents_revoke.sql`: NEW, owner must apply ONLY AFTER 0009 and the agent deploy. `REVOKE ALL ON public.incidents FROM studio_gov_ro`; refuses without the view. Applying it before the deploy breaks the old agent's incident tools.
 
 ### Column-scoped views (M1): `0003_studio_views.sql`
 Physician 360, OPD governance and Patient feedback read **views** in schema `studio_ro`, never the base tables behind them (`privileges`, `oppe_reviews`, `clinical_metrics_monthly`, `qualifications`, `gov_capture_gaps`, `incident_replies`). Run it as the owner over the DIRECT url, after step 1 (the role must exist), before the probe:
@@ -58,7 +60,21 @@ V's ruling: governance has no doctor or PHI gating. This file appends columns AT
 SQL_FILE=ops/neon/0008_ungate_views.sql ops/neon/run-roles.sh "$XDG_RUNTIME_DIR/owner-url"
 STUDIO_EXPECT_VIEWS=1 GOV_RO_DATABASE_URL="$(<"$XDG_RUNTIME_DIR/gov-ro-url")" uv run --directory studio/apps/agent pytest tests/test_lc1_live_probe.py -q
 ```
-Re-running 0003 drops and recreates those five views WITHOUT the appended columns: run 0008 again afterwards. The role still has nothing on any base table. The `interventions` note and the incidents text need no migration: `gov_interventions` and `incidents` are granted table-wide in 0001. The probe now expects the 0008 columns, so run it only after all three view files.
+Re-running 0003 drops and recreates those five views WITHOUT the appended columns: run 0008 again afterwards. The role still has nothing on any base table. The `interventions` note needs no migration: `gov_interventions` is granted table-wide in 0001 (`incidents` is no longer: see 0009 and 0010). The probe now expects the 0008 columns, so run it only after all the view files (0003, 0007, 0008, 0009, 0010).
+
+### Incidents narrowing (Fable condition 2, 21 Oct): `0009_incidents_view.sql` -> deploy -> `0010_incidents_revoke.sql`
+`studio_gov_ro` stops reading `public.incidents` in two steps, so there is no outage window. Both: owner over the DIRECT url, after 0003, idempotent, one transaction, not run by the builder.
+1. `0009_incidents_view.sql` creates `studio_ro.incident_register` (`status, polarity, severity, submitted_at`: exactly what `incident_summary` and `overview_counts` select; no narrative, reporter, patient or submitter columns) and grants it to the role. It revokes nothing; its post-check covers membership, exact view ACLs and the column list.
+2. Deploy the agent that reads the view.
+3. `0010_incidents_revoke.sql` runs `REVOKE ALL ON public.incidents FROM studio_gov_ro` (column grants go with it). It refuses if the view is missing; its post-check rolls back if the role still holds any privilege on the base table (PUBLIC and inherited included).
+`0001_roles.sql` no longer grants `incidents`, so re-running it cannot undo this.
+```bash
+SQL_FILE=ops/neon/0009_incidents_view.sql ops/neon/run-roles.sh "$XDG_RUNTIME_DIR/owner-url"
+# deploy the agent, then:
+SQL_FILE=ops/neon/0010_incidents_revoke.sql ops/neon/run-roles.sh "$XDG_RUNTIME_DIR/owner-url"
+STUDIO_EXPECT_VIEWS=1 GOV_RO_DATABASE_URL="$(<"$XDG_RUNTIME_DIR/gov-ro-url")" uv run --directory studio/apps/agent pytest tests/test_lc1_live_probe.py -q
+```
+The probe expects `public.incidents` to be denied, so run it only after 0010.
 
 Then move the DSN into the even-studio Vercel project and the Asus agent env (never even-elo), and destroy the files. To rotate later, follow **Rotation** below: do NOT just repeat steps 2 and 3.
 

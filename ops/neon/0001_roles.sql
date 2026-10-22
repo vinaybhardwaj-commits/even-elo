@@ -5,7 +5,7 @@
 -- The role is created BY SQL on purpose: roles created through the Neon API/Console are granted
 -- neon_superuser, which the owner cannot revoke; SQL-created roles get no memberships.
 --
--- Grants are exactly: USAGE on schema public; SELECT on six governance tables; COLUMN grants
+-- Grants are exactly: USAGE on schema public; SELECT on five governance tables (incidents is read through studio_ro.incident_register, 0009); COLUMN grants
 -- (id, status, is_super_admin) on profiles_with_roles and (id, must_change_pin) on profiles.
 -- profiles_with_roles is `SELECT p.*`, so a table-wide grant on it (or on profiles) would expose
 -- password_hash and email. Nothing else is granted: no INSERT/UPDATE/DELETE/TRUNCATE, no sequences,
@@ -65,7 +65,7 @@ REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM studio_gov_ro;
 REVOKE ALL ON SCHEMA public FROM studio_gov_ro;
 
 GRANT USAGE ON SCHEMA public TO studio_gov_ro;
-GRANT SELECT ON physicians, physician_engagements, hospitals, gov_signal_snapshots, gov_interventions, incidents TO studio_gov_ro;
+GRANT SELECT ON physicians, physician_engagements, hospitals, gov_signal_snapshots, gov_interventions TO studio_gov_ro;
 GRANT SELECT (id, status, is_super_admin) ON profiles_with_roles TO studio_gov_ro;
 GRANT SELECT (id, must_change_pin) ON profiles TO studio_gov_ro;
 

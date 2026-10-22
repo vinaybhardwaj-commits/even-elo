@@ -19,6 +19,7 @@ import pytest
 
 import apply_migration
 from src import studio_tools
+from tests.neon_harness import incident_view_ddl
 from src.studio_auth import PostgresNonceStore
 
 SQL_FILE = Path(apply_migration.MIGRATIONS) / "0001_studio.sql"
@@ -236,6 +237,7 @@ def test_read_tool_sql_runs_against_the_real_schema_shape(pg_uri):
         c.execute("CREATE SCHEMA tools")
         c.execute("SET search_path TO tools")
         c.execute(SCHEMA)
+        c.execute(incident_view_ddl("tools.incidents"))
         h = c.execute("INSERT INTO hospitals (code, name) VALUES ('H1','Hosp') RETURNING id").fetchone()[0]
         c.execute("INSERT INTO physicians (id, full_name, primary_specialty, cdmss_doctor_uid) VALUES (%s, 'Dr 50%% Sample', 'Cardiology', 'uid-1')", (pid,))
         c.execute("INSERT INTO physician_engagements (physician_id, hospital_id, category) VALUES (%s, %s, 'active')", (pid, h))

@@ -10,7 +10,8 @@ Rules (all enforced in code and tests):
   * only SELECT/WITH statements can reach the connection (see assert_read_only).
 
 Tables read (from src/lib/migrations.ts of even-elo): physicians, physician_engagements, hospitals,
-gov_signal_snapshots, gov_interventions, incidents. Governance sees what the source pages show (V, 21 Oct: no
+gov_signal_snapshots, gov_interventions, plus incidents through the column-scoped view studio_ro.incident_register
+(ops/neon/0009_incidents_view.sql; 0010_incidents_revoke.sql removes the role's grant on public.incidents). Governance sees what the source pages show (V, 21 Oct: no
 doctor or PHI gating), so notes are selected; ops/neon/0008_ungate_views.sql appends the view text columns.
 
 M1 adds six tools over the column-scoped VIEWS in schema studio_ro (ops/neon/0003_studio_views.sql):
@@ -121,7 +122,7 @@ LIMIT %s
 INCIDENT_SUMMARY_SQL = """
 SELECT i.status, COALESCE(i.polarity, 'negative') AS polarity, COALESCE(i.severity, 'n/a') AS severity,
        count(*)::int AS incidents
-FROM incidents i
+FROM studio_ro.incident_register i
 WHERE i.submitted_at >= now() - make_interval(days => %s::int)
 GROUP BY 1, 2, 3
 ORDER BY incidents DESC, 1, 2, 3
@@ -134,7 +135,7 @@ SELECT metric, value FROM (
   UNION ALL SELECT 2, 'physicians_total', count(*)::int FROM physicians
   UNION ALL SELECT 3, 'hospitals_active', count(*)::int FROM hospitals WHERE is_active
   UNION ALL SELECT 4, 'engagements_open', count(*)::int FROM physician_engagements WHERE status <> 'terminated'
-  UNION ALL SELECT 5, 'incidents_open', count(*)::int FROM incidents WHERE status = 'open'
+  UNION ALL SELECT 5, 'incidents_open', count(*)::int FROM studio_ro.incident_register WHERE status = 'open'
   UNION ALL SELECT 6, 'interventions_total', count(*)::int FROM gov_interventions
   UNION ALL SELECT 7, 'signal_snapshot_days', count(DISTINCT day)::int FROM gov_signal_snapshots
 ) c ORDER BY ord
@@ -210,6 +211,7 @@ STUDIO_RO_VIEWS = (
     "physician_qualifications",
     "capture_gaps",
     "physician_feedback",
+    "incident_register",
 )
 
 # The ONLY tables the read tools touch. ops/neon/0001_roles.sql grants SELECT on exactly these (a test
@@ -220,7 +222,6 @@ GOVERNANCE_TABLES = (
     "hospitals",
     "gov_signal_snapshots",
     "gov_interventions",
-    "incidents",
 )
 
 ALL_SQL = {

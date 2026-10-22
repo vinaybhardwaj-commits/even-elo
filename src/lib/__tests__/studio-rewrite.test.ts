@@ -70,9 +70,9 @@ const UNMAPPED = ["/admin", "/admin/pending", "/admin/metrics", "/admin/users/u1
 async function jwt(superAdmin: boolean) {
   return signStaffJwt({ profileId: "p", email: "x@example.test", status: "active", is_super_admin: superAdmin, is_sgc_member: true }, "1h");
 }
-async function hit(path: string, token: string | null, opts: { host?: string; method?: string } = {}) {
+async function hit(path: string, token: string | null, opts: { host?: string; method?: string; headers?: Record<string, string> } = {}) {
   const host = opts.host ?? "governance.evenos.app";
-  const headers: Record<string, string> = { host };
+  const headers: Record<string, string> = { host, ...opts.headers };
   if (token) headers.cookie = `epi_session=${token}`;
   return middleware(new NextRequest(`https://${host}${path}`, { method: opts.method ?? "GET", headers }));
 }
@@ -107,6 +107,39 @@ describe("Studio redirects (role-conditional, in middleware)", () => {
       expect(loc.pathname + loc.search, from).toBe(`${to}?a=1&b=x%20y`);
       expect(loc.host, from).toBe("governance.evenos.app");
     }
+  });
+
+  it("<Link> prefetches of moved pages get an empty 204 (alone or with rsc / _rsc / state-tree), so a click hard-navigates to the Studio", async () => {
+    process.env.STUDIO_ORIGIN = ORIGIN;
+    const t = await jwt(true);
+    const prefetches: Array<[string, string, Record<string, string>]> = [
+      ["prefetch header alone", "/overview", { "next-router-prefetch": "1" }],
+      ["prefetch + rsc", "/overview", { "next-router-prefetch": "1", rsc: "1" }],
+      ["prefetch + rsc + _rsc param + state tree", "/physicians/p1?a=1&_rsc=zz", { "next-router-prefetch": "1", rsc: "1", "next-router-state-tree": "%5B%22%22%5D" }],
+    ];
+    for (const [name, path, headers] of prefetches) {
+      const r = await hit(path, t, { headers });
+      expect(r.status, name).toBe(204);
+      expect(r.headers.get("location"), name).toBeNull();
+    }
+  });
+
+  it("a super_admin clicking a Link to a moved page (rsc: 1 navigation, with or without _rsc / state tree) still reaches the Studio", async () => {
+    process.env.STUDIO_ORIGIN = ORIGIN;
+    const t = await jwt(true);
+    const navs: Array<[string, string, Record<string, string>]> = [
+      ["rsc header", "/overview", { rsc: "1" }],
+      ["rsc + state tree", "/overview", { rsc: "1", "next-router-state-tree": "%5B%22%22%5D" }],
+      ["rsc + _rsc param", "/overview?_rsc=abc12", { rsc: "1" }],
+      ["_rsc param alone", "/physicians/p1?_rsc=zz", {}],
+      ["plain navigation", "/overview", {}],
+    ];
+    for (const [name, path, headers] of navs) {
+      const r = await hit(path, t, { headers });
+      expect(r.status, name).toBe(307);
+      expect(new URL(r.headers.get("location")!).pathname, name).toMatch(/^\/studio\//);
+    }
+    expect((await hit("/overview", t, { headers: { "next-router-prefetch": "0" } })).status).toBe(307);
   });
 
   it("non-super_admin never redirects to the Studio on any mapped path", async () => {

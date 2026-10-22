@@ -49,6 +49,14 @@ const ADMIN_BOOTSTRAP_ROUTES = [
   "/api/admin/map-cdmss-doctors",
 ];
 
+// <Link> prefetch sends next-router-prefetch: 1 (with ?_rsc= and rsc: 1). Those must not be redirected into the Studio: they pass to the
+// old page handler, so prefetching a moved link costs nothing there. A real client-side navigation (rsc: 1, optionally with
+// next-router-state-tree or ?_rsc=, but NOT prefetch) is a super_admin clicking a moved link and still gets the 307 so it
+// reaches the Studio. Only the prefetch header is the marker; ?_rsc= alone is not.
+function isPrefetchRequest(request: NextRequest): boolean {
+  return request.headers.get("next-router-prefetch") === "1";
+}
+
 interface MiddlewarePayload {
   profileId?: unknown;
   email?: unknown;
@@ -197,9 +205,12 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(new URL("/auth/change-pin", request.url));
     }
 
-    // Pages that moved into the Studio: super_admin only (the Studio zone admits nobody else), page navigations only.
+    // Pages that moved into the Studio: super_admin only (the Studio zone admits nobody else), prefetches get 204.
     if (payload.is_super_admin === true && (request.method === "GET" || request.method === "HEAD")) {
       const to = studioRedirectPath(process.env.STUDIO_ORIGIN, pathname, host);
+      // A <Link> prefetch of a moved page gets an empty 204, not the old page: Next then treats the
+      // later click as a hard navigation (fetch-server-response doMpaNavigation), which gets the 307 below.
+      if (to && isPrefetchRequest(request)) return new NextResponse(null, { status: 204 });
       if (to) {
         const url = request.nextUrl.clone();
         url.pathname = to;
