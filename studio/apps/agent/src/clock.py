@@ -1,5 +1,6 @@
-"""The model has no clock: tell it the current date and time (Asia/Kolkata) on every model call, so relative
-ranges such as "the last 30 days" become concrete since/until dates for the read tools."""
+"""The model has no clock: tell it today's date (Asia/Kolkata) on every model call, so relative ranges such as
+"the last 30 days" become concrete since/until dates for the read tools. Date only, no time of day: the note is part
+of the system prompt, so it changes (and busts the prompt cache) once a day, not every minute."""
 
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -14,7 +15,7 @@ def clock_note(now: datetime | None = None) -> str:
     now = (now or datetime.now(KOLKATA)).astimezone(KOLKATA)
     today = now.date()
     return (
-        f"\n\nCurrent date and time: {now:%A %d %B %Y, %H:%M} Asia/Kolkata (IST, UTC+05:30); today is {today.isoformat()}. "
+        f"\n\nCurrent date: {now:%A %d %B %Y} Asia/Kolkata (IST, UTC+05:30); today is {today.isoformat()}. "
         "Resolve relative periods against it and pass them to tools as dates (YYYY-MM-DD, Asia/Kolkata days, until inclusive): "
         f"for example the last 30 days is since={(today - timedelta(days=29)).isoformat()}, until={today.isoformat()}. "
         "State the dates you used in the answer."
