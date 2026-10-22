@@ -21,10 +21,10 @@ function studioRewrites(origin) {
   ];
 }
 
-// Root pages that moved into the Studio (M1 ruling E). The Studio zone admits only super_admin today, so these are
-// NOT next.config redirects: src/middleware.ts calls studioRedirectPath() after the staff JWT is verified and
-// redirects (307) only super_admins, and only when STUDIO_ORIGIN is valid and the host is not doctors.*. Everyone
-// else keeps the old page. Unsetting the env rolls everything back.
+// Root pages that moved into the Studio (M1 ruling E). These are NOT next.config redirects: src/middleware.ts calls
+// studioRedirectPath() after the staff JWT is verified and redirects (307) only a user who satisfies the TARGET screen's
+// predicate (studio-access.js), and only when STUDIO_ORIGIN is valid and the host is not doctors.*. Everyone else keeps
+// the old page. Unsetting the env rolls everything back.
 const STUDIO_REDIRECTS = [
   ["/overview", "/studio/overview"],
   ["/physicians", "/studio/physicians"],

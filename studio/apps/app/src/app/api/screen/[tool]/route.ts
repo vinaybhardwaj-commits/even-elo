@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { normalizeLanggraphUrl } from "@/lib/copilotkit-runtime-options";
 import { agentHeaders } from "@/lib/zone/actor-token";
+import { canUseTool } from "@/lib/zone/access";
 import { ACTOR_ID_HEADER, ACTOR_ROLE_HEADER } from "@/lib/zone/authorize";
 import { SCREEN_TOOL_PARAMS, SourceTablePayload, isGovernanceTool, isHttpTool } from "@/lib/screens/tool-schema";
 import { runHttpTool } from "@/lib/http-tools/run";
@@ -44,6 +45,8 @@ export const POST = async (req: NextRequest, ctx: { params: Promise<{ tool: stri
   if (!staffId || !role) return fail(401, "unauthorized");
 
   const { tool } = await ctx.params;
+  // Per-tool predicate (the proxy checks the same table; this keeps the route safe if called without it).
+  if ((isHttpTool(tool) || isGovernanceTool(tool)) && !canUseTool(role, tool)) return fail(403, "forbidden");
   if (isHttpTool(tool)) return httpTool(req, tool, staffId, role);
   if (!isGovernanceTool(tool)) return fail(404, "unknown_tool");
 

@@ -1,4 +1,5 @@
 import type { CopilotRuntime } from "@copilotkit/runtime";
+import { canUseTool } from "@/lib/zone/access";
 import { runOnboardingRead, type OnboardingActor } from "./run";
 import type { OnboardingReadName } from "./schema";
 
@@ -28,5 +29,5 @@ export function buildOnboardingActions(actor: OnboardingActor): RuntimeActions {
     tool("onboarding_pending_credentials", "Qualifications awaiting verification across the network: physician, degree, institution, whether a file is attached.", [n("limit", "max rows")]),
     tool("onboarding_hospitals", "Active hospital codes, names and ids."),
   ];
-  return actions as unknown as RuntimeActions;
+  return actions.filter((a) => canUseTool(actor.role, a.name)) as unknown as RuntimeActions;
 }

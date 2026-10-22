@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { agentHeaders } from "@/lib/zone/actor-token";
 import { SESSION_COOKIE } from "@/lib/zone/authorize";
 import { RMO_INBOX_PARAMS, RMO_ITEM_COLUMNS, RMO_WRITE_PARAMS, type RmoInboxPayload, type RmoOp } from "@/lib/screens/rmo-schema";
-import { SAFETY_ROLES, liveReadsEnabled } from "./run";
+import { canUseTool } from "@/lib/zone/access";
+import { liveReadsEnabled } from "./run";
 
 // RMO inbox (M2). Same shape as run.ts: role gate, params, upstream call, audit row, then data. The upstream is
 // even-elo's existing /api/rmo-inbox routes (the page's own data source), called from this server with the
@@ -106,7 +107,7 @@ const SAFE_ERRORS = new Set(["not_found", "finding_id_required", "author_name_re
 
 export async function runRmo(op: RmoOp, rawParams: unknown, actor: Actor, deps: RmoDeps = {}): Promise<RmoResult> {
   if (!actor.staffId || !actor.role) return fail(401, "unauthorized");
-  if (!SAFETY_ROLES.has(actor.role)) return fail(403, "forbidden");
+  if (!canUseTool(actor.role, `rmo_${op}`)) return fail(403, "forbidden");
   const secondFactorOk = deps.secondFactorOk ?? noSecondFactorYet;
   if (op === "inbox") return runRead(rawParams, actor, secondFactorOk);
   return runWrite(op, rawParams, actor, secondFactorOk);

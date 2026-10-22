@@ -41,7 +41,7 @@ describe("studio middleware", () => {
     );
     expect(res.status).toBe(200);
     expect(res.headers.get("x-middleware-request-studio-internal-staff-id")).toBe(STAFF);
-    expect(res.headers.get("x-middleware-request-studio-internal-staff-role")).toBe("super_admin");
+    expect(res.headers.get("x-middleware-request-studio-internal-staff-role")).toBe("staff,super_admin");
     expect(live).toHaveBeenCalledWith(STAFF);
   });
 
@@ -70,11 +70,16 @@ describe("studio middleware", () => {
     expect("studio-internal-staff-id".startsWith("x-")).toBe(false);
   });
 
-  it("403 for a non-super_admin and for a cross-origin POST", async () => {
+  it("admits plain active staff (no longer super_admin only); 403 for a cross-origin POST and a refused screen", async () => {
     live.mockResolvedValue({ status: "active", is_super_admin: false, must_change_pin: false });
     const { proxy } = await import("../proxy");
     const cookie = `epi_session=${await token()}`;
-    expect((await proxy(new NextRequest("https://governance.evenos.app/studio", { headers: { cookie } }))).status).toBe(403);
+    expect((await proxy(new NextRequest("https://governance.evenos.app/studio", { headers: { cookie } }))).status).toBe(200);
+    // A page their role does not reach redirects to Overview; the same screen's API answers 403.
+    const page = await proxy(new NextRequest("https://governance.evenos.app/studio/surgical", { headers: { cookie }, nextConfig: { basePath: "/studio" } }));
+    expect(page.status).toBe(307);
+    expect(new URL(page.headers.get("location")!).pathname).toBe("/studio/overview");
+    expect((await proxy(new NextRequest("https://governance.evenos.app/studio/api/surgical/surgical_vcs", { method: "POST", headers: { cookie, origin: "https://governance.evenos.app" }, nextConfig: { basePath: "/studio" } }))).status).toBe(403);
     live.mockResolvedValue({ status: "active", is_super_admin: true, must_change_pin: false });
     const post = await proxy(
       new NextRequest("https://governance.evenos.app/studio/api/copilotkit", { method: "POST", headers: { cookie, origin: "https://evil.example" } }),

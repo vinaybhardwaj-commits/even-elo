@@ -3,7 +3,7 @@
 import { neon } from "@neondatabase/serverless";
 import type { LiveStaff } from "./authorize";
 
-type Row = { status: string | null; is_super_admin: boolean | null; must_change_pin: boolean | null };
+type Row = { status: string | null; is_super_admin: boolean | null; is_sgc_member?: boolean | null; is_site_medical_head?: boolean | null; is_hr?: boolean | null; must_change_pin: boolean | null };
 type Query = (profileId: string) => Promise<Row[]>;
 
 // The view profiles_with_roles is `SELECT p.*` frozen at even-elo migration 015, so it does NOT have
@@ -18,12 +18,34 @@ FROM profiles_with_roles p
 WHERE p.id = $1::uuid
 LIMIT 1`;
 
+// Same read plus the three hospital-role flags the per-screen predicates need (zone/access.ts). It needs
+// GRANT SELECT (is_sgc_member, is_site_medical_head, is_hr) ON profiles_with_roles TO studio_gov_ro, which ops/neon does
+// NOT contain yet (0001_roles.sql grants only id, status, is_super_admin). Until it is granted this read fails with
+// InsufficientPrivilege and we fall back to LIVE_STAFF_SQL: the flags are then unknown = false (plain staff, fail closed).
+export const LIVE_STAFF_WIDE_SQL = `
+SELECT p.status, p.is_super_admin, p.is_sgc_member, p.is_site_medical_head, p.is_hr,
+       (SELECT base.must_change_pin FROM profiles base WHERE base.id = p.id) AS must_change_pin
+FROM profiles_with_roles p
+WHERE p.id = $1::uuid
+LIMIT 1`;
+const WIDE_RETRY_MS = 60_000;
+let wideDeniedAt = 0;
+
 let cached: { url: string; query: Query } | null = null;
 
 function queryFor(url: string): Query {
   if (cached?.url === url) return cached.query;
   const sql = neon(url);
-  const query: Query = async (profileId) => (await sql(LIVE_STAFF_SQL, [profileId])) as unknown as Row[];
+  const query: Query = async (profileId) => {
+    if (Date.now() - wideDeniedAt >= WIDE_RETRY_MS) {
+      try {
+        return (await sql(LIVE_STAFF_WIDE_SQL, [profileId])) as unknown as Row[];
+      } catch {
+        wideDeniedAt = Date.now(); // not granted (or a blip): read the narrow row, retry the wide one in a minute
+      }
+    }
+    return (await sql(LIVE_STAFF_SQL, [profileId])) as unknown as Row[];
+  };
   cached = { url, query };
   return query;
 }
@@ -41,6 +63,9 @@ export async function loadLiveStaff(profileId: string, query?: Query): Promise<L
     return {
       status: String(r.status ?? ""),
       is_super_admin: r.is_super_admin === true,
+      is_sgc_member: r.is_sgc_member === true,
+      is_site_medical_head: r.is_site_medical_head === true,
+      is_hr: r.is_hr === true,
       must_change_pin: r.must_change_pin !== false, // unknown = treat as pending (fail closed)
     };
   } catch {

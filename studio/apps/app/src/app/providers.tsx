@@ -9,6 +9,7 @@ import { SANDBOX_FUNCTIONS } from "@/lib/sandbox/sandbox-functions";
 import { OpenGenUIPromptBridge } from "@/lib/sandbox/prompt-bridge";
 import { tableCatalog } from "@/components/generative-ui/table-catalog";
 import { ChatSessionProvider, useChatSession } from "@/components/chat/chat-session";
+import { AccessProvider } from "@/lib/zone/access-context";
 import { ThemeProvider } from "@/hooks/use-theme";
 import { installCopilotFetchGuard } from "@/lib/copilot-fetch-guard";
 
@@ -23,14 +24,15 @@ const openGenerativeUI = {
   designSkill: OPEN_GEN_UI_DESIGN_SKILL,
 };
 
-export function Providers({ children }: { children: React.ReactNode }) {
-  return (
+export function Providers({ children, role }: { children: React.ReactNode; role?: string }) {
+  const inner = (
     <ThemeProvider>
       <ChatSessionProvider>
         <ChatProviders>{children}</ChatProviders>
       </ChatSessionProvider>
     </ThemeProvider>
   );
+  return role === undefined ? inner : <AccessProvider role={role}>{inner}</AccessProvider>;
 }
 
 function ChatProviders({ children }: { children: React.ReactNode }) {

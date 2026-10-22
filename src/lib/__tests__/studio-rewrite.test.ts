@@ -142,18 +142,19 @@ describe("Studio redirects (role-conditional, in middleware)", () => {
     expect((await hit("/overview", t, { headers: { "next-router-prefetch": "0" } })).status).toBe(307);
   });
 
-  it("non-super_admin never redirects to the Studio on any mapped path", async () => {
+  it("a non-super_admin (SGO here) is redirected only where the TARGET screen admits them; super_admin-only screens keep the old page", async () => {
     process.env.STUDIO_ORIGIN = ORIGIN;
     const t = await jwt(false);
-    for (const [from] of MAPPING) {
+    const SUPER_ONLY = ["/mm", "/surgical-governance", "/surgical-governance/vc/v1", "/admin/users", "/admin/resignations"];
+    for (const [from, to] of MAPPING) {
       const r = await hit(from, t);
-      expect(r.headers.get("location") ?? "", from).not.toContain("/studio");
-    }
-    // pages the old app still serves to them pass straight through
-    for (const p of ["/overview", "/physicians", "/physicians/p1", "/audit-findings", "/rmo-inbox", "/incidents", "/safety", "/onboarding"]) {
-      const r = await hit(p, t);
-      expect(r.status, p).toBe(200);
-      expect(r.headers.get("location")).toBeNull();
+      if (SUPER_ONLY.includes(from)) {
+        // the old app's own gate still applies (/home for /surgical-governance and /admin, the page itself for /mm)
+        expect(r.headers.get("location") ?? "", from).not.toContain("/studio");
+      } else {
+        expect(r.status, from).toBe(307);
+        expect(new URL(r.headers.get("location")!).pathname, from).toBe(to);
+      }
     }
   });
 

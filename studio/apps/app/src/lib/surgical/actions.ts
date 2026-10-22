@@ -1,4 +1,5 @@
 import type { CopilotRuntime } from "@copilotkit/runtime";
+import { canUseTool } from "@/lib/zone/access";
 import { runSurgicalRead, type SurgicalActor } from "./run";
 import type { SurgicalReadName } from "./schema";
 
@@ -30,5 +31,5 @@ export function buildSurgicalActions(actor: SurgicalActor): RuntimeActions {
     tool("surgical_positions", "Surgical Governance positions and their descriptions."),
     tool("surgical_audit_log", "even-elo audit log: when, who (position), action, entity. No before/after content.", [s("action", "action filter"), s("entity_type", "entity type filter"), s("actor", "actor position substring"), n("limit", "max rows"), n("offset", "paging offset")]),
   ];
-  return actions as unknown as RuntimeActions;
+  return actions.filter((a) => canUseTool(actor.role, a.name)) as unknown as RuntimeActions;
 }

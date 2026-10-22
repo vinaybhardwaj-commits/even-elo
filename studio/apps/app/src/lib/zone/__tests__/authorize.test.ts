@@ -36,7 +36,7 @@ const SUPER: LiveStaff = { status: "active", is_super_admin: true, must_change_p
 describe("studio auth zone", () => {
   it("admits an active super_admin and returns the staff id from the token", async () => {
     const d = await authorizeStudioRequest(await req(), ENV, live(SUPER));
-    expect(d).toEqual({ ok: true, staffId: STAFF, role: "super_admin" });
+    expect(d).toEqual({ ok: true, staffId: STAFF, role: "staff,super_admin" });
   });
 
   it("401 without a session cookie", async () => {
@@ -102,12 +102,12 @@ describe("studio auth zone", () => {
     expect(l.loadLiveStaff).toHaveBeenCalledWith(STAFF);
     // Token says super admin; DB says revoked.
     const revoked = await authorizeStudioRequest(await req(), ENV, live({ status: "active", is_super_admin: false, must_change_pin: false }));
-    expect(revoked).toMatchObject({ ok: false, status: 403 });
+    expect(revoked).toEqual({ ok: true, staffId: STAFF, role: "staff" }); // revoked flag = plain staff, no screens beyond the open ones
   });
 
-  it("403 for a deactivated account and for non-super_admin staff", async () => {
+  it("403 for a deactivated account; plain active staff is admitted", async () => {
     expect(await authorizeStudioRequest(await req(), ENV, live({ status: "suspended", is_super_admin: true, must_change_pin: false }))).toMatchObject({ ok: false, status: 403 });
-    expect(await authorizeStudioRequest(await req(), ENV, live({ status: "active", is_super_admin: false, must_change_pin: false }))).toMatchObject({ ok: false, status: 403 });
+    expect(await authorizeStudioRequest(await req(), ENV, live({ status: "active", is_super_admin: false, must_change_pin: false }))).toMatchObject({ ok: true });
   });
 
   it("401 when the DB cannot confirm the profile (fail closed)", async () => {

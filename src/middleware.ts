@@ -3,6 +3,7 @@ import { verifyStaffJwt, verifyPortalJwt } from "@/lib/jwt";
 import { isPublicCaptureApi, isPublicCapturePage, isUploadCaptureHost } from "@/lib/capture/access";
 import { checkCronAuth } from "@/lib/cron-auth";
 import { studioRedirectPath } from "../studio-rewrites";
+import { canAccessStudioPath } from "../studio-access";
 import { isAllowedOnDoctorsHost, isDoctorsHost } from "@/lib/host-lock";
 
 const COOKIE_NAME = "epi_session";
@@ -51,7 +52,7 @@ const ADMIN_BOOTSTRAP_ROUTES = [
 
 // <Link> prefetch sends next-router-prefetch: 1 (with ?_rsc= and rsc: 1). Those must not be redirected into the Studio: they pass to the
 // old page handler, so prefetching a moved link costs nothing there. A real client-side navigation (rsc: 1, optionally with
-// next-router-state-tree or ?_rsc=, but NOT prefetch) is a super_admin clicking a moved link and still gets the 307 so it
+// next-router-state-tree or ?_rsc=, but NOT prefetch) is a staff member who may open the Studio screen clicking a moved link and still gets the 307 so it
 // reaches the Studio. Only the prefetch header is the marker; ?_rsc= alone is not.
 function isPrefetchRequest(request: NextRequest): boolean {
   return request.headers.get("next-router-prefetch") === "1";
@@ -63,6 +64,8 @@ interface MiddlewarePayload {
   status?: unknown;
   is_super_admin?: unknown;
   is_sgc_member?: unknown;
+  is_site_medical_head?: unknown;
+  is_hr?: unknown;
   must_change_pin?: unknown;
 }
 
@@ -205,13 +208,15 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(new URL("/auth/change-pin", request.url));
     }
 
-    // Pages that moved into the Studio: super_admin only (the Studio zone admits nobody else), prefetches get 204.
-    if (payload.is_super_admin === true && (request.method === "GET" || request.method === "HEAD")) {
+    // Pages that moved into the Studio: redirect only a user who satisfies the TARGET screen's predicate (studio-access.js,
+    // the same table the Studio zone enforces), so nobody lands on a Studio 403. Everyone else keeps the old page.
+    // Prefetches get 204.
+    if (request.method === "GET" || request.method === "HEAD") {
       const to = studioRedirectPath(process.env.STUDIO_ORIGIN, pathname, host);
-      // A <Link> prefetch of a moved page gets an empty 204, not the old page: Next then treats the
-      // later click as a hard navigation (fetch-server-response doMpaNavigation), which gets the 307 below.
-      if (to && isPrefetchRequest(request)) return new NextResponse(null, { status: 204 });
-      if (to) {
+      if (to && canAccessStudioPath(payload, to)) {
+        // A <Link> prefetch of a moved page gets an empty 204, not the old page: Next then treats the
+        // later click as a hard navigation (fetch-server-response doMpaNavigation), which gets the 307 below.
+        if (isPrefetchRequest(request)) return new NextResponse(null, { status: 204 });
         const url = request.nextUrl.clone();
         url.pathname = to;
         return NextResponse.redirect(url, 307);

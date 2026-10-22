@@ -20,6 +20,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from src.studio_access import can_use_tool
 from src.studio_docaudit_tools import DOCAUDIT_TOOLS
 from src.studio_tools import GOVERNANCE_TOOLS, STAFF_KEY, ToolError
 
@@ -46,10 +47,12 @@ def validate_params(tool_name: str, params: Any) -> dict:
         raise ValueError("invalid parameter") from None
 
 
-async def run_screen_tool(tool_name: str, params: dict, staff_id: str) -> tuple[int, dict]:
+async def run_screen_tool(tool_name: str, params: dict, staff_id: str, roles) -> tuple[int, dict]:
     """Returns (http_status, json_body). The tool's own JSON is returned unchanged on success."""
     if tool_name not in SCREEN_TOOLS:
         return 404, {"ok": False, "error": "unknown_tool"}
+    if not can_use_tool(roles, tool_name):  # per-tool predicate = the source page's access
+        return 403, {"ok": False, "error": "forbidden"}
     try:
         clean = validate_params(tool_name, params)
     except ValueError:
@@ -110,7 +113,7 @@ _MAX_ROWS = 100_000
 _MAX_MS = 600_000
 
 
-async def record_http_audit(body: Any, staff_id: str) -> tuple[int, dict]:
+async def record_http_audit(body: Any, staff_id: str, roles=None) -> tuple[int, dict]:
     """Validate one app-reported HTTP tool call and append its studio_audit row. (status, json_body)."""
     from src import studio_audit  # late: tests replace studio_audit.audit_sink
 
@@ -120,6 +123,9 @@ async def record_http_audit(body: Any, staff_id: str) -> tuple[int, dict]:
     row_count, duration_ms, outcome = body.get("row_count"), body.get("duration_ms"), body.get("outcome")
     if tool not in HTTP_TOOL_NAMES or not isinstance(params, dict):
         return 422, {"ok": False, "error": "bad_audit"}
+    # The app already refused a tool the role may not run; an audit row for one is refused too (roles=None: direct call).
+    if roles is not None and not can_use_tool(roles, tool):
+        return 403, {"ok": False, "error": "forbidden"}
     for n, cap in ((row_count, _MAX_ROWS), (duration_ms, _MAX_MS)):
         if isinstance(n, bool) or not isinstance(n, int) or not 0 <= n <= cap:
             return 422, {"ok": False, "error": "bad_audit"}

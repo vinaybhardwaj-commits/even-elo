@@ -1,4 +1,5 @@
 import type { CopilotRuntime } from "@copilotkit/runtime";
+import { canUseTool } from "@/lib/zone/access";
 import { runHttpTool } from "./run";
 
 type RuntimeActions = Extract<NonNullable<ConstructorParameters<typeof CopilotRuntime>[0]>["actions"], unknown[]>;
@@ -80,5 +81,6 @@ export function buildHttpToolActions(actor: Actor): RuntimeActions {
     },
   ];
   // The handler takes the runtime's loosely typed args; the runner validates them against the zod schema.
-  return actions as unknown as RuntimeActions;
+  // Only the tools this role may run are registered; runHttpTool refuses the rest again.
+  return actions.filter((a) => canUseTool(actor.role, a.name)) as unknown as RuntimeActions;
 }

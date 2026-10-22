@@ -1,5 +1,6 @@
 // Studio auth zone (G1). PURE decision function: no I/O except the injected `loadLiveStaff`.
 // The Next middleware (src/middleware.ts) is a thin wrapper around `authorizeStudioRequest`.
+import { canAccessScreen, encodeRoles, screenForPath } from "./access";
 import { staffJwtConfigured, verifyStaffSession, type StaffJwtEnv } from "./staff-jwt";
 
 export const SESSION_COOKIE = "epi_session";
@@ -18,6 +19,9 @@ export function isForbiddenClientHeader(name: string): boolean {
 export interface LiveStaff {
   status: string;
   is_super_admin: boolean;
+  is_sgc_member?: boolean;
+  is_site_medical_head?: boolean;
+  is_hr?: boolean;
   /** even-elo forces a PIN change on first login; the root middleware enforces it, so must we. */
   must_change_pin: boolean;
 }
@@ -29,6 +33,8 @@ export interface ZoneRequest {
   /** First value of X-Forwarded-Host, set by the even-elo Vercel rewrite. */
   forwardedHost: string | null;
   origin: string | null;
+  /** Path with the /studio basePath stripped. When present, the per-screen predicate for that path is enforced. */
+  pathname?: string;
   /** Cookie name -> value (only the names matter here). */
   cookies: Record<string, string | undefined>;
 }
@@ -43,7 +49,7 @@ export interface ZoneDeps {
 }
 
 export type ZoneDecision =
-  | { ok: true; staffId: string; role: "super_admin" }
+  | { ok: true; staffId: string; role: string }
   | { ok: false; status: 401 | 403; reason: string };
 
 const deny = (status: 401 | 403, reason: string): ZoneDecision => ({ ok: false, status, reason });
@@ -98,8 +104,17 @@ export async function authorizeStudioRequest(req: ZoneRequest, env: ZoneEnv, dep
   const live = await deps.loadLiveStaff(staffId);
   if (!live) return deny(401, "profile-unconfirmed");
   if (live.status !== "active") return deny(403, "inactive");
-  if (!live.is_super_admin) return deny(403, "role"); // M0-S2: super_admin only
   if (live.must_change_pin) return deny(403, "must-change-pin");
 
-  return { ok: true, staffId, role: "super_admin" };
+  // Any active, non-pending staff member is admitted; WHICH screens and tools they get is decided per screen
+  // (access.ts), server-side, from the role string built here out of the live row.
+  const role = encodeRoles({
+    super_admin: live.is_super_admin,
+    sgc_member: live.is_sgc_member,
+    site_medical_head: live.is_site_medical_head,
+    hr: live.is_hr,
+  });
+  const screen = req.pathname ? screenForPath(req.pathname) : null;
+  if (screen && !canAccessScreen(role, screen)) return deny(403, "role");
+  return { ok: true, staffId, role };
 }

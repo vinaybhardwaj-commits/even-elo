@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ACTOR_ID_HEADER, ACTOR_ROLE_HEADER, SESSION_COOKIE } from "@/lib/zone/authorize";
+import { hasAnyRole } from "@/lib/zone/access";
 import { forwardRuling } from "@/lib/rulings/forward";
 
 // Record a governance ruling on an audit thread (M2). Not an agent tool: only the typed confirm card on the thread
@@ -11,9 +12,13 @@ const MAX_BODY_BYTES = 4096;
 const NO_STORE = { "Cache-Control": "no-store" };
 
 export const POST = async (req: NextRequest, ctx: { params: Promise<{ reference: string }> }) => {
-  // src/proxy.ts has already authenticated the staff member (super_admin) and overwritten these headers.
+  // src/proxy.ts has already authenticated the staff member (any active staff) and overwritten these headers.
   if (!req.headers.get(ACTOR_ID_HEADER) || !req.headers.get(ACTOR_ROLE_HEADER)) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401, headers: NO_STORE });
+  }
+  // A ruling is "manage" level in even-elo (staff-guard.ts): super_admin or Site Medical Head. Even-elo re-checks it.
+  if (!hasAnyRole(req.headers.get(ACTOR_ROLE_HEADER), ["super_admin", "site_medical_head"])) {
+    return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403, headers: NO_STORE });
   }
   const { reference } = await ctx.params;
   let rawBody: unknown = null;

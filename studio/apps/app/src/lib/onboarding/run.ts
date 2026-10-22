@@ -2,6 +2,7 @@
 import { createHash } from "node:crypto";
 import { fetchAgent } from "@/lib/agent-fetch";
 import { agentHeaders } from "@/lib/zone/actor-token";
+import { hasAnyRole } from "@/lib/zone/access";
 import type { SourceTablePayload } from "@/lib/screens/tool-schema";
 import {
   ONBOARDING_READ_PARAMS,
@@ -26,22 +27,22 @@ import { hospitalsPayload, observationsPayload, overviewPayload, pendingCredenti
  * Head and HR (others get an empty list); pre-screen POST has the same gate; the decision POST is super_admin or
  * Site Medical Head (even-elo then narrows to the prescreen's hospital). The detail GET has no role check in
  * even-elo; here it takes the stricter list gate. Pending credentials, hospitals and observation POST need only a
- * signed-in staff member, as in even-elo. The Studio zone admits only super_admin today, so the others are latent.
+ * signed-in staff member, as in even-elo. The role string lists every flag the person holds (zone/access.ts), so any one match grants.
  */
 const LIST_ROLES: ReadonlySet<string> = new Set(["super_admin", "site_medical_head", "hr"]);
 const DECISION_ROLES: ReadonlySet<string> = new Set(["super_admin", "site_medical_head"]);
 const anyStaff = (role: string) => role.length > 0;
 
 const READ_GATE: Record<OnboardingReadName, (role: string) => boolean> = {
-  onboarding_overview: (r) => LIST_ROLES.has(r),
-  onboarding_pipeline: (r) => LIST_ROLES.has(r),
-  onboarding_prescreen: (r) => LIST_ROLES.has(r),
+  onboarding_overview: (r) => hasAnyRole(r, LIST_ROLES),
+  onboarding_pipeline: (r) => hasAnyRole(r, LIST_ROLES),
+  onboarding_prescreen: (r) => hasAnyRole(r, LIST_ROLES),
   onboarding_pending_credentials: anyStaff,
   onboarding_hospitals: anyStaff,
 };
 const WRITE_GATE: Record<OnboardingWriteName, (role: string) => boolean> = {
-  prescreen_create: (r) => LIST_ROLES.has(r),
-  prescreen_decision: (r) => DECISION_ROLES.has(r),
+  prescreen_create: (r) => hasAnyRole(r, LIST_ROLES),
+  prescreen_decision: (r) => hasAnyRole(r, DECISION_ROLES),
   observation_add: anyStaff,
 };
 const UPSTREAM_TIMEOUT_MS = 10_000;

@@ -2,6 +2,7 @@
 import { createHash } from "node:crypto";
 import { fetchAgent } from "@/lib/agent-fetch";
 import { agentHeaders } from "@/lib/zone/actor-token";
+import { hasAnyRole } from "@/lib/zone/access";
 import type { SourceTablePayload } from "@/lib/screens/tool-schema";
 import {
   SURGICAL_READ_PARAMS,
@@ -215,7 +216,7 @@ async function audit(
  */
 export async function runSurgicalRead(tool: SurgicalReadName, rawParams: unknown, actor: SurgicalActor): Promise<SurgicalResult> {
   if (!actor.staffId || !actor.role) return fail(401, "unauthorized");
-  if (!SURGICAL_ROLES.has(actor.role)) return fail(403, "forbidden");
+  if (!hasAnyRole(actor.role, SURGICAL_ROLES)) return fail(403, "forbidden");
   const parsed = SURGICAL_READ_PARAMS[tool].safeParse(rawParams ?? {});
   if (!parsed.success) return fail(422, "bad_params");
   const cookie = cookieHeader(actor.session);
@@ -283,7 +284,7 @@ export async function runSurgicalWrite(
   deps: { secondFactor?: SecondFactor } = {},
 ): Promise<SurgicalWriteResult> {
   if (!actor.staffId || !actor.role) return fail(401, "unauthorized");
-  if (!SURGICAL_ROLES.has(actor.role)) return fail(403, "forbidden");
+  if (!hasAnyRole(actor.role, SURGICAL_ROLES)) return fail(403, "forbidden");
   const parsed = SURGICAL_WRITE_PARAMS[action].safeParse(rawParams ?? {});
   if (!parsed.success) return fail(422, "bad_params");
   const cookie = cookieHeader(actor.session);
