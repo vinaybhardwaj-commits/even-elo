@@ -35,6 +35,10 @@ class TableTimeout(Exception):
     """One table's DB13 transaction ran past MAX_TXN_SECONDS: that table is aborted, the others continue."""
 
 
+class DiskLow(Exception):
+    """Free space under the spill root is below factor x the largest table estimate: refused before any DB13 statement."""
+
+
 class Killed(BaseException):
     """SIGTERM / SIGHUP / SIGINT: unwind (finally blocks run), record status=killed."""
 
@@ -76,6 +80,22 @@ class Session:
         return self.conn.execute(sql, params)
 
 
+def sweep_spill(root: Path):
+    """Remove spill dirs left by a SIGKILLed run (PHI in plaintext). The caller holds the run lock."""
+    if root.exists():
+        for old in root.glob("run-*"):
+            shutil.rmtree(old, ignore_errors=True)
+
+
+def check_disk(root: Path, tables, free_fn=shutil.disk_usage, env=os.environ):
+    factor = float(env.get("GOV_STUDIO_SPILL_FACTOR", 3))
+    largest = int(env.get("GOV_STUDIO_SPILL_LARGEST_BYTES", max((t.est_bytes for t in tables), default=0)))
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    free = free_fn(root).free
+    if free < factor * largest:
+        raise DiskLow(f"free {free // 2**20} MiB < {factor:g} x {largest // 2**20} MiB")  # sizes only
+
+
 def in_offpeak_window(now: dt.datetime | None = None) -> bool:
     """22:00-07:00 IST."""
     h = (now or dt.datetime.now(IST)).astimezone(IST).hour
@@ -106,18 +126,26 @@ def _dump(t: Table, row):
 
 class Extract:
     def __init__(self, src, dst, *, throttle=None, batch_size=2000, log=print, clock=time.monotonic, pinned=None,
-                 max_txn_seconds=MAX_TXN_SECONDS, spill_root=None):
+                 max_txn_seconds=MAX_TXN_SECONDS, spill_root=None, free_fn=shutil.disk_usage):
         self.throttle = throttle or Throttle()
         self.s = src if isinstance(src, Session) else Session(src, pinned, self.throttle)
         self.throttle = self.s.throttle
         self.dst, self.batch, self.log, self.clock, self.max_txn = dst, batch_size, log, clock, max_txn_seconds
         self.spill_root = Path(spill_root) if spill_root else SPILL_ROOT
+        self.free_fn = free_fn
 
     # -- provenance --------------------------------------------------------------------------------
     def previous_watermarks(self):
         rows = self.dst.execute("SELECT DISTINCT ON (table_name) table_name, watermark_to FROM studio_dw.extract_run_tables "
                                 "WHERE status = 'ok' ORDER BY table_name, started_at DESC").fetchall()
         return {n: w for n, w in rows if w is not None}
+
+    def _quiet(self, fn, *a, **k):
+        """Error-path bookkeeping must never replace the exception (or signal) being handled."""
+        try:
+            fn(*a, **k)
+        except Exception:
+            pass
 
     def _tbl(self, run_id, name, **cols):
         sets = ", ".join(f"{k} = %s" for k in cols)
@@ -128,6 +156,9 @@ class Extract:
         """DB13 side: one READ ONLY txn that only fetches (cursor, throttled) into the spill file, then COMMIT.
         The 15 minute cap applies to this phase only. Returns (rows, fetches, snapshot_now, snapshot, seconds)."""
         t0 = self.clock()
+        cap = t.cap_seconds if (t.cap_seconds and self.max_txn == MAX_TXN_SECONDS) else self.max_txn
+        if cap != self.max_txn:
+            self.log(f"table={t.name} fetch cap raised to {cap}s: {t.cap_reason}")
         begin_read_only(self.s)
         committed = False
         try:
@@ -151,7 +182,7 @@ class Extract:
                         break
                     pickle.dump(rows, f, protocol=pickle.HIGHEST_PROTOCOL)
                     n += len(rows)
-                    if self.clock() - t0 > self.max_txn:
+                    if self.clock() - t0 > cap:
                         raise TableTimeout()
             cur.close()
             end_txn(self.s, True)
@@ -206,8 +237,7 @@ class Extract:
         self._run_id = run_id
         self.spill_root.mkdir(mode=0o700, parents=True, exist_ok=True)
         os.chmod(self.spill_root, 0o700)
-        for old in self.spill_root.glob("run-*"):  # leftovers of a SIGKILLed run (the flock guarantees none is live)
-            shutil.rmtree(old, ignore_errors=True)
+        sweep_spill(self.spill_root)  # leftovers of a SIGKILLed run (the flock guarantees none is live)
         self._spill_dir = self.spill_root / f"run-{run_id}"
         self._spill_dir.mkdir(mode=0o700)
         try:
@@ -219,6 +249,7 @@ class Extract:
         assert mode in ("incremental", "full")
         specs = [BY_NAME[n] for n in tables] if tables else list(TABLES)
         offpeak = allow_peak or in_offpeak_window(now)
+        check_disk(self.spill_root, [t for t in specs if offpeak or not t.large], self.free_fn)  # before any DB13 statement
         self.dst.execute("INSERT INTO studio_dw.extract_runs (run_id, mode, started_at, status) VALUES (%s, %s, now(), 'running')", [run_id, mode])
         prev = self.previous_watermarks() if mode == "incremental" else {}
         counts, snaps, partial = {}, [], False
@@ -235,20 +266,20 @@ class Extract:
                     counts[t.name], sn = self._table(t, run_id, mode, since)
                     snaps.append(sn)
                 except TableTimeout:
-                    self._tbl(run_id, t.name, status="timeout", ended_at=dt.datetime.now(dt.timezone.utc))
+                    self._quiet(self._tbl, run_id, t.name, status="timeout", ended_at=dt.datetime.now(dt.timezone.utc))
                     self.log(f"table={t.name} TIMEOUT after {self.max_txn:.0f}s; aborted, others continue")
                     partial = True
                 except Killed:
-                    self._tbl(run_id, t.name, status="killed", ended_at=dt.datetime.now(dt.timezone.utc))
+                    self._quiet(self._tbl, run_id, t.name, status="killed", ended_at=dt.datetime.now(dt.timezone.utc))
                     raise
                 except BaseException as exc:
-                    self._tbl(run_id, t.name, status="failed", ended_at=dt.datetime.now(dt.timezone.utc), error_class=type(exc).__name__)
+                    self._quiet(self._tbl, run_id, t.name, status="failed", ended_at=dt.datetime.now(dt.timezone.utc), error_class=type(exc).__name__)
                     raise
         except Killed:
-            self._finish(run_id, "killed", counts, snaps, "Killed")
+            self._quiet(self._finish, run_id, "killed", counts, snaps, "Killed")
             raise
         except BaseException as exc:
-            self._finish(run_id, "failed", counts, snaps, type(exc).__name__)
+            self._quiet(self._finish, run_id, "failed", counts, snaps, type(exc).__name__)
             raise
         self._finish(run_id, "partial" if partial else "ok", counts, snaps, None)
         return run_id, counts

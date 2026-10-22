@@ -34,6 +34,9 @@ class Table:
     wm: str | None = None  # incremental filter column, None = always full
     lookback: str = "30 minutes"
     large: bool = False  # off-peak (22:00-07:00 IST) only
+    cap_seconds: int | None = None  # per-table DB13 fetch cap override (default 15 min), with the reason logged
+    cap_reason: str = ""
+    est_bytes: int = 200_000_000  # rough spill size (UNVERIFIED), for the disk preflight
     extra: dict = field(default_factory=dict)
 
     @property
@@ -65,7 +68,7 @@ TABLES: tuple[Table, ...] = (
          C("diagnosis_icd_codes", "text[]", RX_ICD, "LBP / headache / URTI denominators"),
          C("impression_icd_codes", "text[]", RX_ICD, "LBP / headache / URTI denominators"),
          C("further_investigation", "jsonb", ids("M-OPD", 14, 16), "tests per consult, imaging")),
-        key="_id", wm="_update_time", large=True),
+        key="_id", wm="_update_time", large=True, est_bytes=4_400_000_000),
     Table(
         "dpipe_prescription_pipeline", 'public."dpipe_prescription_pipeline"',
         (C("presc_uid", "text", AGE + ",M-PRE-08", "key to the prescription"), C("individual_uid", "text", "M-PRE-03,M-PRE-08", "member-level conversion match"),
@@ -73,12 +76,18 @@ TABLES: tuple[Table, ...] = (
          C("uploaded_at", "timestamptz", AGE + ",M-AMS-03", "window anchor"), C("presc_is_draft", "boolean", AGE, "exclude drafts"),
          C("consult_type", "text", AGE, "Rx scope"), C("diagnosis", "jsonb", "M-AMS-03", "URTI denominator"),
          C("medicines", "jsonb", AGE, "drug classes in age 60+"), C("further_investigation", "jsonb", "M-OPD-14", "tests per consult")),
-        key="presc_uid", wm="_update_time", large=True),
+        # dpipe_prescription_pipeline is a pipeline view with NO _update_time (DB13-COLUMNS.md); uploaded_at is its only
+        # change marker. Edits that do not move uploaded_at are missed until a --full run; `timestamp` (the visit time)
+        # is NOT a fallback: it never moves on an edit.
+        key="presc_uid", wm="uploaded_at", large=True, est_bytes=2_000_000_000),
     Table(
         "dpipe_prescription_diagnosis", 'public."dpipe_prescription_pipeline__diagnosis"',
         (C("_parent_id", "text", RX_ICD, "join to the pipeline row"), C("diagnosis", "text", RX_ICD, "diagnosis denominators"),
          C("icd_code", "text", RX_ICD, "diagnosis denominators")),
-        group_key="_parent_id", large=True),
+        # ~3M rows (UNVERIFIED) is ~12.5 min of fetch floor, too close to 15. Chosen over splitting by _parent_id range: a
+        # split would add range-filtered query shapes and, on an unindexed table, a second full scan of the primary plus a
+        # more complex child replace. A 25 min cap (still under the 30 min line) adds no SQL and no load.
+        group_key="_parent_id", large=True, cap_seconds=25 * 60, cap_reason="diagnosis table is one pass of ~3M rows (est. 12.5 min floor)", est_bytes=1_000_000_000),
     Table(
         "kx_ip_admissions", 'public."kx_ip_admissions"',
         (C("_id", "text", purpose="key: Neon primary key"), C("uid", "text", IPD, "admission identity"),
@@ -99,7 +108,7 @@ TABLES: tuple[Table, ...] = (
         "kx_billing_records", 'public."kx_billing_records"',
         (C("_id", "text", purpose="key: Neon primary key"), C("uid", "text", "M-PRE-08", "bill identity"), C("uhid", "text", "M-PRE-08", "IP conversion by uhid"),
          C("patient_type", "text", "M-PRE-08", "IP filter"), C("bill_date_time", "timestamptz", "M-PRE-08", "conversion window")),
-        key="_id", wm="bill_date_time", lookback="7 days", large=True),
+        key="_id", wm="bill_date_time", lookback="7 days", large=True, est_bytes=1_000_000_000),
     Table(
         "surgery_cases", 'public."surgery_cases"',
         (C("uid", "text", PRE, "case identity"), C("individual_uid", "text", "M-PRE-08", "member-level conversion match"),

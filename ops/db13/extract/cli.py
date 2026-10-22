@@ -19,7 +19,8 @@ from pathlib import Path
 
 import psycopg
 
-from .job import Extract, Killed, ReadOnlyRefused, Throttle, in_offpeak_window, verify_session
+from . import job
+from .job import Extract, Killed, ReadOnlyRefused, Throttle, in_offpeak_window, sweep_spill, verify_session
 
 HOME = Path.home()
 ADA_ENV = Path(os.environ.get("ADA_ENV_FILE", HOME / ".config/hrag/ada.env"))
@@ -111,6 +112,24 @@ def tunnel(env: dict):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def sweep_stale():
+    """With the run lock held: remove what a SIGKILLed run leaves behind (spill files, ssh config dirs, an orphaned ssh)."""
+    sweep_spill(job.SPILL_ROOT)
+    for d in Path(tempfile.gettempdir()).glob("gov-studio-ssh-*"):
+        shutil.rmtree(d, ignore_errors=True)
+    try:
+        ps = subprocess.run(["ps", "-eo", "pid=,args="], capture_output=True, text=True, timeout=10).stdout
+    except Exception:
+        return
+    for line in ps.splitlines():
+        pid, _, args = line.strip().partition(" ")
+        if pid.isdigit() and int(pid) != os.getpid() and args.startswith("ssh -N -F ") and "/gov-studio-ssh-" in args:
+            try:
+                os.kill(int(pid), signal.SIGTERM)
+            except OSError:
+                pass
+
+
 def install_signal_handlers():
     """SIGTERM/SIGHUP/SIGINT -> job.Killed so every finally block runs (ssh config removed, ssh child ended, connection
     closed, run row marked killed). A second signal during cleanup is ignored."""
@@ -153,6 +172,14 @@ def _main(argv, restore):
     sub.add_parser("verify", help="first-session checks (VERIFY.md); no extract")
     a = ap.parse_args(argv)
 
+    STATE.mkdir(parents=True, exist_ok=True)
+    lock = open(LOCK, "w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print("another run holds the lock; exiting")
+        return 4
+    sweep_stale()  # BEFORE the kill-flag check: plaintext PHI from a SIGKILLed run must not outlive a disabled job
     if KILL_FLAG.exists():
         print("disabled by flag file; exiting")
         return 3
@@ -162,14 +189,7 @@ def _main(argv, restore):
     if getattr(a, "i_know_its_peak", False) and not PEAK_FLAG.exists():
         print("refused: --i-know-its-peak needs V's flag file")
         return 6
-    STATE.mkdir(parents=True, exist_ok=True)
     restore.append(install_signal_handlers())
-    lock = open(LOCK, "w")
-    try:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        print("another run holds the lock; exiting")
-        return 4
     try:
         env = read_env()
         with tunnel(env) as port, db13_conn(env, port) as src:

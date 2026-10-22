@@ -4,6 +4,7 @@ database, never reads ada.env."""
 from __future__ import annotations
 
 import datetime as dt
+import json
 import importlib.util
 import plistlib
 import re
@@ -26,35 +27,49 @@ from extract.spec import BY_NAME, TABLES  # noqa: E402
 
 pytestmark = pytest.mark.skipif(importlib.util.find_spec("pgserver") is None, reason="needs pgserver")
 
-K = {"individuals_prescriptions": "_id", "kx_ip_admissions": "_id", "kx_discharged_completed_patients": "_id", "kx_billing_records": "_id"}
+FIXTURE = json.loads((Path(__file__).parent / "fixtures" / "db13_columns.json").read_text())  # DB13-COLUMNS.md, names only
+SRC_NAME = {"individuals_prescriptions": "individuals-prescriptions"}  # destination name -> DB13 name
+# Columns the spec reads that DB13-COLUMNS.md does NOT list. Only the kx_* `_id` (the brief says they are "indexed on _id
+# only"); UNVERIFIED. Any other column the spec uses must be in the fixture, or the stand-in test fails.
+ASSUMED = {"kx_ip_admissions": {"_id"}, "kx_discharged_completed_patients": {"_id"}, "kx_billing_records": {"_id"}}
 UUIDS = [str(uuid.UUID(int=i + 1)) for i in range(5)]
-EXTRA = {  # source-only columns: filter columns and sensitive columns the extract must never copy
-    "individuals_prescriptions": ["_update_time timestamptz", "free_text text", "patient_details__allergies text"],
-    "dpipe_prescription_pipeline": ["_update_time timestamptz", "name text", "mobile text", "membership_id text"],
-    "kx_ip_admissions": ["modified_at timestamptz", "patient_name text", "patient_address text", "uhid text"],
-    "kx_discharged_completed_patients": ["modified_at timestamptz", "patient_age text", "payer_type text"],
-    "kx_billing_records": ["amount numeric", "net_amt numeric"],
-    "surgery_cases": ["updated_at timestamptz", "financial__amount numeric"],
-    "doctors": ["email text", "name_with_prefix text", "type text", "disabled boolean", "mobile text", "bank_account__number text", "uploaded_proofs__pan text", "tariffs jsonb", "karexpert_metadata__mobile text"],
-}
-SENSITIVE = {"email", "name_with_prefix", "free_text", "patient_details__allergies", "name", "mobile", "membership_id", "patient_name", "patient_address", "patient_age",
-             "payer_type", "amount", "net_amt", "financial__amount", "bank_account__number", "uploaded_proofs__pan", "tariffs",
-             "karexpert_metadata__mobile"}
-SRC_TYPE = {"_id": "uuid", "uploaded_at": "timestamp"}  # native types differ from the destination on purpose
+SENSITIVE = {"email", "name_with_prefix", "free_text", "patient_details__allergies", "name", "mobile", "membership_id", "payer_name",
+             "patient_age", "amount", "net_amt", "tariffs", "karexpert_metadata__mobile"}
+
+
+def guess_type(name, hint):
+    if hint:
+        return hint
+    if name in ("_id",):
+        return "uuid"
+    if name.endswith(("_at", "_time", "_date_time")) or name in ("timestamp", "discharge_date", "date_of_joining", "date_of_exit") or name.endswith("_date") and "planned" not in name:
+        return "timestamptz"
+    if name == "planned_surgery_date":
+        return "date"
+    if name.startswith("is_") or name in ("disabled", "presc_is_draft", "vulnerable", "high_risk", "mark_for_discharge"):
+        return "boolean"
+    if name in ("medications", "further_investigation", "diagnosis", "medicines", "karexpert_metadata__practitioner_id_by_hospital", "tariffs"):
+        return "jsonb"
+    if name in ("age", "num_referrals"):
+        return "integer"
+    if name in ("amount", "net_amt"):
+        return "numeric"
+    return "text"
 
 
 def source_ddl():
     out = []
     for t in TABLES:
-        cols = []
-        for c in t.cols:
-            ty = SRC_TYPE.get(c.name, c.type) if t.name in K or c.name == "uploaded_at" else c.type
-            if c.name == "_id" and t.name not in K:
-                ty = "text"
-            if t.name == "kx_ip_admissions" and c.name == "uid":
-                ty = "text"
-            cols.append(f'"{c.name}" {ty}')
-        out.append(f"CREATE TABLE {t.source} ({', '.join(cols + EXTRA.get(t.name, []))});")
+        dbname = SRC_NAME.get(t.name, t.name if t.name != "dpipe_prescription_diagnosis" else "dpipe_prescription_pipeline__diagnosis")
+        cols = {n: guess_type(n, h) for n, h in FIXTURE[dbname]}
+        if dbname.endswith("__diagnosis"):
+            cols["diagnosis"] = "text"  # plain text here, jsonb on the pipeline view
+        missing = {c.name for c in t.cols} | ({t.wm} if t.wm else set()) | ({t.key or t.group_key} - {None})
+        missing -= set(cols)
+        assert missing == ASSUMED.get(t.name, set()), (t.name, missing)  # a column the spec needs that DB13 lacks fails here
+        for m in missing:
+            cols[m] = guess_type(m, "")
+        out.append(f"CREATE TABLE {t.source} ({', '.join(f'{chr(34)}{n}{chr(34)} {ty}' for n, ty in cols.items())});")
     return "\n".join(out)
 
 
@@ -73,18 +88,18 @@ def seed_source(c):
                         diagnosis_icd_codes,consult_types,free_text) VALUES (%s,%s,%s,'d1',{now},{now},{now},false,%s::jsonb,%s,%s,'SECRET')""",
                   [u, f"p{i}", f"u{i}", '[{"generic":"x"}]', ["M54.5"], ["opd"]])
         c.execute(f"""INSERT INTO public.kx_ip_admissions (_id,uid,encounter_id,current_treating_doctor_id,facility_name,admission_date_time,
-                        encounter_type,modified_at,patient_name,uhid) VALUES (%s,%s,%s,'t1','Even-EHRC',{now},'ip_admission',{now},'PHI','UH1')""",
+                        encounter_type,modified_at,payer_name,uhid) VALUES (%s,%s,%s,'t1','Even-EHRC',{now},'ip_admission',{now},'PHI','UH1')""",
                   [u, f"a{i}", f"e{i}"])
         c.execute(f"""INSERT INTO public.kx_discharged_completed_patients (_id,uid,encounter_id,uhid,facility_name,discharge_date,status,modified_at)
                         VALUES (%s,%s,%s,'UH1','Even',{now},'completed',{now})""", [u, f"a{i}", f"e{i}"])
         c.execute(f"INSERT INTO public.kx_billing_records (_id,uid,uhid,patient_type,bill_date_time,amount) VALUES (%s,%s,'UH1','IP',{now},99)", [u, f"b{i}"])
-        c.execute(f"INSERT INTO public.dpipe_prescription_pipeline (presc_uid,individual_uid,age,uploaded_at,_update_time,medicines,name,mobile) "
-                  f"VALUES (%s,'i1',{60 + i},{now},{now},'[]'::jsonb,'PHI','SENT-7c1e')", [f"rx{i}"])
+        c.execute(f"INSERT INTO public.dpipe_prescription_pipeline (presc_uid,individual_uid,age,uploaded_at,medicines,name,mobile) "
+                  f"VALUES (%s,'i1',{60 + i},{now},'[]'::jsonb,'PHI','SENT-7c1e')", [f"rx{i}"])
         c.execute("INSERT INTO public.dpipe_prescription_pipeline__diagnosis (_parent_id,diagnosis,icd_code) VALUES (%s,'LBP','M54.5'),(%s,'HA','R51')",
                   [f"rx{i}", f"rx{i}"])
-        c.execute(f"INSERT INTO public.surgery_cases (uid,individual_uid,status,created_at,updated_at,planned_surgery_date,financial__amount) "
-                  f"VALUES (%s,'i1','BOOKED',{now},{now},current_date,5)", [f"s{i}"])
-        c.execute("INSERT INTO public.doctors (uid,email,name_with_prefix,disabled,mobile,bank_account__number,tariffs) VALUES (%s,%s,'Dr X',false,'SENT-7c1e','123','{}')",
+        c.execute(f"INSERT INTO public.surgery_cases (uid,individual_uid,status,created_at,updated_at,planned_surgery_date) "
+                  f"VALUES (%s,'i1','BOOKED',{now},{now},current_date)", [f"s{i}"])
+        c.execute("INSERT INTO public.doctors (uid,email,name_with_prefix,disabled,mobile,tariffs) VALUES (%s,%s,'Dr X',false,'SENT-7c1e','{}')",
                   [f"d{i}", f"d{i}@x"])
 
 
@@ -205,11 +220,14 @@ def test_incremental_watermark(conns):
     sup.execute("UPDATE public.kx_ip_admissions SET facility_name='Even-EHBR', modified_at=now()+interval '1 hour' WHERE uid='a2'")
     sup.execute("INSERT INTO public.kx_ip_admissions (_id,uid,encounter_id,modified_at) VALUES (%s,'a9','e9',now()+interval '1 hour')", [str(uuid.UUID(int=99))])
     sup.execute("""UPDATE public."individuals-prescriptions" SET _update_time = now() + interval '1 hour' WHERE uid='u1'""")
+    sup.execute("UPDATE public.dpipe_prescription_pipeline SET uploaded_at = now() + interval '1 hour', age = 99 WHERE presc_uid='rx2'")
     try:
         _, counts = x.run(allow_peak=True, mode="incremental")
         assert counts["kx_ip_admissions"] == 2  # only the changed + new row
         assert counts["individuals_prescriptions"] == 1  # _update_time, not uploaded_at
         assert counts["surgery_cases"] == 0
+        assert counts["dpipe_prescription_pipeline"] == 1  # uploaded_at: the view has no _update_time
+        assert owner.execute("SELECT age FROM studio_dw.dpipe_prescription_pipeline WHERE presc_uid='rx2'").fetchone()[0] == 99
         assert counts["doctors"] == 5 and counts["dpipe_prescription_diagnosis"] == 10  # no watermark: always full
         assert owner.execute("SELECT facility_name FROM studio_dw.kx_ip_admissions WHERE uid='a2'").fetchone()[0] == "Even-EHBR"
         assert count(owner, "kx_ip_admissions") == 6
@@ -220,6 +238,7 @@ def test_incremental_watermark(conns):
         sup.execute("DELETE FROM public.kx_ip_admissions WHERE uid='a9'")
         sup.execute("UPDATE public.kx_ip_admissions SET facility_name='Even-EHRC', modified_at=now() - interval '2 days' WHERE uid='a2'")
         sup.execute("""UPDATE public."individuals-prescriptions" SET _update_time = now() - interval '2 days' WHERE uid='u1'""")
+        sup.execute("UPDATE public.dpipe_prescription_pipeline SET uploaded_at = now() - interval '2 days', age = 62 WHERE presc_uid='rx2'")
 
 
 def test_full_refresh_drops_vanished_rows(conns):
@@ -896,3 +915,138 @@ def test_signal_during_fetch_deletes_the_spill(clusters, tmp_path, sig):
             p.kill()
     assert p.returncode == 128 + sg, out
     assert not list(root.glob("run-*")), "spill dir must be gone after the signal"
+
+
+def test_every_watermark_and_key_column_exists_in_db13_columns():
+    for tb in TABLES:
+        dbname = SRC_NAME.get(tb.name, "dpipe_prescription_pipeline__diagnosis" if tb.name == "dpipe_prescription_diagnosis" else tb.name)
+        have = {n for n, _ in FIXTURE[dbname]}
+        if tb.wm:
+            assert tb.wm in have, (tb.name, tb.wm)  # e.g. a made-up _update_time on the pipeline view fails here
+        for c in tb.cols:
+            assert c.name in have or c.name in ASSUMED.get(tb.name, set()), (tb.name, c.name)
+    assert BY_NAME["dpipe_prescription_pipeline"].wm == "uploaded_at"
+
+
+def test_standin_with_a_missing_watermark_column_fails(monkeypatch):
+    import dataclasses
+
+    bad = dataclasses.replace(BY_NAME["dpipe_prescription_pipeline"], wm="_update_time")
+    monkeypatch.setattr(sys.modules[__name__], "TABLES", tuple(bad if t.name == bad.name else t for t in TABLES))
+    with pytest.raises(AssertionError):
+        source_ddl()
+
+
+def test_diagnosis_cap_is_raised_with_a_logged_reason(conns):
+    src, dst, _, _ = conns
+    logs = []
+    ck = Clock()
+    x = job.Extract(src, dst, throttle=job.Throttle(clock=ck.now, sleep=ck.sleep), log=logs.append)
+    x.run(allow_peak=True, mode="full", tables=["dpipe_prescription_diagnosis", "doctors"])
+    raised = [l for l in logs if "cap raised to 1500s" in l]
+    assert len(raised) == 1 and "dpipe_prescription_diagnosis" in raised[0] and "~3M rows" in raised[0]
+    assert BY_NAME["doctors"].cap_seconds is None and job.MAX_TXN_SECONDS == 900
+
+
+def test_disk_preflight_refuses_before_any_db13_statement(conns, spill_root, monkeypatch):
+    src, dst, owner, _ = conns
+    seen = []
+
+    class Spy:
+        def execute(self, sql, *a):
+            seen.append(sql)
+            return src.execute(sql, *a)
+
+        def cursor(self, **k):
+            return src.cursor(**k)
+
+    gib = 2**30
+    x = job.Extract(Spy(), dst, free_fn=lambda p: type("U", (), {"free": 12 * gib})(), log=lambda *_: None,
+                    throttle=job.Throttle(clock=Clock().now, sleep=lambda s: None))
+    with pytest.raises(job.DiskLow) as e:
+        x.run(allow_peak=True, mode="full")  # prescriptions est 4.4e9 bytes x 3 = 13.2e9 > 12 GiB
+    assert "MiB" in str(e.value) and not seen and count(owner, "extract_runs") == 0
+    # configurable: factor and largest-table estimate
+    monkeypatch.setenv("GOV_STUDIO_SPILL_FACTOR", "1")
+    x2 = job.Extract(Spy(), dst, free_fn=lambda p: type("U", (), {"free": 12 * gib})(), log=lambda *_: None,
+                     throttle=job.Throttle(clock=Clock().now, sleep=lambda s: None))
+    x2.run(allow_peak=True, mode="full", tables=["doctors"])
+    # a small selection (no large table) needs only 3 x its own estimate
+    monkeypatch.delenv("GOV_STUDIO_SPILL_FACTOR")
+    x3 = job.Extract(Spy(), dst, free_fn=lambda p: type("U", (), {"free": 1 * gib})(), log=lambda *_: None,
+                     throttle=job.Throttle(clock=Clock().now, sleep=lambda s: None))
+    x3.run(allow_peak=True, mode="full", tables=["doctors"])
+    with pytest.raises(job.DiskLow):
+        monkeypatch.setenv("GOV_STUDIO_SPILL_LARGEST_BYTES", str(2 * gib))
+        x3.run(allow_peak=True, mode="full", tables=["doctors"])
+
+
+def test_failed_neon_status_update_does_not_mask_the_kill(conns, monkeypatch):
+    src, dst, owner, _ = conns
+    x, _ = extractor(src, dst)
+
+    def load_killed(self, t, path, mode):
+        raise job.Killed(15)
+
+    def neon_down(self, *a, **k):
+        raise psycopg.OperationalError("neon unreachable")
+
+    monkeypatch.setattr(job.Extract, "_load_from_spill", load_killed)
+    monkeypatch.setattr(job.Extract, "_tbl", neon_down)
+    monkeypatch.setattr(job.Extract, "_finish", neon_down)
+    with pytest.raises(job.Killed):  # not OperationalError: the CLI maps Killed to exit 128+sig
+        x.run(allow_peak=True, mode="full", tables=["doctors"])
+    assert src.info.transaction_status == psycopg.pq.TransactionStatus.IDLE
+
+
+def test_stale_spill_and_ssh_leftovers_swept_before_the_kill_flag(tmp_path, monkeypatch, capsys, spill_root):
+    import subprocess
+    import tempfile as _tf
+
+    state = tmp_path / "state"
+    tmpd = tmp_path / "tmp"
+    tmpd.mkdir()
+    monkeypatch.setattr(cli, "STATE", state)
+    monkeypatch.setattr(cli, "LOCK", state / "run.lock")
+    monkeypatch.setattr(cli, "KILL_FLAG", state / "DISABLED")
+    monkeypatch.setattr(_tf, "tempdir", str(tmpd))
+    state.mkdir()
+    (state / "DISABLED").write_text("")
+    stale = spill_root / "run-dead"
+    stale.mkdir(parents=True)
+    (stale / "individuals_prescriptions.spill").write_bytes(b"PHI")
+    cfgdir = tmpd / "gov-studio-ssh-abc"
+    cfgdir.mkdir()
+    (cfgdir / "config").write_text("Host x")
+    orphan = subprocess.Popen(["bash", "-c", f'exec -a "ssh -N -F {cfgdir}/config gov-studio-ada" sleep 60'])
+    try:
+        import time as _t
+
+        _t.sleep(0.3)
+        assert cli.main(["run"]) == 3  # disabled ...
+        assert "disabled" in capsys.readouterr().out
+        assert not stale.exists() and not cfgdir.exists()  # ... but the sweep already ran
+        for _ in range(30):
+            if orphan.poll() is not None:
+                break
+            _t.sleep(0.1)
+        assert orphan.poll() is not None, "orphaned ssh should have been ended"
+    finally:
+        if orphan.poll() is None:
+            orphan.kill()
+
+
+def test_sweep_does_not_run_when_another_run_holds_the_lock(tmp_path, monkeypatch, capsys, spill_root):
+    import fcntl
+
+    state = tmp_path / "state"
+    state.mkdir()
+    monkeypatch.setattr(cli, "STATE", state)
+    monkeypatch.setattr(cli, "LOCK", state / "run.lock")
+    monkeypatch.setattr(cli, "KILL_FLAG", state / "DISABLED")
+    live = spill_root / "run-live"
+    live.mkdir(parents=True)
+    with open(state / "run.lock", "w") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        assert cli.main(["run"]) == 4
+    assert live.exists()  # a live run's spill is never swept
