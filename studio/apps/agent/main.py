@@ -37,6 +37,7 @@ from copilotkit import CopilotKitMiddleware, LangGraphAGUIAgent
 from deepagents import create_deep_agent
 
 from src.anthropic_compat import ConsecutiveSystemMessagesMiddleware
+from src.clock import CurrentTimeMiddleware
 from src.studio_auth import (
     STATE_KEY,
     LayeredNonceStore,
@@ -72,6 +73,7 @@ def build_agent(checkpointer):
             CopilotKitMiddleware(),
             ToolErrorToResult(),
             JevVisualizationMiddleware(),
+            CurrentTimeMiddleware(),
             ConsecutiveSystemMessagesMiddleware(),
         ],
         skills=SKILL_SOURCES,

@@ -21,6 +21,38 @@ export interface PayloadMeta {
   queryHash: string;
 }
 
+// ---------------------------------------------------------------------------------------------
+// Date ranges (since / until). The upstreams have no date filter, so the range is applied here.
+// ---------------------------------------------------------------------------------------------
+
+export interface DateRange {
+  since?: string;
+  until?: string;
+}
+
+const IST = "+05:30";
+const DAY_MS = 86_400_000;
+
+/** Start (inclusive) or end (exclusive) of a bound in ms. A bare date is an Asia/Kolkata calendar day, so
+ *  until=2026-10-22 includes all of that day; a date-time without an offset is read as Asia/Kolkata too. */
+export function boundMs(v: string, end: boolean): number {
+  if (v.length === 10) return Date.parse(`${v}T00:00:00${IST}`) + (end ? DAY_MS : 0);
+  const hasOffset = /(Z|[+-]\d{2}:\d{2})$/.test(v);
+  return Date.parse(hasOffset ? v : `${v}${IST}`) + (end ? 1 : 0);
+}
+
+export const hasRange = (r: DateRange): boolean => Boolean(r.since || r.until);
+
+/** True when the timestamp falls in the range. With a range set, a row without a parsable date is excluded. */
+export function inRange(at: string | null | undefined, r: DateRange): boolean {
+  if (!hasRange(r)) return true;
+  const t = at ? Date.parse(at) : NaN;
+  if (Number.isNaN(t)) return false;
+  if (r.since && t < boundMs(r.since, false)) return false;
+  if (r.until && t >= boundMs(r.until, true)) return false;
+  return true;
+}
+
 export function makePayload(meta: PayloadMeta, columns: string[], rows: Row[]): SourceTablePayload {
   return {
     source: { tool: meta.tool, query_hash: meta.queryHash },
@@ -54,6 +86,8 @@ export interface IncidentsInput {
   view: "summary" | "list";
   status?: "open" | "closed";
   severity?: string;
+  since?: string;
+  until?: string;
   limit: number;
 }
 
@@ -70,7 +104,9 @@ export function incidentRows(body: unknown): Obj[] {
 export function toIncidentsPayload(meta: PayloadMeta, input: IncidentsInput): SourceTablePayload {
   const all = incidentRows(input.incidents);
   const sevFilter = input.severity?.toLowerCase();
+  const range = { since: input.since, until: input.until };
   const rows = all.filter((r) => {
+    if (!inRange(str(r.reported_at), range)) return false;
     if (sevFilter && sevOf(r).toLowerCase() !== sevFilter) return false;
     if (input.status === "open" && isClosedIncident(r)) return false;
     if (input.status === "closed" && !isClosedIncident(r)) return false;
@@ -107,6 +143,24 @@ export function toIncidentsPayload(meta: PayloadMeta, input: IncidentsInput): So
   const out: Row[] = [...bySev.entries()]
     .sort((a, b) => b[1].open + b[1].closed - (a[1].open + a[1].closed) || a[0].localeCompare(b[0]))
     .map(([k, c]) => ({ scope: "severity", key: k, open: c.open, closed: c.closed, total: c.open + c.closed }));
+  if (hasRange(range)) {
+    // A date range is answered from the filtered incidents only: their count and their categories. The upstream's
+    // all-time totals would not match the range, so they are left out.
+    const byType = new Map<string, { open: number; closed: number }>();
+    for (const r of rows) {
+      const k = str(r.type_name) ?? "uncategorised";
+      const c = byType.get(k) ?? { open: 0, closed: 0 };
+      if (isClosedIncident(r)) c.closed += 1;
+      else c.open += 1;
+      byType.set(k, c);
+    }
+    for (const [k, c] of [...byType.entries()].sort((a, b) => b[1].open + b[1].closed - (a[1].open + a[1].closed) || a[0].localeCompare(b[0]))) {
+      out.push({ scope: "type", key: k, open: c.open, closed: c.closed, total: c.open + c.closed });
+    }
+    const open = rows.filter((r) => !isClosedIncident(r)).length;
+    out.push({ scope: "range", key: `${range.since ?? "start"}..${range.until ?? "now"}`, open, closed: rows.length - open, total: rows.length });
+    return makePayload(meta, SUMMARY_COLUMNS, out);
+  }
   // Rows above come from the newest incidents the upstream list returns (it caps the list); the totals below
   // are the upstream's own all-time counts.
   const totals = obj(obj(input.stats)?.totals);

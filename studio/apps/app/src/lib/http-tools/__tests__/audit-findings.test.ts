@@ -54,6 +54,18 @@ describe("audit findings tools", () => {
   });
   const up = () => calls.filter((c) => !c.url.endsWith("/agent/audit"));
 
+  it("list: since/until filter by routed date; with since and no window_days the CDMSS window reaches back to it", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-22T06:00:00Z"));
+    try {
+      const p = SourceTablePayload.parse((await runHttpTool("audit_findings", { view: "all", since: "2026-10-03", until: "2026-10-05" }, ACTOR)).body);
+      expect(p.rows.map((r) => r.reference)).toEqual(["EHRC-AUD-2026-0002"]);
+      expect(up()[0].url).toContain("window=20");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("list: default view is attention, de-duplicated, no comments or notes", async () => {
     const p = SourceTablePayload.parse((await runHttpTool("audit_findings", {}, ACTOR)).body);
     expect(p.rows.map((r) => r.reference)).toEqual(["EHRC-AUD-2026-0001"]);

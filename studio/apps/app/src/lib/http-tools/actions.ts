@@ -21,11 +21,13 @@ export function buildHttpToolActions(actor: Actor): RuntimeActions {
       name: "eiris_incidents",
       description:
         "e-IRIS incident register (safety/M&M). view=summary: open and closed counts by severity plus all-time totals and M&M case counts. " +
-        "view=list: incidents with id, status, dates, severity, RCA flag. Read-only. Present the result as a table with its source.",
+        "view=list: incidents with id, status, dates, severity, RCA flag. since/until filter by reported date; a summary with a range counts only those incidents, by severity and by type (category). Read-only. Present the result as a table with its source.",
       parameters: [
         { name: "view", type: "string" as const, description: "summary (default) or list", required: false, enum: ["summary", "list"] },
         { name: "status", type: "string" as const, description: "open or closed", required: false, enum: ["open", "closed"] },
         { name: "severity", type: "string" as const, description: "severity name, e.g. major", required: false },
+        { name: "since", type: "string" as const, description: "reported on or after this date: YYYY-MM-DD (Asia/Kolkata day) or ISO date-time", required: false },
+        { name: "until", type: "string" as const, description: "reported on or before this date: YYYY-MM-DD (whole day) or ISO date-time", required: false },
         { name: "limit", type: "number" as const, description: "max rows, 1-200 (list view)", required: false },
       ],
       handler: run("eiris_incidents", actor),
@@ -62,6 +64,8 @@ export function buildHttpToolActions(actor: Actor): RuntimeActions {
         { name: "doctor_uid", type: "string" as const, description: "CDMSS doctor uid", required: false },
         { name: "hospital", type: "string" as const, description: "hospital code, e.g. EHRC", required: false },
         { name: "window_days", type: "number" as const, description: "look-back window, 1-365 (default 30)", required: false },
+        { name: "since", type: "string" as const, description: "routed on or after this date: YYYY-MM-DD (Asia/Kolkata day) or ISO date-time", required: false },
+        { name: "until", type: "string" as const, description: "routed on or before this date: YYYY-MM-DD (whole day) or ISO date-time", required: false },
         { name: "limit", type: "number" as const, description: "max threads, 1-200", required: false },
       ],
       handler: run("audit_findings", actor),

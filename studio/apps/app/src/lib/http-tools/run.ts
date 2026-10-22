@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { agentHeaders } from "@/lib/zone/actor-token";
 import { HTTP_TOOL_PARAMS, type HttpToolName, type SourceTablePayload } from "@/lib/screens/tool-schema";
 import { toFindingDetailPayload, toFindingsPayload } from "./audit-transform";
-import { incidentRows, toDetailPayload, toIncidentsPayload, toSignalsPayload } from "./transform";
+import { boundMs, incidentRows, toDetailPayload, toIncidentsPayload, toSignalsPayload } from "./transform";
 
 // The three HTTP read tools (M1-http): eiris_incidents, eiris_incident_detail, opd_signals.
 //
@@ -84,7 +84,7 @@ interface Built {
   failure?: { status: number; error: string };
 }
 
-async function buildIncidents(role: string, p: { view?: "summary" | "list"; status?: "open" | "closed"; severity?: string; limit?: number }): Promise<Built> {
+async function buildIncidents(role: string, p: { view?: "summary" | "list"; status?: "open" | "closed"; severity?: string; since?: string; until?: string; limit?: number }): Promise<Built> {
   const api = incidentApi(role);
   if (!api) return { payload: null, failure: { status: 503, error: "upstream_not_configured" } };
   const view = p.view ?? "summary";
@@ -94,9 +94,10 @@ async function buildIncidents(role: string, p: { view?: "summary" | "list"; stat
   if (!incidentRows(list.body).length && !Array.isArray((list.body as { incidents?: unknown } | null)?.incidents)) {
     return { payload: null, failure: { status: 502, error: "bad_payload" } };
   }
-  // Totals are best-effort: a stats or M&M outage degrades the summary, it does not fail it.
+  // Totals are best-effort: a stats or M&M outage degrades the summary, it does not fail it. A date-range summary
+  // does not use them (all-time counts), so they are not fetched.
   const [stats, mm] =
-    view === "summary"
+    view === "summary" && !p.since && !p.until
       ? await Promise.all([getJson(`${api.base}/api/office/stats`, api.headers), getJson(`${api.base}/api/mm/stats`, api.headers)])
       : [null, null];
   return {
@@ -107,6 +108,8 @@ async function buildIncidents(role: string, p: { view?: "summary" | "list"; stat
       view,
       status: p.status,
       severity: p.severity,
+      since: p.since,
+      until: p.until,
       limit: p.limit ?? 50,
     }),
   };
@@ -134,16 +137,23 @@ async function buildSignals(p: { doctor_uid?: string; window_days?: number; limi
   return { payload: toSignalsPayload({ tool: "opd_signals", queryHash: queryHash("opd_signals") }, r.body, p.limit ?? 50) };
 }
 
-async function buildFindings(p: { view?: "attention" | "overdue" | "disagreed" | "awaiting_ruling" | "awaiting_doctor" | "all"; status?: string; doctor_uid?: string; hospital?: string; window_days?: number; limit?: number }): Promise<Built> {
+/** CDMSS only takes a look-back window in days: with `since` and no window_days, the window reaches back to `since`. */
+export function findingsWindowDays(p: { window_days?: number; since?: string }, now = Date.now()): number {
+  if (p.window_days) return p.window_days;
+  if (!p.since) return 30;
+  return Math.min(365, Math.max(1, Math.ceil((now - boundMs(p.since, false)) / 86_400_000)));
+}
+
+async function buildFindings(p: { view?: "attention" | "overdue" | "disagreed" | "awaiting_ruling" | "awaiting_doctor" | "all"; status?: string; doctor_uid?: string; hospital?: string; window_days?: number; since?: string; until?: string; limit?: number }): Promise<Built> {
   const api = cdmssApi();
   if (!api) return { payload: null, failure: { status: 503, error: "upstream_not_configured" } };
   const qs = new URLSearchParams();
   if (p.doctor_uid) qs.set("doctor_uid", p.doctor_uid);
-  qs.set("window", String(p.window_days ?? 30));
+  qs.set("window", String(findingsWindowDays(p)));
   const r = await getJson(`${api.base}/api/governance/roster-audits?${qs.toString()}`, api.headers);
   if (!r.ok) return { payload: null, failure: { status: r.status, error: r.error } };
   if (!Array.isArray((r.body as { doctors?: unknown } | null)?.doctors)) return { payload: null, failure: { status: 502, error: "bad_payload" } };
-  return { payload: toFindingsPayload({ tool: "audit_findings", queryHash: queryHash("audit_findings") }, r.body, { view: p.view, status: p.status, hospital: p.hospital, limit: p.limit ?? 100 }) };
+  return { payload: toFindingsPayload({ tool: "audit_findings", queryHash: queryHash("audit_findings") }, r.body, { view: p.view, status: p.status, hospital: p.hospital, since: p.since, until: p.until, limit: p.limit ?? 100 }) };
 }
 
 async function buildFindingDetail(p: { reference: string }): Promise<Built> {

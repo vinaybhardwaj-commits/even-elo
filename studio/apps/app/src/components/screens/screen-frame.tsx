@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { CopilotChat, useAgent } from "@copilotkit/react-core/v2";
 import { AnswerMarkdown } from "@/components/chat/answer-markdown";
 import { useGenerativeUIExamples } from "@/hooks";
@@ -46,6 +46,24 @@ export function ScreenFrame({ title, children }: { title: string; children: Reac
   const wide = useSyncExternalStore(subscribeWide, isWide, () => true);
   const [choice, setChoice] = useState<boolean | null>(null);
   const panelOpen = choice ?? wide;
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  const close = () => {
+    setChoice(false);
+    toggleRef.current?.focus();
+  };
+  // Below 1100 px the open panel overlays the page, header toggle included: Escape and the panel's own close button
+  // close it (a click aimed at the covered toggle would land on the chat, e.g. a message's copy button).
+  useEffect(() => {
+    if (!panelOpen || wide) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setChoice(false);
+        toggleRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [panelOpen, wide]);
   return (
     <div className="studio-frame">
       <a className="chat-skip" href="#screen-main">
@@ -55,14 +73,23 @@ export function ScreenFrame({ title, children }: { title: string; children: Reac
       <main id="screen-main" className="scr-main">
         <header className="scr-head">
           <h1>{title}</h1>
-          <button type="button" className="scr-ask-toggle" aria-expanded={panelOpen} aria-controls="screen-ask" onClick={() => setChoice(!panelOpen)}>
+          <button ref={toggleRef} type="button" className="scr-ask-toggle" aria-expanded={panelOpen} aria-controls="screen-ask" onClick={() => setChoice(!panelOpen)}>
             {panelOpen ? "Hide assistant" : "Ask the assistant"}
           </button>
         </header>
         {children}
       </main>
       <aside id="screen-ask" className="scr-panel" data-open={panelOpen} aria-label="Assistant">
-        {panelOpen && <AskPanel screenTitle={title} />}
+        {panelOpen && (
+          <>
+            <div className="scr-panel-head">
+              <button type="button" className="scr-ask-toggle scr-panel-close" onClick={close}>
+                Close assistant
+              </button>
+            </div>
+            <AskPanel screenTitle={title} />
+          </>
+        )}
       </aside>
     </div>
   );

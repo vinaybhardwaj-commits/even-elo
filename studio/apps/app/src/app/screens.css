@@ -69,8 +69,9 @@
 .scr-list { margin: 0; padding-left: 18px; font-size: 13px; }
 
 .scr-panel { width: 0; overflow: hidden; border-left: 0 solid var(--border-default); }
-.scr-panel[data-open="true"] { width: 400px; border-left-width: 1px; }
-.scr-panel-body { height: 100%; display: flex; flex-direction: column; padding: 8px; }
+.scr-panel[data-open="true"] { width: 400px; border-left-width: 1px; display: flex; flex-direction: column; }
+.scr-panel-head { display: none; justify-content: flex-end; padding: 8px 8px 0; }
+.scr-panel-body { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 8px; }
 .scr-panel-body > div { flex: 1; min-height: 0; }
 
 @media (max-width: 1099px) {
@@ -79,6 +80,8 @@
     position: fixed; top: 0; right: 0; bottom: 0; width: min(420px, 100vw); z-index: 40;
     background: var(--surface-primary); box-shadow: var(--shadow-lg);
   }
+  /* The overlay covers the header toggle, so it carries its own close button. */
+  .scr-panel-head { display: flex; }
 }
 @media (max-width: 640px) {
   .studio-frame { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
