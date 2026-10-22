@@ -105,7 +105,7 @@ def start_agent(tmp: Path, key: str, pass_file: Path):
     sock = tmp / "agent.sock"
     if len(str(sock)) > 100:  # AF_UNIX limit is 104 (macOS) / 108 (Linux) bytes
         raise AgentLoadFailed("agent socket path too long")
-    out = subprocess.run(["ssh-agent", "-a", str(sock)], env=_clean_env(), stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=15)
+    out = subprocess.run(["ssh-agent", "-s", "-a", str(sock)], env=_clean_env(), stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=15)
     m = re.search(r"SSH_AGENT_PID=(\d+)", out.stdout)
     if out.returncode != 0 or not m:
         raise AgentLoadFailed("agent did not start")
