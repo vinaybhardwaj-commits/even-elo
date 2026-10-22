@@ -30,7 +30,7 @@ type Streak = { failures: number; notBefore: number };
 export type GuardTrace = Record<string, { calls: number; refused: number; stacks: string[] }>;
 const TRACE_STACKS = 3;
 const TRACE_FRAMES = 50;
-export const FALLBACK_INFO = { version: "client-fallback", agents: { default: { name: "default", description: "" } }, mode: "sse" };
+export const FALLBACK_INFO = { version: "client-fallback", agents: { default: { name: "default", description: "" } }, mode: "sse", a2uiEnabled: true, openGenerativeUIEnabled: true };
 type CachedInfo = { status: number; headers: [string, string][]; body: string };
 type Clock = () => number;
 
