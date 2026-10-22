@@ -158,8 +158,12 @@ class MockNeon:
         # Neon (live, 22 Oct): reset_password answers HTTP 422 for a NOLOGIN role (authentication_method "no_login"). Opt-in so the older
         # primitive tests (reset before LOGIN) keep their meaning; the wrapper fixtures turn it on.
         self.reject_reset_for_nologin, self.reset_422_message, self.passworded = False, "role has no login privilege", set()
+        # Live (23 Oct): reset_password answers 422 "cannot update password for role without password" for a role that has NO password at all,
+        # LOGIN or not; once any password exists it answers 200 whatever the LOGIN state. Opt-in, like reject_reset_for_nologin.
+        self.require_password_for_reset = False
         self.force_reset_status, self.reset_log = None, []   # force_reset_status: answer reset_password with this HTTP status; reset_log: (role, can_login) per call
         self.issued = {}
+        self.all_issued = []   # every password this mock ever issued (issued[] keeps only the latest per role)
         self.reset_delay = 0.0  # seconds to hold the response AFTER the server-side rotation (kill tests)
         outer = self
 
@@ -218,10 +222,13 @@ class MockNeon:
                         outer.reset_log.append((role, outer.can_login(role)))
                     if outer.force_reset_status:
                         return self._send(outer.force_reset_status, {"code": "", "message": outer.reset_422_message})
+                    if outer.cluster and outer.require_password_for_reset and not outer.has_password(role):
+                        return self._send(422, {"code": "", "message": "cannot update password for role without password"})
                     if outer.cluster and outer.reject_reset_for_nologin and not outer.can_login(role):
                         return self._send(422, {"code": "", "message": outer.reset_422_message})
                     pw = "Is5ued/" + uuid.uuid4().hex + "+X@" + str(len(outer.issued))
                     outer.issued[role] = pw
+                    outer.all_issued.append(pw)
                     if outer.cluster:
                         outer.cluster.su_exec(f"ALTER ROLE {role} PASSWORD '{pw}'")  # what Neon does server-side
                         if outer.add_superuser_on_reset:
@@ -239,6 +246,10 @@ class MockNeon:
 
     def can_login(self, role):
         rows = self.cluster.su_exec(f"SELECT rolcanlogin FROM pg_roles WHERE rolname = '{role}'")
+        return bool(rows and rows[0][0])
+
+    def has_password(self, role):
+        rows = self.cluster.su_exec(f"SELECT rolpassword IS NOT NULL FROM pg_authid WHERE rolname = '{role}'")
         return bool(rows and rows[0][0])
 
     def auth_method(self, role):
@@ -360,3 +371,34 @@ def incident_view_ddl(table: str = "public.incidents") -> str:
     sql = (OPS / "0009_incidents_view.sql").read_text()
     ddl = re.search(r"CREATE OR REPLACE VIEW studio_ro\.incident_register.*?;", sql, re.S).group(0)
     return "CREATE SCHEMA IF NOT EXISTS studio_ro; " + ddl.replace("public.incidents", table)
+
+
+def seeded_tokens(pg_log: Path, role: str, issued=(), since: int = 0):
+    """The THROWAWAY passwords run-roles.sh --seed-password sent over SQL, read back from the server's statement log (log_statement=all in
+    the harness): every `ALTER ROLE <role> PASSWORD '...'` that is not one the mock Neon issued. Order of appearance."""
+    text = pg_log.read_bytes()[since:].decode(errors="replace")
+    found = re.findall(r"ALTER ROLE " + re.escape(role) + r" PASSWORD '([^']+)'", text)
+    return [t for t in found if t not in set(issued)]
+
+
+class PsSampler:
+    """Samples every process's full argv (ps -eo args=) every few ms while a block runs: evidence a secret was never on a command line."""
+
+    def __init__(self):
+        self.samples, self._stop, self._t = [], threading.Event(), None
+
+    def __enter__(self):
+        def poll():
+            while not self._stop.is_set():
+                self.samples.append(subprocess.run(["ps", "-eo", "args="], capture_output=True, text=True).stdout)
+                time.sleep(0.003)
+        self._t = threading.Thread(target=poll, daemon=True)
+        self._t.start()
+        return self
+
+    def __exit__(self, *a):
+        self._stop.set()
+        self._t.join(2)
+
+    def text(self):
+        return "\n".join(self.samples)

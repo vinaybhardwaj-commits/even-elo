@@ -36,13 +36,14 @@ umask 077
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 psql_bin=${PSQL:-psql}
 
-allow_disk=0 login=0 nologin=0 dry=0 role=studio_gov_ro
+allow_disk=0 login=0 nologin=0 dry=0 seed=0 role=studio_gov_ro
 while [[ ${1:-} == --* ]]; do
   case $1 in
     --allow-disk-tmp) allow_disk=1 ;;
     --login) login=1 ;;
     --nologin) nologin=1 ;;
     --dry-run) dry=1 ;;
+    --seed-password) seed=1 ;;
     --role) role=${2:-}; shift ;;
     *) echo "unknown option $1" >&2; exit 2 ;;
   esac
@@ -62,7 +63,12 @@ if [[ -n ${CDMSS_POSTCHECK_SQL:-} ]]; then
   [[ -n $extra_login_sql ]] && extra_login_sql=$CDMSS_POSTCHECK_SQL
 fi
 if [[ $login -eq 1 && $nologin -eq 1 ]]; then echo "--login and --nologin are exclusive" >&2; exit 2; fi
-if [[ $nologin -eq 1 ]]; then sql_file=${SQL_FILE:-$here/0004_nologin.sql}
+if [[ $seed -eq 1 ]]; then
+  [[ $login -eq 0 && $nologin -eq 0 ]] || { echo "--seed-password is exclusive with --login and --nologin" >&2; exit 2; }
+  case $role in studio_dw_writer|studio_cdmss_ro) ;; *) echo "--seed-password is for studio_dw_writer and studio_cdmss_ro only" >&2; exit 2 ;; esac
+fi
+if [[ $seed -eq 1 ]]; then sql_file=
+elif [[ $nologin -eq 1 ]]; then sql_file=${SQL_FILE:-$here/0004_nologin.sql}
 elif [[ $login -eq 1 ]]; then sql_file=${SQL_FILE:-$here/0003_login.sql}
 else
   [[ -n $setup_sql ]] || { echo "$role has no setup file here: create it with ops/cdmss/run-cdmss-ro.sh; this script only does --login / --nologin for it" >&2; exit 2; }
@@ -72,6 +78,12 @@ nologin_sql=$here/0004_nologin.sql
 terminate_sql=$here/0005_terminate.sql
 sessions_sql=$here/0006_sessions.sql
 
+if [[ $dry -eq 1 && $seed -eq 1 ]]; then
+  echo "-- dry run: nothing is connected and no password is generated. --seed-password would generate a THROWAWAY password in python (32+ random bytes),"
+  echo "-- pipe 'BEGIN; <role must exist, be NOLOGIN, hold no memberships>; ALTER ROLE $role PASSWORD <throwaway>; COMMIT;' to psql on STDIN (never argv, env or a file),"
+  echo "-- and print nothing of it. The throwaway is replaced by the Neon-issued password before the role can log in (ops/neon/README.md)."
+  exit 0
+fi
 if [[ $dry -eq 1 ]]; then
   echo "-- dry run: nothing is connected; no password is generated, read or sent by this script"
   echo "-- would: $psql_bin -X -q --single-transaction -v ON_ERROR_STOP=1 -v role=$role -v probe_table=$probe_table -v probe_priv=$probe_priv -f $sql_file (service file from the owner url, on tmpfs)"
@@ -80,7 +92,7 @@ if [[ $dry -eq 1 ]]; then
   exit 0
 fi
 
-[[ $# -eq 1 ]] || { echo "usage: $0 [--allow-disk-tmp] [--login|--nologin] [--role studio_gov_ro|studio_app|studio_dw_writer|studio_cdmss_ro] OWNER_URL_FILE | --dry-run" >&2; exit 2; }
+[[ $# -eq 1 ]] || { echo "usage: $0 [--allow-disk-tmp] [--login|--nologin|--seed-password] [--role studio_gov_ro|studio_app|studio_dw_writer|studio_cdmss_ro] OWNER_URL_FILE | --dry-run" >&2; exit 2; }
 owner_file=$1
 [[ -f $owner_file && -r $owner_file ]] || { echo "owner url file not readable" >&2; exit 2; }
 
@@ -125,6 +137,42 @@ for k, v in q.items():
 open(os.environ["SERVICE_FILE"], "w").write("\n".join(lines) + "\n")
 PY
 chmod 600 "$tmp/svc"
+
+# --seed-password: a THROWAWAY password over SQL while the role stays NOLOGIN. Neon refuses reset_password for a role that has no password
+# at all (HTTP 422, 23 Oct); once any password exists the reset works whether the role is LOGIN or not. The throwaway is 48 random bytes from
+# python's secrets, born in the python process and sent to psql on stdin: it is in no argv, no environment variable, no file and no log of
+# ours, and nothing here prints it. It can appear in the database server's statement log; that is acceptable ONLY because neon-role.sh
+# reset-password replaces it before the role can log in (LOGIN is enabled last, after the reset) and, if anything fails first, the caller
+# seeds a fresh throwaway so the logged one is dead. One transaction: the role must exist, be NOLOGIN and hold no memberships.
+if [[ $seed -eq 1 ]]; then
+  seed_err="$tmp/seed.err"
+  seed_py=$(cat <<'PY'
+import os, re, secrets, sys
+role = os.environ["ROLE_NAME"]
+if not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", role):
+    sys.exit("invalid role name")
+tok = secrets.token_urlsafe(48)
+sys.stdout.write(
+    "BEGIN;\nDO $$ BEGIN\n"
+    f"  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{role}' AND NOT rolcanlogin) THEN RAISE EXCEPTION 'role must exist and be NOLOGIN'; END IF;\n"
+    f"  IF EXISTS (SELECT 1 FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.member WHERE r.rolname = '{role}') THEN RAISE EXCEPTION 'role is a member of another role'; END IF;\n"
+    f"END $$;\nALTER ROLE {role} PASSWORD '{tok}';\nCOMMIT;\n"
+)
+PY
+)
+  set +e
+  ROLE_NAME=$role python3 -c "$seed_py" | PGSERVICEFILE="$tmp/svc" "$psql_bin" -X -q -v ON_ERROR_STOP=1 -v VERBOSITY=terse -f - "service=owner" >/dev/null 2>"$seed_err"
+  rc=("${PIPESTATUS[@]}")
+  set -e
+  if [[ ${rc[0]} -ne 0 || ${rc[1]} -ne 0 ]]; then
+    # terse errors only, any long token-like run redacted (the statement text is never echoed in terse mode, this is belt and braces)
+    { grep -E '(^|: )(ERROR|FATAL):' "$seed_err" || true; } | sed -E 's/[A-Za-z0-9_+\/=-]{24,}/[redacted]/g' | head -n 3 >&2
+    echo "$role: seeding the throwaway password FAILED (nothing was set, or the transaction rolled back)" >&2
+    exit 1
+  fi
+  echo "$role: throwaway password seeded over SQL (role still NOLOGIN; the Neon reset must replace it before LOGIN)"
+  exit 0
+fi
 
 psql_run() { # psql_run SQL_FILE [--single-transaction]: stdout discarded, errors on stderr
   local file=$1; shift

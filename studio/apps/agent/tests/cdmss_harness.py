@@ -53,8 +53,11 @@ class CdmssCluster:
             # password logins for the CDMSS role must really authenticate (scram), as on Neon
             hba = Path(c.execute("SHOW hba_file").fetchone()[0])
             c.execute("ALTER SYSTEM SET password_encryption = 'scram-sha-256'")
+            c.execute("ALTER SYSTEM SET log_statement = 'all'")      # so tests can find (and scan for) the throwaway password seeded over SQL
             hba.write_text("local all studio_cdmss_ro scram-sha-256\n" + hba.read_text())
             c.execute("SELECT pg_reload_conf()")
+        with psycopg.connect(self.su, autocommit=True) as c:
+            self.log = Path(c.execute("SHOW data_directory").fetchone()[0]) / "log"
         self.owner_url = self.url("neondb_owner", "cdmssdb")
         self.su_cdmss = self.su.replace("@/postgres?", "@/cdmssdb?")
         self.first_pass_failures: list[tuple[str, str]] = []

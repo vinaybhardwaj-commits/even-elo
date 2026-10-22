@@ -83,15 +83,42 @@ def test_a_non_json_or_empty_error_body_still_exits_nonzero_with_the_status(tmp_
     assert r.returncode != 0 and "HTTP 422" in r.stderr and not out.exists()
 
 
-def test_the_readmes_document_the_new_order_and_keep_the_rotation_sections():
-    from pathlib import Path
+def test_the_readmes_document_the_seed_order_and_keep_the_rotation_sections():
     ops = NEON_ROLE.parent
     neon = (ops / "README.md").read_text()
     cdmss = (ops.parent / "cdmss" / "README.md").read_text()
-    assert neon.index("# 2. enable LOGIN FIRST") < neon.index("# 3. Neon issues the password") < neon.index("# 3b. re-check")
+    assert neon.index("# 2. (a role with NO password yet") < neon.index("# 3. Neon issues the REAL password") < neon.index("# 3b. enable LOGIN, LAST")
     assert "## Rotation (the role is already LOGIN)" in neon and "run-roles.sh --nologin" in neon.split("## Rotation")[1]
-    assert "HTTP 422" in neon and "no_login" in neon and "exit 6" in neon.split("studio_dw_writer")[-1]
-    assert "HTTP 422" in cdmss and "no_login" in cdmss and "exits 6" in cdmss and "Rotation (password lost" in cdmss
+    assert "throwaway-seed rule" in neon and "cannot update password for role without password" in neon and "no LOGIN-first fallback" in neon
+    assert "A plaintext `ALTER ROLE ... PASSWORD` over SQL is not allowed" not in neon                  # the old rule is replaced
+    assert "throwaway" in cdmss and "no LOGIN-first fallback" in cdmss and "exits 6" in cdmss and "Rotation (password lost" in cdmss
     for sh in (ops.parent / "cdmss" / "run-login-mini.sh", ops / "run-dw-writer-login-mini.sh"):
         t = sh.read_text()
-        assert t.index('role-auth "$NEON_KEY"') < t.index('--login "$MOUNT/owner-url"') < t.index('reset-password "$NEON_KEY"'), sh.name
+        assert t.index('role-auth "$NEON_KEY"') < t.index('--seed-password "$MOUNT/owner-url" 2>&1') < t.index('reset-password "$NEON_KEY"') < t.index('--login "$MOUNT/owner-url" 2>&1'), sh.name
+        assert "LOGIN-first" in t and "no LOGIN-first fallback" in t or "LOGIN-first fallback" in t
+
+
+def test_reset_is_422_for_a_role_without_a_password_and_200_once_it_has_one_whatever_the_login_state(tmp_path, cluster, keyfile):
+    """Live (23 Oct): "cannot update password for role without password". Mirrored by the mock's require_password_for_reset."""
+    cluster.su_exec(f"CREATE ROLE {ROLE} NOLOGIN")
+    m = MockNeon(cluster)
+    m.require_password_for_reset = True
+    m.visible_extra = {ROLE}
+    try:
+        nr = NeonRun(tmp_path, m.url, "pwreq")
+        out = tmp_path / "o1"
+        r = nr.run("reset-password", str(keyfile), PROJECT, BRANCH, ROLE, str(out))
+        assert r.returncode != 0 and not out.exists() and "HTTP 422: cannot update pw for role without pw" in r.stderr
+        cluster.su_exec(f"ALTER ROLE {ROLE} LOGIN")                       # LOGIN does not help
+        r = nr.run("reset-password", str(keyfile), PROJECT, BRANCH, ROLE, str(tmp_path / "o2"))
+        assert r.returncode != 0 and "HTTP 422" in r.stderr
+        cluster.su_exec(f"ALTER ROLE {ROLE} NOLOGIN")
+        cluster.su_exec(f"ALTER ROLE {ROLE} PASSWORD 'seeded-throwaway-for-this-test'")   # a password exists; the role is still NOLOGIN
+        out3 = tmp_path / "o3"
+        r = nr.run("reset-password", str(keyfile), PROJECT, BRANCH, ROLE, str(out3))
+        assert r.returncode == 0, r.stderr
+        assert out3.read_text() == m.issued[ROLE] + "\n"
+        assert_nowhere(nr, r, m.issued[ROLE], API_KEY, "seeded-throwaway-for-this-test")
+    finally:
+        m.stop()
+        cluster.su_exec(f"DROP ROLE {ROLE}")

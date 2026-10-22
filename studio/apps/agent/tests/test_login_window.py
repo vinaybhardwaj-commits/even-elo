@@ -89,3 +89,86 @@ def keyfile_for_window(tmp_path):
     f.write_text(API_KEY + "\n")
     f.chmod(0o600)
     return f
+
+
+# ---------------------------------------------------------------- the throwaway seed (run-roles.sh --seed-password), real PG
+
+
+def seed(cdmss, tmp_path, tag="seed", role=ROLE, extra=()):
+    return run_roles(cdmss, tmp_path, "--role", role, "--seed-password", *extra, url=cdmss.owner_url, tag=tag)[0]
+
+
+@pytest.fixture
+def nologin_role(cdmss):
+    cdmss.su_exec(f"ALTER ROLE {ROLE} NOLOGIN")
+    cdmss.su_exec(f"ALTER ROLE {ROLE} PASSWORD NULL")
+    mark = cdmss.log.stat().st_size
+    yield cdmss, mark
+    cdmss.su_exec(f"ALTER ROLE {ROLE} NOLOGIN")
+    cdmss.su_exec(f"ALTER ROLE {ROLE} PASSWORD NULL")
+
+
+def test_a_seeded_role_cannot_log_in_while_it_is_nologin_even_with_the_right_password(nologin_role, tmp_path):
+    from tests.neon_harness import seeded_tokens
+    cdmss, mark = nologin_role
+    r = seed(cdmss, tmp_path)
+    assert r.returncode == 0, r.stderr
+    assert cdmss.su_exec(f"SELECT rolpassword IS NOT NULL, rolcanlogin FROM pg_authid WHERE rolname='{ROLE}'") == [(True, False)]
+    (tok,) = seeded_tokens(cdmss.log, ROLE, since=mark)
+    assert len(tok) >= 43                                              # 48 random bytes, urlsafe base64
+    err = attempt(cdmss, tok)
+    assert err is not None and ("not permitted to log in" in err or "authentication failed" in err), err   # the CORRECT password, NOLOGIN role
+    assert tok not in r.stdout + r.stderr                               # nothing of ours prints it
+    # why the order matters: had LOGIN come before the Neon reset replaced this password, it WOULD work
+    cdmss.su_exec(f"ALTER ROLE {ROLE} LOGIN")
+    assert attempt(cdmss, tok) is None
+
+
+def test_every_seed_is_a_fresh_random_value(nologin_role, tmp_path):
+    from tests.neon_harness import seeded_tokens
+    cdmss, mark = nologin_role
+    for i in range(3):
+        assert seed(cdmss, tmp_path, tag=f"seed{i}").returncode == 0
+    toks = seeded_tokens(cdmss.log, ROLE, since=mark)
+    assert len(toks) == 3 and len(set(toks)) == 3 and all(len(t) >= 43 for t in toks)
+
+
+def test_the_seed_refuses_a_login_role_a_member_and_roles_it_is_not_for(nologin_role, tmp_path):
+    from tests.neon_harness import seeded_tokens
+    cdmss, mark = nologin_role
+    cdmss.su_exec(f"ALTER ROLE {ROLE} LOGIN")
+    r = seed(cdmss, tmp_path, tag="login")
+    assert r.returncode == 1 and "FAILED" in r.stderr and "must exist and be NOLOGIN" in r.stderr
+    cdmss.su_exec(f"ALTER ROLE {ROLE} NOLOGIN")
+    cdmss.su_exec(f"GRANT pg_read_all_data TO {ROLE}")
+    try:
+        r = seed(cdmss, tmp_path, tag="member")
+        assert r.returncode == 1 and "member of another role" in r.stderr
+    finally:
+        cdmss.su_exec(f"REVOKE pg_read_all_data FROM {ROLE}")
+    for role in ("studio_gov_ro", "studio_app", "neondb_owner"):
+        r = seed(cdmss, tmp_path, tag=role, role=role)
+        assert r.returncode == 2, role
+    assert seeded_tokens(cdmss.log, ROLE, since=mark) == []          # not one of the refusals set a password
+    assert cdmss.su_exec(f"SELECT rolpassword IS NULL FROM pg_authid WHERE rolname='{ROLE}'") == [(True,)]
+
+
+def test_the_seed_is_exclusive_with_login_and_nologin_and_dry_run_prints_no_password(nologin_role, tmp_path):
+    import subprocess
+    from tests.neon_harness import RUN_ROLES
+    cdmss, mark = nologin_role
+    assert seed(cdmss, tmp_path, tag="x1", extra=("--login",)).returncode == 2
+    d = subprocess.run(["bash", str(RUN_ROLES), "--role", ROLE, "--seed-password", "--dry-run"], capture_output=True, text=True)
+    assert d.returncode == 0 and "THROWAWAY" in d.stdout and "PASSWORD '" not in d.stdout
+    from tests.neon_harness import seeded_tokens
+    assert seeded_tokens(cdmss.log, ROLE, since=mark) == []
+
+
+def test_the_seed_code_has_no_password_on_any_command_line_or_in_any_file():
+    import re
+    from tests.neon_harness import RUN_ROLES
+    t = RUN_ROLES.read_text()
+    block = t[t.index("if [[ $seed -eq 1 ]]; then\n  seed_err"):t.index("psql_run() {")]
+    assert "secrets.token_urlsafe(48)" in block and "-f -" in block and "ROLE_NAME=$role python3" in block
+    assert not re.search(r"PGPASSWORD|--password|-W\b|echo .*tok|printf .*tok|> *\"?\$tmp/seed\.sql", block)
+    assert "tok" not in block.split("seed_py=")[0] and "$tok" not in block

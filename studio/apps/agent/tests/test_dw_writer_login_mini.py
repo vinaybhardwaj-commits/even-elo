@@ -31,7 +31,7 @@ def dw(world, tmp_path, keyfile):
     r, _ = run_roles(cluster, tmp_path, sql_file=SQL_DW, tag="dw0012")
     assert r.returncode == 0, r.stderr
     neon = MockNeon(cluster)
-    neon.reject_reset_for_nologin = True   # live Neon: HTTP 422 for reset_password on a NOLOGIN role
+    neon.require_password_for_reset = True   # live Neon: HTTP 422 "cannot update password for role without password" until the role has one
     stub = tmp_path / "stub"
     stub.mkdir()
     slog = tmp_path / "stub.log"
@@ -65,6 +65,7 @@ def dw(world, tmp_path, keyfile):
 def run(w, *args, env=None, direct=True, fresh=True):
     if fresh and not args:
         w.cluster.su_exec(f"ALTER ROLE {ROLE} NOLOGIN")      # a fresh, password-less role, as before a first login
+        w.cluster.su_exec(f"ALTER ROLE {ROLE} PASSWORD NULL")
         w.neon.issued.pop(ROLE, None)
     cmd = [str(WRAPPER)] if direct else ["bash", str(WRAPPER)]
     return subprocess.run([*cmd, *args], capture_output=True, text=True, env={**w.env, **(env or {})}, timeout=180)
@@ -338,48 +339,101 @@ def test_run_roles_accepts_the_writer_and_nothing_broader():
     assert r.returncode == 2 and "studio_dw_writer" in r.stderr
 
 
-# ---------------------------------------------------------------- v6 order: LOGIN (checks) -> reset -> re-check -> post-check as the writer
+# ---------------------------------------------------------------- v7 order: throwaway seed (NOLOGIN) -> reset -> LOGIN checks -> post-check as the writer
 
 
-def test_order_login_first_then_reset_then_recheck_then_post_check(dw):
+from tests.neon_harness import PsSampler, seeded_tokens   # noqa: E402
+
+
+def tokens(w):
+    return seeded_tokens(w.cluster.log, ROLE, w.neon.all_issued)
+
+
+def everything_on_disk(w):
+    blob = []
+    for f in w.tmp.rglob("*"):
+        if f.is_file() and f.stat().st_size < 5_000_000:
+            try:
+                blob.append(f.read_bytes().decode(errors="replace"))
+            except OSError:
+                pass
+    return "\n".join(blob)
+
+
+def test_order_seed_then_reset_on_a_nologin_role_then_login_then_post_check(dw):
     r = run(dw)
     assert r.returncode == 0, r.stderr
-    assert dw.neon.reset_log == [(ROLE, True)], "Neon must be asked for the password only once the role is LOGIN"
+    assert dw.neon.reset_log == [(ROLE, False)], "Neon is asked for the password while the role is still NOLOGIN (and already has the throwaway)"
+    assert len(tokens(dw)) == 1 and len(tokens(dw)[0]) >= 43
     log = dw.log.read_text()
-    assert log.index("role-auth no_login") < log.index("login enabled (a)") < log.index("reset-password ok (b)") < log.index("re-check ok (c)") < log.index("post-check ok")
+    assert log.index("role-auth no_login") < log.index("throwaway seeded (a)") < log.index("reset-password ok (b)") < log.index("login enabled (c)") < log.index("post-check ok")
 
 
-def test_a_422_after_login_contains_the_role_and_leaves_no_url(dw):
+def test_the_throwaway_is_in_no_argv_env_log_or_file_of_ours(dw):
+    with PsSampler() as ps:
+        r = run(dw)
+    assert r.returncode == 0, r.stderr
+    toks = tokens(dw)
+    assert toks
+    hay = {"ps argv samples": ps.text(), "stdout": r.stdout, "stderr": r.stderr, "wrapper log": dw.log.read_text(), "files": everything_on_disk(dw),
+           "neon requests": repr(dw.neon.requests)}
+    for t in toks:
+        for label, text in hay.items():
+            assert t not in text, f"the throwaway reached {label}"
+        assert t not in dw.dest.read_text()                       # the installed url holds the NEON-issued password
+
+
+def test_a_seed_that_fails_stops_before_neon_and_sets_nothing(dw):
+    dw.cluster.su_exec(f"GRANT pg_read_all_data TO {ROLE}")
+    try:
+        r = run(dw)
+        assert r.returncode == 1 and "seeding the throwaway password (a) FAILED" in r.stderr
+        assert tokens(dw) == [] and dw.neon.posts == [] and not can_login(dw) and not dw.dest.exists() and not dw.mount.exists()
+        no_secrets(dw, r)
+    finally:
+        dw.cluster.su_exec(f"REVOKE pg_read_all_data FROM {ROLE}")
+
+
+def test_a_failed_reset_stops_with_the_message_reseeds_and_leaves_an_existing_url_alone(dw):
     dw.dest.parent.mkdir(parents=True)
-    dw.dest.write_text("UNTOUCHED\n")
-    dw.neon.force_reset_status = 422
+    dw.dest.write_text("EXISTING\n")
+    dw.neon.force_reset_status = 500
+    dw.neon.reset_422_message = "upstream exploded"
     r = run(dw)
     assert r.returncode == 22 and "reset-password (b) FAILED" in r.stderr
-    assert not can_login(dw) and not dw.mount.exists()
-    assert dw.dest.read_text() == "UNTOUCHED\n"                       # the password was never rotated, so the existing url is still the valid one
-    assert "HTTP 422: role has no login privilege" in dw.log.read_text()
+    assert "HTTP 500: upstream exploded" in dw.log.read_text()
+    assert not can_login(dw) and "login enabled" not in dw.log.read_text(), "no LOGIN-first fallback"
+    toks = tokens(dw)
+    assert len(toks) == 2 and toks[0] != toks[1]
+    assert dw.dest.read_text() == "EXISTING\n"                       # the reset never succeeded, so the existing url is still the valid one
+    dw.cluster.su_exec(f"ALTER ROLE {ROLE} LOGIN")
+    try:
+        with pytest.raises(psycopg.OperationalError):
+            psycopg.connect(host=dw.cluster.sock, user=ROLE, dbname="neondb", password=toks[0], connect_timeout=10)
+    finally:
+        dw.cluster.su_exec(f"ALTER ROLE {ROLE} NOLOGIN")
+    for t in toks:
+        for text in (r.stdout, r.stderr, dw.log.read_text(), everything_on_disk(dw)):
+            assert t not in text
+
+
+def test_the_post_check_failing_after_login_contains_the_role_and_removes_the_url(dw):
+    dw.dest.parent.mkdir(parents=True)
+    dw.dest.write_text("OLD\n")
+    dw.cluster.su_exec("GRANT SELECT ON public.physicians TO studio_dw_writer", db="neondb")
+    r = run(dw)
+    assert r.returncode == 1 and "post-check as the writer FAILED" in r.stderr
+    assert not can_login(dw) and not dw.dest.exists() and not dw.mount.exists()
+    assert len(tokens(dw)) == 1                                       # the reset completed: no re-seed
     no_secrets(dw, r)
 
 
-def test_the_422_message_reaches_the_log_without_secrets(dw):
-    dw.neon.force_reset_status = 422
-    dw.neon.reset_422_message = "postgres://leak:SECRETPW@h/db rejected; password=abc; bearer xyz"
-    r = run(dw)
-    assert r.returncode == 22
-    log = dw.log.read_text()
-    assert "HTTP 422" in log
-    for leak in ("SECRETPW", "postgres://", "password=", "bearer"):
-        assert leak not in log and leak not in r.stdout + r.stderr, leak
-
-
-def test_a_failed_recheck_contains_the_role_and_leaves_no_url(dw):
-    dw.dest.parent.mkdir(parents=True)
-    dw.dest.write_text("OLD\n")
+def test_neon_superuser_added_by_the_reset_is_caught_by_the_login_step(dw):
     dw.neon.add_superuser_on_reset = True
     try:
         r = run(dw)
-        assert r.returncode != 0 and "re-check (c) FAILED" in r.stderr
-        assert not can_login(dw) and not dw.dest.exists() and not dw.mount.exists()   # the reset happened: the old url is dead, so it is removed
+        assert r.returncode != 0 and "login checks (c) FAILED" in r.stderr
+        assert not can_login(dw) and not dw.dest.exists() and not dw.mount.exists()
     finally:
         dw.cluster.su_exec("REVOKE neon_superuser FROM studio_dw_writer")
 
@@ -390,7 +444,7 @@ def test_a_role_that_already_has_a_password_refuses_the_new_order(dw):
     dw.cluster.su_exec(f"ALTER ROLE {ROLE} LOGIN")
     dw.neon.passworded.add(ROLE)
     r = run(dw, fresh=False)
-    assert r.returncode == 6 and "ROTATION" in r.stderr and dw.neon.posts == [] and can_login(dw)
+    assert r.returncode == 6 and "ROTATION" in r.stderr and dw.neon.posts == [] and can_login(dw) and tokens(dw) == []
     assert dw.dest.read_text() == "EXISTING\n" and not dw.mount.exists()
     dw.neon.passworded.clear()
     r = run(dw, fresh=False)
