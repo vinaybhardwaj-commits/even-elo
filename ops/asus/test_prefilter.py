@@ -2,7 +2,7 @@
 """Synthetic-byte tests for studio-ech-prefilter.py (no network except loopback). Also usable as a client:
 
   test_prefilter.py client PORT TARGET KIND     # CONNECT TARGET via 127.0.0.1:PORT, send a synthetic hello of KIND, print the outcome
-KIND: hrr-ech (clean hello, the far side's answer, then a second hello with ECH) | plain | ech | ech-draft02 | ech-draftff02 | garbage | oversize | truncated | dup | fragmented | noext
+KIND: pipe-ech (clean hello, then straight away a second hello with ECH) | plain | ech | ech-draft02 | ech-draftff02 | garbage | oversize | truncated | dup | fragmented | noext
 Outcomes: "dropped" (connection closed with no TLS reply), "reply:<first byte hex>" (the far side answered), "refused".
 """
 import asyncio
@@ -28,8 +28,7 @@ def sni_ext(name):
     return ext(0, struct.pack(">HBH", len(n) + 3, 0, len(n)) + n)
 
 
-def hello_body(exts, session=b"\x01" * 32, compression=b"\x00"):
-    suites = b"\x13\x01\x13\x02\xc0\x2f\x00\xff"
+def hello_body(exts, session=b"\x01" * 32, compression=b"\x00", suites=b"\x13\x01\x13\x02\xc0\x2f\x00\xff"):
     b = b"\x03\x03" + b"\x42" * 32 + bytes([len(session)]) + session
     b += struct.pack(">H", len(suites)) + suites + bytes([len(compression)]) + compression
     if exts is not None:
@@ -144,13 +143,36 @@ def hrr_record():
 CCS = b"\x14\x03\x03\x00\x01\x01"
 
 
-class Stream(unittest.TestCase):
-    """What the filter does with client bytes AFTER the first ClientHello (HelloRetryRequest second hello, pipelined hellos)."""
+def server_hello_record(random=b"\x07" * 32):
+    """A real (non-HRR) TLS 1.3 ServerHello."""
+    exts = ext(43, b"\x03\x04") + ext(51, b"\x00\x1d\x00\x20" + b"\x05" * 32)
+    body = b"\x03\x03" + random + b"\x20" + b"\x01" * 32 + b"\x13\x01" + b"\x00" + struct.pack(">H", len(exts)) + exts
+    return record(b"\x02" + len(body).to_bytes(3, "big") + body)
 
-    def feed(self, *chunks):
-        cs, out = pf.ClientStream(), b""
+
+def big_hello(total, ext_type=0xFE02):
+    """A ClientHello of about `total` bytes (cipher suites up to 65534 bytes + padding up to 65000, so at most ~130 KB) carrying one
+    banned extension, as records of 16384."""
+    suites = b"\xc0\x2f" * (min(65534, total // 2) // 2)
+    rest = max(0, total - len(suites) - 100)
+    pads = [ext(21, b"\x00" * min(rest, 65000))] if rest else []
+    hs = handshake(hello_body([sni_ext("api.typesafe.ai")] + pads + [ext(ext_type, b"\x01\x02")], suites=suites))
+    return b"".join(record(hs[i:i + 16384]) for i in range(0, len(hs), 16384)), len(hs)
+
+
+class Stream(unittest.TestCase):
+    """What the filter does with client bytes AFTER the first ClientHello, given what the server has (not) said."""
+
+    def watch(self, server=None):
+        w = pf.Watch()
+        if server:
+            self.assertIsNone(w.server_feed(server))
+        return w
+
+    def feed(self, *chunks, server=None, w=None):
+        w, out = w or self.watch(server), b""
         for c in chunks:
-            o, why = cs.feed(c)
+            o, why = w.feed(c)
             if why:
                 return out, why
             out += o
@@ -164,15 +186,15 @@ class Stream(unittest.TestCase):
 
     def test_second_hello_with_ech_after_hrr_is_dropped(self):
         for k in ("ech", "ech-draft02", "ech-draftff02", "fragmented"):
-            out, why = self.feed(CCS + make(k))
-            self.assertEqual(why[0], "ech", k)
-            self.assertNotIn(b"\x16", out[:0] or b"")  # nothing of the hello was released
-            self.assertEqual(out, b"", k)
+            for server in (None, hrr_record()):
+                out, why = self.feed(CCS + make(k), server=server)
+                self.assertEqual(why[0], "ech", k)
+                self.assertEqual(out, b"", k)
 
     def test_second_hello_split_over_tcp_segments_and_records(self):
         full = CCS + make("ech")
         for cut in (3, 7, 12, 40, len(full) - 1):
-            out, why = self.feed(full[:cut], full[cut:])
+            out, why = self.feed(full[:cut], full[cut:], server=hrr_record())
             self.assertEqual(why[0] if why else None, "ech", cut)
         frag = make("fragmented")
         out, why = self.feed(frag[:20], frag[20:])
@@ -181,11 +203,23 @@ class Stream(unittest.TestCase):
     def test_first_half_of_a_split_hello_is_withheld_until_the_whole_passes(self):
         hs = handshake(hello_body([sni_ext("api.typesafe.ai"), ext(0xFE0D, b"\x00" * 40)]))
         recs = record(hs[:30]) + record(hs[30:])
-        cs = pf.ClientStream()
-        o, why = cs.feed(recs[: 5 + 30])
+        w = pf.Watch()
+        o, why = w.feed(recs[: 5 + 30])
         self.assertEqual((o, why), (b"", None))
-        o, why = cs.feed(recs[5 + 30:])
+        o, why = w.feed(recs[5 + 30:])
         self.assertEqual((o, why[0]), (b"", "ech"))
+
+    def test_N1_oversize_second_hello_with_ech_is_dropped_whatever_its_length(self):
+        for server in (None, hrr_record()):
+            for size in (30000, 70000, 125000):
+                data, n = big_hello(size)
+                self.assertGreater(n, size * 9 // 10)
+                out, why = self.feed(CCS + data, server=server)
+                self.assertEqual(why, ("malformed:oversize", ""), (size, server is None))
+                self.assertEqual(out, b"")
+        # declared length above 0xFFFF in the very first record
+        out, why = self.feed(record(b"\x01\x01\x11\x3b" + b"\x00" * 100), server=hrr_record())
+        self.assertEqual(why, ("malformed:oversize", ""))
 
     def test_malformed_second_hello_and_bad_records_dropped(self):
         self.assertEqual(self.feed(make("dup"))[1][0], "malformed:duplicate-extension")
@@ -194,15 +228,65 @@ class Stream(unittest.TestCase):
         self.assertEqual(self.feed(make("plain") + b"\x00" * 5)[1][0], "malformed:bad-record-header")
         self.assertEqual(self.feed(record(handshake(hello_body([sni_ext("a")])) + b"\x00"))[1][0], "malformed:trailing-bytes")
 
-    def test_application_data_ccs_and_non_hello_handshakes_pass(self):
-        app = b"\x17\x03\x03" + struct.pack(">H", 100) + b"\x01" * 100
-        done = record(b"\x14\x00\x00\x0c" + b"\x07" * 12)           # a plaintext Finished-shaped handshake message
-        cke = record(b"\x10\x00\x00\x42" + b"\x05" * 0x42)           # ClientKeyExchange
-        cipher_like = b"\x16\x03\x03" + struct.pack(">H", 40) + b"\x01\xff\xff\xff" + b"\x09" * 36   # ciphertext starting 0x01 with a huge "length"
-        data = CCS + app + done + cke + cipher_like + app
-        out, why = self.feed(data)
+    def test_until_the_server_speaks_every_handshake_record_must_be_a_client_hello(self):
+        cke = record(b"\x10\x00\x00\x42" + b"\x05" * 0x42)
+        self.assertEqual(self.feed(CCS + cke)[1][0], "malformed:handshake-not-client-hello")
+        cipher_like = b"\x16\x03\x03" + struct.pack(">H", 40) + b"\x01\xff\xff\xff" + b"\x09" * 36
+        self.assertIsNotNone(self.feed(cipher_like)[1])   # before the server speaks, a 0x16 record that is not a clean ClientHello drops
+        self.assertEqual(self.feed(make("plain"), make("plain"))[1][0], "malformed:third-client-hello")
+
+    def test_ccs_is_not_a_stop_signal_in_the_hrr_flow(self):
+        out, why = self.feed(CCS, CCS + make("ech"), server=hrr_record())   # compat CCS, then CH2 with ECH
+        self.assertEqual(why[0], "ech")
+        out, why = self.feed(CCS + make("plain"), server=hrr_record())
         self.assertIsNone(why)
-        self.assertEqual(out, data)
+
+    def test_hrr_allows_exactly_one_more_hello_then_inspection_ends(self):
+        w = self.watch(hrr_record())
+        self.assertEqual(w.phase, "hrr")
+        ch2 = CCS + make("plain")
+        out, why = self.feed(ch2, w=w)
+        self.assertEqual((out, why), (ch2, None))
+        self.assertEqual(w.phase, "done")
+        later = b"\x17\x03\x03\x00\x05" + b"\x01" * 5 + b"\x16\x03\x03\x00\x30\x01\x00\x00\x10" + b"\x09" * 44
+        out, why = self.feed(later, w=w)
+        self.assertEqual((out, why), (later, None))
+
+    def test_tls12_encrypted_finished_starting_0x01_is_not_dropped(self):
+        w = self.watch(server_hello_record())
+        self.assertEqual(w.phase, "done")
+        cke = record(b"\x10\x00\x00\x42" + b"\x05" * 0x42)
+        finished = b"\x16\x03\x03" + struct.pack(">H", 40) + b"\x01\x00\x00\x10" + b"\x09" * 36    # ciphertext shaped like a small ClientHello
+        finished2 = b"\x16\x03\x03" + struct.pack(">H", 40) + b"\x01\xff\xff\xff" + b"\x09" * 36
+        app = b"\x17\x03\x03" + struct.pack(">H", 100) + b"\x01" * 100
+        data = cke + CCS + finished + finished2 + app
+        out, why = self.feed(data, w=w)
+        self.assertEqual((out, why), (data, None))
+
+    def test_server_first_record_split_over_segments_and_alerts(self):
+        sh = server_hello_record()
+        w = pf.Watch()
+        self.assertIsNone(w.server_feed(sh[:3]))
+        self.assertEqual(w.phase, "wait")
+        self.assertIsNone(w.server_feed(sh[3:20]))
+        self.assertEqual(w.phase, "wait")
+        self.assertIsNone(w.server_feed(sh[20:]))
+        self.assertEqual(w.phase, "done")
+        h = hrr_record()
+        w = pf.Watch()
+        self.assertIsNone(w.server_feed(h[:10]))
+        self.assertIsNone(w.server_feed(h[10:]))
+        self.assertEqual(w.phase, "hrr")
+        w = pf.Watch()
+        self.assertIsNone(w.server_feed(b"\x15\x03\x03\x00\x02\x02\x28"))
+        self.assertEqual(w.phase, "done")
+
+    def test_pipelined_second_hello_then_hrr_leaves_nothing_more_to_inspect(self):
+        w = self.watch()
+        out, why = self.feed(CCS + make("plain"), w=w)
+        self.assertIsNone(why)
+        w.server_feed(hrr_record())
+        self.assertEqual(w.phase, "done")
 
     def test_first_hello_may_not_use_more_than_eight_records(self):
         hs = handshake(hello_body([sni_ext("api.typesafe.ai")]))
@@ -220,7 +304,7 @@ class Live(unittest.IsolatedAsyncioTestCase):
         self.saved = (pf.UPSTREAM, pf.sem, pf.IDLE_SECONDS, pf.IDLE_CHECK)
         self.rx = []
         self.stub_conns = []
-        self.hrr = False
+        self.reply = None   # 'hrr' | 'sh' : what the stub answers to the first client bytes
         self.stub = await asyncio.start_server(self._stub, "127.0.0.1", 0)
         pf.UPSTREAM = ("127.0.0.1", self.stub.sockets[0].getsockname()[1])
         pf.sem = asyncio.Semaphore(4)
@@ -243,8 +327,8 @@ class Live(unittest.IsolatedAsyncioTestCase):
                 if not d:
                     break
                 self.rx.append(d)
-                if first and self.hrr:
-                    w.write(hrr_record())
+                if first and self.reply:
+                    w.write(hrr_record() if self.reply == "hrr" else server_hello_record())
                 first = False
         except ConnectionError:
             pass
@@ -263,7 +347,7 @@ class Live(unittest.IsolatedAsyncioTestCase):
             return True
 
     async def test_ch1_clean_hrr_ch2_with_ech_is_dropped_and_never_reaches_the_server(self):
-        self.hrr = True
+        self.reply = "hrr"
         r, w = await self.open()
         ch1 = make("plain")
         w.write(ch1)
@@ -275,7 +359,7 @@ class Live(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(b"".join(self.rx), ch1)      # the stub server never saw CH2
 
     async def test_ch1_clean_hrr_ch2_clean_passes_byte_for_byte(self):
-        self.hrr = True
+        self.reply = "hrr"
         r, w = await self.open()
         ch1, ch2 = make("plain"), CCS + make("plain")
         w.write(ch1)
@@ -283,6 +367,30 @@ class Live(unittest.IsolatedAsyncioTestCase):
         w.write(ch2)
         await asyncio.sleep(0.3)
         self.assertEqual(b"".join(self.rx), ch1 + ch2)
+        w.close()
+
+    async def test_N1_live_oversize_second_hello_after_hrr_is_dropped(self):
+        self.reply = "hrr"
+        r, w = await self.open()
+        ch1 = make("plain")
+        w.write(ch1)
+        await asyncio.wait_for(r.readexactly(len(hrr_record())), 5)
+        data, _ = big_hello(70000)
+        w.write(CCS + data)
+        self.assertTrue(await self.closed(r))
+        await asyncio.sleep(0.2)
+        self.assertEqual(b"".join(self.rx), ch1)
+
+    async def test_live_tls12_style_flight_after_a_real_server_hello_passes_untouched(self):
+        self.reply = "sh"
+        r, w = await self.open()
+        ch1 = make("plain")
+        w.write(ch1)
+        await asyncio.wait_for(r.readexactly(len(server_hello_record())), 5)
+        flight = record(b"\x10\x00\x00\x42" + b"\x05" * 0x42) + CCS + b"\x16\x03\x03" + struct.pack(">H", 40) + b"\x01\x00\x00\x10" + b"\x09" * 36
+        w.write(flight)
+        await asyncio.sleep(0.3)
+        self.assertEqual(b"".join(self.rx), ch1 + flight)
         w.close()
 
     async def test_second_hello_pipelined_behind_the_first_without_waiting_for_the_server(self):
@@ -342,14 +450,12 @@ def client(port, target, kind):
         print("refused")
         return 3
     try:
-        if kind == "hrr-ech":  # clean hello, wait for whatever the far side answers, then a second hello carrying ECH
+        if kind == "pipe-ech":  # clean hello, then at once (before the far side can answer) a second hello carrying ECH
+            s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             s.sendall(make("plain", target.split(":")[0]))
-            if not s.recv(4096):
-                print("dropped")
-                return 0
             s.sendall(make("ech", target.split(":")[0]))
             d = s.recv(4096)
-            print("reply:%02x" % d[0] if d else "dropped-after-first-reply")
+            print("reply:%02x" % d[0] if d else "dropped")
             return 0
         s.sendall(make(kind, target.split(":")[0]))
         d = s.recv(4096)

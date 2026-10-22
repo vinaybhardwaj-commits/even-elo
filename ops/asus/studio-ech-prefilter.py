@@ -10,12 +10,14 @@ connection is dropped if the ClientHello
   - is malformed (any length that does not add up, duplicate extension, trailing bytes, not a TLS 1.x handshake record), or
   - is larger than MAX_HELLO bytes, or does not arrive within HELLO_TIMEOUT seconds.
 
-It then keeps framing everything the client sends as TLS records for the life of the tunnel and applies the same ClientHello check to
-every later handshake record that looks like a ClientHello (type 1, length <= 0xFFFF) - the second ClientHello after a HelloRetryRequest,
-sent after the server's reply or pipelined right behind the first. A bad record header, or a ClientHello that is malformed or carries
-a banned extension, drops the tunnel. (Ciphertext that merely starts with 0x01 and a small length - a TLS 1.2 Finished - is a ~1.5e-5
-false positive per TLS 1.2 handshake; TLS 1.3 never sends a handshake-type record after its second flight.) A tunnel with no bytes in
-either direction for IDLE_SECONDS is closed so idle tunnels cannot hold the MAX_CONNS slots.
+It then keeps framing the client's TLS records until the server's plaintext handshake phase is over, and until then every client
+handshake record (0x16) must be part of a ClientHello, checked as strictly as the first (same MAX_HELLO cap, any length above it
+drops): the second ClientHello after a HelloRetryRequest (RFC 8446 D.4: a middlebox-compat ChangeCipherSpec comes BEFORE it, so CCS
+is not a stop signal) whether it follows the server's reply or is pipelined. The filter reads the server's first handshake record:
+a HelloRetryRequest (ServerHello.random = the RFC 8446 constant) allows exactly one more ClientHello, a real ServerHello (or any
+alert/other first record) ends client-side inspection, since no plaintext ClientHello can legally follow it. Everything after that
+is relayed raw, so an encrypted TLS 1.2 Finished is never mis-parsed. A bad record header drops the tunnel. A tunnel with no bytes
+in either direction for IDLE_SECONDS is closed so idle tunnels cannot hold the MAX_CONNS slots.
 
 Everything else is relayed byte for byte, hello included. Nothing is decrypted or rewritten. Python standard library only;
 no files, no sockets other than the loopback listener and the loopback upstream. Log lines (stdout -> journal) carry the
@@ -31,7 +33,7 @@ BLOCKED_EXT = {0xFE0D: "encrypted_client_hello", 0xFE02: "ech_draft", 0xFF02: "e
 MAX_HELLO = 16384          # handshake body bytes; a TLS record carries at most 2^14, so one record covers a normal hello
 MAX_FIRST_RECORDS = 8      # the first hello may span at most this many records (enforced), so buffering is bounded by MAX_BUFFER
 MAX_BUFFER = MAX_HELLO + 4 + 5 * MAX_FIRST_RECORDS
-MAX_RECORD = 16640         # TLS 1.3 ciphertext record limit (2^14 + 256), for records after the first hello
+MAX_RECORD = 16640         # TLS 1.3 ciphertext record limit (2^14 + 256), for records after the first hello (headers only; hellos stay under MAX_HELLO)
 MAX_HEAD = 8192            # CONNECT request / Squid response head
 HEAD_TIMEOUT = 10.0
 HELLO_TIMEOUT = 10.0
@@ -154,19 +156,38 @@ async def read_head(reader, pending=b""):
     return buf[:k], buf[k:]
 
 
-class ClientStream:
-    """TLS record framing plus the ClientHello check for everything the client sends after its first hello."""
+HRR_RANDOM = bytes.fromhex("cf21ad74e59a6111be1d8c021e65b891c2a211167abb8c5e079e09e2c8a8339c")
+MAX_SERVER_RECORDS = 8
+
+
+class Watch:
+    """Per-tunnel inspection state shared by the two pump directions.
+
+    phase "wait": the server has not spoken yet; "hrr": it sent a HelloRetryRequest; "done": its plaintext ServerHello (or anything
+    else) came, so client-side inspection stops. At most one ClientHello may follow the first (extra_ch)."""
 
     def __init__(self):
+        self.phase = "wait"
+        self.extra_ch = 0
         self.buf = bytearray()
-        self.frag = None      # a ClientHello-shaped handshake message that spans records, until complete
+        self.frag = None      # a ClientHello that spans records, until complete
         self.held = b""       # its records, withheld until the whole message has passed the check
+        self.sbuf = bytearray()
+        self.shs = bytearray()
+        self.srecs = 0
 
+    # ---- client -> server
     def feed(self, data):
         """Returns (bytes safe to forward, None), or (b"", (reason, extra)) when the tunnel must be dropped."""
+        if self.phase == "done":
+            if self.frag is not None:
+                return b"", ("malformed:hello-after-server-hello", "")
+            out = self.held + bytes(self.buf) + data
+            self.held, self.buf = b"", bytearray()
+            return out, None
         self.buf += data
         out = bytearray()
-        while len(self.buf) >= 5:
+        while len(self.buf) >= 5 and self.phase != "done":
             rtype, vmaj, vmin = self.buf[0], self.buf[1], self.buf[2]
             rlen = (self.buf[3] << 8) | self.buf[4]
             if rtype not in (0x14, 0x15, 0x16, 0x17) or vmaj != 3 or vmin > 4:
@@ -185,6 +206,9 @@ class ClientStream:
             else:
                 out += self.held + rec
                 self.held = b""
+        if self.phase == "done" and self.frag is None:   # the server spoke while we were mid-buffer: pass the rest raw
+            out += self.held + bytes(self.buf)
+            self.held, self.buf = b"", bytearray()
         return bytes(out), None
 
     def _record(self, rtype, p):
@@ -193,10 +217,12 @@ class ClientStream:
                 return ("malformed:hello-interrupted", "")
             self.frag += p
             return self._frag_check()
-        if rtype != 0x16 or not p or p[0] != 1:
+        if rtype != 0x16:
             return None
-        if len(p) >= 4 and int.from_bytes(p[1:4], "big") > 0xFFFF:
-            return None  # not ClientHello-shaped (e.g. ciphertext that happens to start with 0x01)
+        if not p or p[0] != 1:
+            return ("malformed:handshake-not-client-hello", "")
+        if self.extra_ch >= 1:
+            return ("malformed:third-client-hello", "")
         self.frag = bytearray(p)
         return self._frag_check()
 
@@ -205,7 +231,7 @@ class ClientStream:
         if len(f) < 4:
             return None  # even the handshake header is split over records: wait for the rest
         n = int.from_bytes(f[1:4], "big")
-        if n > 0xFFFF:
+        if n > MAX_HELLO:
             return ("malformed:oversize", "")
         if len(f) < 4 + n:
             return None
@@ -218,7 +244,45 @@ class ClientStream:
         hit = [t for t in info if t in BLOCKED_EXT]
         if hit:
             return ("ech", "ext=" + ",".join(f"0x{t:04x}" for t in hit))
+        self.extra_ch += 1
+        if self.phase == "hrr":
+            self.phase = "done"   # the one ClientHello an HRR allows has passed
         return None
+
+    # ---- server -> client (never blocked; only read for the first handshake record)
+    def server_feed(self, data):
+        """Returns None, or (reason, extra) to drop (a server whose first flight cannot be classified)."""
+        if self.phase == "done" or self.sdone:
+            return None
+        self.sbuf += data
+        while len(self.sbuf) >= 5:
+            rtype, rlen = self.sbuf[0], (self.sbuf[3] << 8) | self.sbuf[4]
+            if rlen > MAX_RECORD:
+                return ("malformed:server-record-length", "")
+            if len(self.sbuf) < 5 + rlen:
+                return None
+            payload = bytes(self.sbuf[5:5 + rlen])
+            del self.sbuf[:5 + rlen]
+            self.srecs += 1
+            if rtype != 0x16 or (payload and payload[0] != 2 and not self.shs):
+                self._server_spoke(hrr=False)   # an alert or any first record that is not a ServerHello: inspection ends
+                return None
+            self.shs += payload
+            if len(self.shs) >= 38:
+                self._server_spoke(hrr=bytes(self.shs[6:38]) == HRR_RANDOM)
+                return None
+            if self.srecs > MAX_SERVER_RECORDS:
+                return ("malformed:server-first-flight", "")
+        return None
+
+    sdone = False
+
+    def _server_spoke(self, hrr):
+        self.sdone = True
+        if hrr and self.extra_ch == 0:
+            self.phase = "hrr"
+        else:   # a real ServerHello, or an HRR whose second hello already passed
+            self.phase = "done"
 
 
 class IdleTimeout(Exception):
@@ -247,7 +311,7 @@ def abort(*writers):
             pass
 
 
-async def pump(src, dst, act, peer, target, cs=None):
+async def pump(src, dst, act, peer, target, cs=None, sv=None):
     """Relay src -> dst. With cs set (client side) the bytes are checked as TLS records first."""
     try:
         while True:
@@ -258,6 +322,12 @@ async def pump(src, dst, act, peer, target, cs=None):
                 data, why = cs.feed(data)
                 if why:
                     log("drop", why[0], target, (why[1] + " " if why[1] else "") + "phase=after-first-hello")
+                    abort(dst, peer)
+                    return
+            if sv is not None and data:
+                why = sv.server_feed(data)
+                if why:
+                    log("drop", why[0], target, "phase=server-first-flight")
                     abort(dst, peer)
                     return
             if data:
@@ -351,7 +421,8 @@ async def handle(creader, cwriter):
             up_w.write(buf)
             await up_w.drain()
             act = [asyncio.get_running_loop().time()]
-            await asyncio.gather(pump(creader, up_w, act, cwriter, target, ClientStream()), pump(up_r, cwriter, act, up_w, target))
+            watch = Watch()
+            await asyncio.gather(pump(creader, up_w, act, cwriter, target, cs=watch), pump(up_r, cwriter, act, up_w, target, sv=watch))
         except (ConnectionError, OSError):
             pass
         finally:
