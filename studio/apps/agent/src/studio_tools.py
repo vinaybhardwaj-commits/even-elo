@@ -11,7 +11,7 @@ Rules (all enforced in code and tests):
 
 Tables read (from src/lib/migrations.ts of even-elo): physicians, physician_engagements, hospitals,
 gov_signal_snapshots, gov_interventions, plus incidents through the column-scoped view studio_ro.incident_register
-(ops/neon/0009_incidents_grant.sql; the role has no grant on public.incidents). Governance sees what the source pages show (V, 21 Oct: no
+(ops/neon/0009_incidents_view.sql; 0010_incidents_revoke.sql removes the role's grant on public.incidents). Governance sees what the source pages show (V, 21 Oct: no
 doctor or PHI gating), so notes are selected; ops/neon/0008_ungate_views.sql appends the view text columns.
 
 M1 adds six tools over the column-scoped VIEWS in schema studio_ro (ops/neon/0003_studio_views.sql):

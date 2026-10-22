@@ -109,24 +109,38 @@ describe("Studio redirects (role-conditional, in middleware)", () => {
     }
   });
 
-  it("RSC / prefetch requests are not redirected (each marker alone), a plain navigation still is", async () => {
+  it("<Link> prefetches are not redirected (alone or with rsc / _rsc / state-tree), so they cost nothing in the Studio", async () => {
     process.env.STUDIO_ORIGIN = ORIGIN;
     const t = await jwt(true);
-    const markers: Array<[string, string, Record<string, string>]> = [
-      ["rsc header", "/overview", { rsc: "1" }],
-      ["next-router-prefetch header", "/overview", { "next-router-prefetch": "1" }],
-      ["next-router-state-tree header", "/overview", { "next-router-state-tree": "%5B%22%22%5D" }],
-      ["_rsc param", "/overview?_rsc=abc12", {}],
-      ["_rsc param on a detail page", "/physicians/p1?a=1&_rsc=zz", {}],
+    const prefetches: Array<[string, string, Record<string, string>]> = [
+      ["prefetch header alone", "/overview", { "next-router-prefetch": "1" }],
+      ["prefetch + rsc", "/overview", { "next-router-prefetch": "1", rsc: "1" }],
+      ["prefetch + rsc + _rsc param + state tree", "/physicians/p1?a=1&_rsc=zz", { "next-router-prefetch": "1", rsc: "1", "next-router-state-tree": "%5B%22%22%5D" }],
     ];
-    for (const [name, path, headers] of markers) {
+    for (const [name, path, headers] of prefetches) {
       const r = await hit(path, t, { headers });
       expect(r.status, name).toBe(200);
       expect(r.headers.get("location"), name).toBeNull();
       expect(r.headers.get("x-middleware-next"), name).toBe("1");
     }
-    expect((await hit("/overview", t)).status).toBe(307);
-    expect((await hit("/overview?a=1", t, { headers: { rsc: "0" } })).status).toBe(307);
+  });
+
+  it("a super_admin clicking a Link to a moved page (rsc: 1 navigation, with or without _rsc / state tree) still reaches the Studio", async () => {
+    process.env.STUDIO_ORIGIN = ORIGIN;
+    const t = await jwt(true);
+    const navs: Array<[string, string, Record<string, string>]> = [
+      ["rsc header", "/overview", { rsc: "1" }],
+      ["rsc + state tree", "/overview", { rsc: "1", "next-router-state-tree": "%5B%22%22%5D" }],
+      ["rsc + _rsc param", "/overview?_rsc=abc12", { rsc: "1" }],
+      ["_rsc param alone", "/physicians/p1?_rsc=zz", {}],
+      ["plain navigation", "/overview", {}],
+    ];
+    for (const [name, path, headers] of navs) {
+      const r = await hit(path, t, { headers });
+      expect(r.status, name).toBe(307);
+      expect(new URL(r.headers.get("location")!).pathname, name).toMatch(/^\/studio\//);
+    }
+    expect((await hit("/overview", t, { headers: { "next-router-prefetch": "0" } })).status).toBe(307);
   });
 
   it("non-super_admin never redirects to the Studio on any mapped path", async () => {

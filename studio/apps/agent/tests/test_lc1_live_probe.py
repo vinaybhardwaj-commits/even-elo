@@ -44,7 +44,7 @@ DOCAUDIT_VIEW_COLUMNS = {
     "document_audit_list": ("audit_id", "external_ref", "hospital_code", "physician_id", "doc_type", "doc_day", "ingested_at", "last_synced_at", "triage_routed_at", "doc_class", "has_pdf", "pdf_url", "source", "created_at"),
     "document_audit_finding_list": ("finding_id", "audit_id", "physician_id", "finding_label", "finding_body", "evidence_excerpt", "severity", "status", "authored_by_name", "author_confirmed", "authored_at", "recurrence_count", "portal_visible", "response_owner", "signal_reference", "signal_type", "doc_class", "cdmss_routed", "response_verb", "response_comment", "responded_at", "sync_state", "sync_attempts", "sync_permanent", "created_at"),
 }
-# Incident view (ops/neon/0009_incidents_grant.sql), EXACT columns; installed by a third owner step. public.incidents itself is denied.
+# Incident view (ops/neon/0009_incidents_view.sql), EXACT columns; installed by a third owner step. public.incidents itself is denied.
 INCIDENT_VIEW_COLUMNS = {"incident_register": ("status", "polarity", "severity", "submitted_at")}
 INCIDENT_BASE_TABLES = ("incidents",)
 DOCAUDIT_BASE_TABLES = ("document_audits", "document_audit_findings")

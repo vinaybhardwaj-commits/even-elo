@@ -189,8 +189,10 @@ def test_full_flow_gov_ro_setup_reset_login_probe_and_no_secret_anywhere(cluster
     assert v7.returncode == 0, v7.stderr
     v8, _ = run_roles(cluster, tmp_path, sql_file=OPS / "0008_ungate_views.sql", tag="ungate-views")
     assert v8.returncode == 0, v8.stderr
-    v9, _ = run_roles(cluster, tmp_path, sql_file=OPS / "0009_incidents_grant.sql", tag="incidents-grant")
+    v9, _ = run_roles(cluster, tmp_path, sql_file=OPS / "0009_incidents_view.sql", tag="incidents-view")
     assert v9.returncode == 0, v9.stderr
+    v10, _ = run_roles(cluster, tmp_path, sql_file=OPS / "0010_incidents_revoke.sql", tag="incidents-revoke")
+    assert v10.returncode == 0, v10.stderr
     pw = neon.issued["studio_gov_ro"]
     assert role_row(cluster, "studio_gov_ro")[0] is False  # still NOLOGIN after the reset
     l, _ = run_roles(cluster, tmp_path, "--login", tag="login")

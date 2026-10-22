@@ -311,7 +311,7 @@ def full_flow(cluster, neon, tmp_path, keyfile, role="studio_gov_ro", db="neondb
 
 
 def incident_view_ddl(table: str = "public.incidents") -> str:
-    """The studio_ro.incident_register DDL exactly as 0009_incidents_grant.sql defines it (for tests on a plain superuser schema)."""
-    sql = (OPS / "0009_incidents_grant.sql").read_text()
+    """The studio_ro.incident_register DDL exactly as 0009_incidents_view.sql defines it (for tests on a plain superuser schema)."""
+    sql = (OPS / "0009_incidents_view.sql").read_text()
     ddl = re.search(r"CREATE OR REPLACE VIEW studio_ro\.incident_register.*?;", sql, re.S).group(0)
     return "CREATE SCHEMA IF NOT EXISTS studio_ro; " + ddl.replace("public.incidents", table)

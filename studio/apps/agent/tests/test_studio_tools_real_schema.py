@@ -49,7 +49,7 @@ def real_db():
             conn.execute(sql.replace("CREATE EXTENSION IF NOT EXISTS pgcrypto;", ""), prepare=False)
         except Exception as exc:  # pragma: no cover
             raise AssertionError(f"even-elo migration {mid} failed to apply: {type(exc).__name__}") from exc
-    conn.execute(incident_view_ddl())  # 0009_incidents_grant.sql: the tools read incidents through this view
+    conn.execute(incident_view_ddl())  # 0009_incidents_view.sql: the tools read incidents through this view
     seed(conn)
     try:
         yield conn
