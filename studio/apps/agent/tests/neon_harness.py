@@ -181,7 +181,7 @@ class MockNeon:
                 outer.requests.append((self.command, self.path, self.headers.get("authorization"), body))
                 if self.headers.get("authorization") != f"Bearer {API_KEY}":
                     return self._send(401, {"message": "unauthorized"})
-                path = self.path
+                path = self.path.split("?")[0]
                 mp = re.match(r"/api/v2/projects/([^/]+)/branches/([^/]+)/roles", path)
                 pair = (mp.group(1), mp.group(2)) if mp else None
                 base = f"/api/v2/projects/{pair[0]}/branches/{pair[1]}" if pair in ((PROJECT, BRANCH), (CDMSS_PROJECT, CDMSS_BRANCH), (CDMSS_PROJECT, CDMSS_BRANCH_DEV)) else f"/api/v2/projects/{PROJECT}/branches/{BRANCH}"

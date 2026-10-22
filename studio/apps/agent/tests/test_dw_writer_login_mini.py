@@ -142,7 +142,7 @@ def test_the_project_is_discovered_from_the_owner_url_host_not_typed(dw):
     r = run(dw)
     assert r.returncode == 0, r.stderr
     paths = [p for _, p, _, _ in dw.neon.requests]
-    assert "/api/v2/projects" in paths and f"/api/v2/projects/{PROJECT}/endpoints" in paths
+    assert "/api/v2/projects?limit=400" in paths and f"/api/v2/projects/{PROJECT}/endpoints" in paths
 
 
 # ---------------------------------------------------------------- refusals
