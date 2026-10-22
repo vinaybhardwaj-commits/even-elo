@@ -1,4 +1,4 @@
--- Column-scoped READ VIEWS for studio_cdmss_ro: schema cdmss_ro, 17 views over the CDMSS Neon database. Run ONLY as the
+-- Column-scoped READ VIEWS for studio_cdmss_ro: schema cdmss_ro, 16 views over the CDMSS Neon database. Run ONLY as the
 -- database OWNER over the DIRECT url, after 0001_cdmss_ro_role.sql, through ops/cdmss/run-cdmss-ro.sh. Idempotent
 -- (drops and recreates only its own views), ONE transaction. NOT RUN by the builder.
 --
@@ -54,7 +54,7 @@ DROP VIEW IF EXISTS cdmss_ro.readmission_finding;
 DROP VIEW IF EXISTS cdmss_ro.ams_formulary;
 DROP VIEW IF EXISTS cdmss_ro.lvc_rule;
 DROP VIEW IF EXISTS cdmss_ro.lvc_concept;
-DROP VIEW IF EXISTS cdmss_ro.lvc_rule_event;
+DROP VIEW IF EXISTS cdmss_ro.lvc_rule_event;  -- removed: lvc_rule_activation_events does not exist live (runtime-created, flag-gated); drop kept so a re-run cleans it
 DROP VIEW IF EXISTS cdmss_ro.gov_signal;
 DROP VIEW IF EXISTS cdmss_ro.ccb_brief;
 DROP VIEW IF EXISTS cdmss_ro.doctor_dim;
@@ -453,21 +453,18 @@ SELECT f.item_code, f.generic, f.generic_canon, f.dosage_form, f.major_grouping,
        f.audit_category, f.restricted, f.high_risk, f.lasa, f.ved
 FROM public.formulary f;
 
--- F9 LVC governance (rules, concepts, activation ledger). Not PHI. Rule `statement` is rule wording, not patient text.
+-- F9 LVC governance (rules, concepts). Not PHI. NOT here, checked against the live pre-check: lvc_recommendations.merged_into (migration
+-- 0041, not applied live, so no is_live either) and lvc_rule_activation_events (created at runtime by ensureRuleGovernanceTables, flag
+-- LVC_RULE_GOVERNANCE_ENABLED unset, so the table does not exist live). Re-add them after a pre-check shows the columns present. Rule `statement` is rule wording, not patient text.
 CREATE VIEW cdmss_ro.lvc_rule WITH (security_barrier = true) AS
-SELECT r.id AS rule_id, r.region, r.society, r.specialty, r.action_type, r.category, r.status, r.merged_into,
+SELECT r.id AS rule_id, r.region, r.society, r.specialty, r.action_type, r.category, r.status,
        r.source_release_year, r.proposed_by, r.ratified_by, r.ratified_at, r.created_at, r.updated_at,
-       (r.status = 'active' AND r.merged_into IS NULL) AS is_live,
        r.statement
 FROM public.lvc_recommendations r;
 
 CREATE VIEW cdmss_ro.lvc_concept WITH (security_barrier = true) AS
 SELECT c.concept_id, c.direction, c.action, c.target, c.n_strings, c.volume, c.review_lane, c.first_seen, c.last_seen
 FROM public.lvc_concepts c;
-
-CREATE VIEW cdmss_ro.lvc_rule_event WITH (security_barrier = true) AS
-SELECT e.id AS event_id, e.rule_ref, e.version, e.event, e.effective_at, e.ratified_by, e.created_at
-FROM public.lvc_rule_activation_events e;
 
 -- Worklists (V8): thread headers plus latest_response / ruling.
 CREATE VIEW cdmss_ro.gov_signal WITH (security_barrier = true) AS
