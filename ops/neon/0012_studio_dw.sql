@@ -81,21 +81,39 @@ REVOKE ALL ON SCHEMA studio_dw FROM PUBLIC;
 REVOKE ALL ON SCHEMA studio_dw FROM studio_gov_ro;
 GRANT USAGE ON SCHEMA studio_dw TO studio_dw_writer;
 
--- Provenance: one row per run. started_at/ended_at are the Mini's clock; db13_snapshot_now / db13_snapshot are
--- SELECT now() and pg_current_snapshot() taken INSIDE the read-only DB13 transaction ("DB13 as of <extract time>").
--- watermarks: {table: {"from": previous snapshot time or null, "to": this run's snapshot time}}; rows: per table.
+-- Provenance. One row per run (extract_runs) and one per table per run (extract_run_tables): each table is read in
+-- its OWN read-only DB13 transaction, so each has its own snapshot ("DB13 as of" is per table; extract_runs keeps the
+-- oldest). started/ended are the Neon clock; db13_snapshot_now / db13_snapshot are SELECT now() and
+-- pg_current_snapshot() taken inside that table's transaction. watermark_to of the latest ok row is the next
+-- incremental run's lower bound for that table (a timeout/failed/skipped table never advances it).
+-- run status: ok | partial (a table timed out or a large table was skipped) | failed | killed (signal).
 CREATE TABLE IF NOT EXISTS studio_dw.extract_runs (
   run_id uuid PRIMARY KEY,
   mode text NOT NULL CHECK (mode IN ('incremental', 'full')),
   started_at timestamptz NOT NULL,
   ended_at timestamptz,
-  status text NOT NULL CHECK (status IN ('running', 'ok', 'failed')),
+  status text NOT NULL CHECK (status IN ('running', 'ok', 'partial', 'failed', 'killed')),
   db13_snapshot_now timestamptz,
-  db13_snapshot text,
   rows jsonb,
-  watermarks jsonb,
   queries integer,
   error_class text
+);
+
+CREATE TABLE IF NOT EXISTS studio_dw.extract_run_tables (
+  run_id uuid NOT NULL REFERENCES studio_dw.extract_runs (run_id) ON DELETE CASCADE,
+  table_name text NOT NULL,
+  status text NOT NULL CHECK (status IN ('running', 'ok', 'timeout', 'skipped', 'failed', 'killed')),
+  started_at timestamptz,
+  ended_at timestamptz,
+  db13_snapshot_now timestamptz,
+  db13_snapshot text,
+  rows_read integer,
+  fetches integer,
+  txn_seconds numeric,
+  watermark_from timestamptz,
+  watermark_to timestamptz,
+  error_class text,
+  PRIMARY KEY (run_id, table_name)
 );
 
 CREATE TABLE IF NOT EXISTS studio_dw.individuals_prescriptions (
@@ -138,7 +156,7 @@ CREATE TABLE IF NOT EXISTS studio_dw.dpipe_prescription_diagnosis (
   "icd_code" text,
   _run_id uuid NOT NULL
 );
-CREATE INDEX IF NOT EXISTS dpipe_prescription_diagnosis_parent_id_idx ON studio_dw.dpipe_prescription_diagnosis ("_parent_id");
+CREATE INDEX IF NOT EXISTS dpipe_prescription_diagnosis_run_idx ON studio_dw.dpipe_prescription_diagnosis (_run_id);
 
 CREATE TABLE IF NOT EXISTS studio_dw.kx_ip_admissions (
   "_id" text PRIMARY KEY,
@@ -188,10 +206,6 @@ CREATE TABLE IF NOT EXISTS studio_dw.surgery_cases (
 
 CREATE TABLE IF NOT EXISTS studio_dw.doctors (
   "uid" text PRIMARY KEY,
-  "email" text,
-  "name_with_prefix" text,
-  "type" text,
-  "disabled" boolean,
   "karexpert_metadata__uid" text,
   "karexpert_metadata__practitioner_id" text,
   "karexpert_metadata__practitioner_id_by_hospital" jsonb,
@@ -203,44 +217,52 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA studio_dw TO studio
 
 -- 3. Column-scoped views for Studio (the ONLY thing studio_gov_ro reads of this data).
 CREATE OR REPLACE VIEW studio_ro.dw_individuals_prescriptions WITH (security_barrier = true) AS
-SELECT "_id", "_parent_id", "uid", "consult_uid", "kx_encounter_id", "doctor_uid", "timestamp", "uploaded_at", "is_draft", "type_of_prescription", "consult_type", "consult_types", "medications", "diagnosis_icd_codes", "impression_icd_codes", "further_investigation"
-FROM studio_dw.individuals_prescriptions;
+SELECT d."_id", d."_parent_id", d."uid", d."consult_uid", d."kx_encounter_id", d."doctor_uid", d."timestamp", d."uploaded_at", d."is_draft", d."type_of_prescription", d."consult_type", d."consult_types", d."medications", d."diagnosis_icd_codes", d."impression_icd_codes", d."further_investigation"
+FROM studio_dw.individuals_prescriptions d;
 
 CREATE OR REPLACE VIEW studio_ro.dw_dpipe_prescription_pipeline WITH (security_barrier = true) AS
-SELECT "presc_uid", "individual_uid", "age", "timestamp", "uploaded_at", "presc_is_draft", "consult_type", "diagnosis", "medicines", "further_investigation"
-FROM studio_dw.dpipe_prescription_pipeline;
+SELECT d."presc_uid", d."individual_uid", d."age", d."timestamp", d."uploaded_at", d."presc_is_draft", d."consult_type", d."diagnosis", d."medicines", d."further_investigation"
+FROM studio_dw.dpipe_prescription_pipeline d;
 
+-- Child table: replaced wholesale each run, so show only the newest run that finished ok.
 CREATE OR REPLACE VIEW studio_ro.dw_dpipe_prescription_diagnosis WITH (security_barrier = true) AS
-SELECT "_parent_id", "diagnosis", "icd_code"
-FROM studio_dw.dpipe_prescription_diagnosis;
+SELECT d."_parent_id", d."diagnosis", d."icd_code"
+FROM studio_dw.dpipe_prescription_diagnosis d
+WHERE d._run_id = (SELECT x.run_id FROM studio_dw.extract_run_tables x
+                   WHERE x.table_name = 'dpipe_prescription_diagnosis' AND x.status = 'ok' ORDER BY x.ended_at DESC LIMIT 1);
 
 CREATE OR REPLACE VIEW studio_ro.dw_kx_ip_admissions WITH (security_barrier = true) AS
-SELECT "_id", "uid", "encounter_id", "current_treating_doctor_id", "facility_name", "admission_date_time", "encounter_type"
-FROM studio_dw.kx_ip_admissions;
+SELECT d."_id", d."uid", d."encounter_id", d."current_treating_doctor_id", d."facility_name", d."admission_date_time", d."encounter_type"
+FROM studio_dw.kx_ip_admissions d;
 
 CREATE OR REPLACE VIEW studio_ro.dw_kx_discharged_completed_patients WITH (security_barrier = true) AS
-SELECT "_id", "uid", "encounter_id", "uhid", "encounter_type", "facility_name", "discharge_date", "treating_sub_department_name", "discharge_type_value", "admission_date_time", "status"
-FROM studio_dw.kx_discharged_completed_patients;
+SELECT d."_id", d."uid", d."encounter_id", d."uhid", d."encounter_type", d."facility_name", d."discharge_date", d."treating_sub_department_name", d."discharge_type_value", d."admission_date_time", d."status"
+FROM studio_dw.kx_discharged_completed_patients d;
 
 CREATE OR REPLACE VIEW studio_ro.dw_kx_billing_records WITH (security_barrier = true) AS
-SELECT "_id", "uid", "uhid", "patient_type", "bill_date_time"
-FROM studio_dw.kx_billing_records;
+SELECT d."_id", d."uid", d."uhid", d."patient_type", d."bill_date_time"
+FROM studio_dw.kx_billing_records d;
 
 CREATE OR REPLACE VIEW studio_ro.dw_surgery_cases WITH (security_barrier = true) AS
-SELECT "uid", "individual_uid", "status", "created_at", "prescribed_at", "planned_surgery_date", "hospital_info__hospital_uid"
-FROM studio_dw.surgery_cases;
+SELECT d."uid", d."individual_uid", d."status", d."created_at", d."prescribed_at", d."planned_surgery_date", d."hospital_info__hospital_uid"
+FROM studio_dw.surgery_cases d;
 
 CREATE OR REPLACE VIEW studio_ro.dw_doctors WITH (security_barrier = true) AS
-SELECT "uid", "email", "name_with_prefix", "type", "disabled", "karexpert_metadata__uid", "karexpert_metadata__practitioner_id", "karexpert_metadata__practitioner_id_by_hospital"
-FROM studio_dw.doctors;
+SELECT d."uid", d."karexpert_metadata__uid", d."karexpert_metadata__practitioner_id", d."karexpert_metadata__practitioner_id_by_hospital"
+FROM studio_dw.doctors d;
 
--- "DB13 as of <extract time>": the recent runs, no error text, no snapshot internals.
+-- "DB13 as of <extract time>": recent runs and their per-table snapshots; no error text, no snapshot internals.
 CREATE OR REPLACE VIEW studio_ro.dw_extract_status WITH (security_barrier = true) AS
 SELECT run_id, mode, status, started_at, ended_at, db13_snapshot_now, rows
 FROM (SELECT * FROM studio_dw.extract_runs ORDER BY started_at DESC LIMIT 30) r;
 
+CREATE OR REPLACE VIEW studio_ro.dw_extract_tables WITH (security_barrier = true) AS
+SELECT t.run_id, t.table_name, t.status, t.started_at, t.ended_at, t.db13_snapshot_now, t.rows_read, t.fetches, t.txn_seconds
+FROM studio_dw.extract_run_tables t
+WHERE t.run_id IN (SELECT run_id FROM studio_dw.extract_runs ORDER BY started_at DESC LIMIT 30);
+
 GRANT USAGE ON SCHEMA studio_ro TO studio_gov_ro;
-GRANT SELECT ON studio_ro.dw_extract_status, studio_ro.dw_individuals_prescriptions, studio_ro.dw_dpipe_prescription_pipeline, studio_ro.dw_dpipe_prescription_diagnosis, studio_ro.dw_kx_ip_admissions, studio_ro.dw_kx_discharged_completed_patients, studio_ro.dw_kx_billing_records, studio_ro.dw_surgery_cases, studio_ro.dw_doctors TO studio_gov_ro;
+GRANT SELECT ON studio_ro.dw_extract_status, studio_ro.dw_extract_tables, studio_ro.dw_individuals_prescriptions, studio_ro.dw_dpipe_prescription_pipeline, studio_ro.dw_dpipe_prescription_diagnosis, studio_ro.dw_kx_ip_admissions, studio_ro.dw_kx_discharged_completed_patients, studio_ro.dw_kx_billing_records, studio_ro.dw_surgery_cases, studio_ro.dw_doctors TO studio_gov_ro;
 
 -- 4. POST-CHECK (same transaction): any leak rolls everything back.
 DO $$
@@ -270,8 +292,9 @@ BEGIN
       RAISE EXCEPTION 'studio_gov_ro lost SELECT on studio_ro.dw_%: rolling back', t;
     END IF;
   END LOOP;
-  IF NOT has_table_privilege('studio_gov_ro', 'studio_ro.dw_extract_status'::regclass, 'SELECT') THEN
-    RAISE EXCEPTION 'studio_gov_ro cannot read studio_ro.dw_extract_status: rolling back';
+  IF NOT has_table_privilege('studio_gov_ro', 'studio_ro.dw_extract_status'::regclass, 'SELECT')
+     OR NOT has_table_privilege('studio_gov_ro', 'studio_ro.dw_extract_tables'::regclass, 'SELECT') THEN
+    RAISE EXCEPTION 'studio_gov_ro cannot read the studio_ro extract status views: rolling back';
   END IF;
   -- exact ACLs on the dw views (owner + studio_gov_ro SELECT only)
   SELECT string_agg(c.relname || ' -> ' || coalesce(pg_get_userbyid(NULLIF(a.grantee, 0)), 'PUBLIC'), ', ') INTO bad

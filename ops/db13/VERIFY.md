@@ -5,7 +5,7 @@ Run ONCE, before the first extract, on the Mini, after the Opus refute of the jo
     ops/db13/extract/run-extract.sh verify
 
 It opens ONE ssh tunnel and ONE connection from `ada.env` (values never printed), runs the job's own session setup
-(`BEGIN TRANSACTION READ ONLY ISOLATION LEVEL REPEATABLE READ`, `statement_timeout 60s`, `idle_in_transaction_session_timeout 30s`),
+(`BEGIN TRANSACTION READ ONLY ISOLATION LEVEL REPEATABLE READ`, `statement_timeout 60s`, `idle_in_transaction_session_timeout 5min`),
 then six checks, and prints PASS / FAIL / INFO lines only. Nothing else runs; the extract is NOT started.
 
 | # | Check (what it runs) | Expected output |

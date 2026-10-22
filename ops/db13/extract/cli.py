@@ -8,6 +8,7 @@ import fcntl
 import os
 import shlex
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -18,12 +19,13 @@ from pathlib import Path
 
 import psycopg
 
-from .job import Extract, ReadOnlyRefused, Throttle, in_offpeak_window, verify_session
+from .job import Extract, Killed, ReadOnlyRefused, Throttle, in_offpeak_window, verify_session
 
 HOME = Path.home()
 ADA_ENV = Path(os.environ.get("ADA_ENV_FILE", HOME / ".config/hrag/ada.env"))
 DW_DSN_FILE = Path(os.environ.get("STUDIO_DW_DSN_FILE", HOME / ".config/studio-dw-extract/writer-url"))
 STATE = HOME / ".config/studio-dw-extract"
+PEAK_FLAG = STATE / "ALLOW_PEAK"  # V creates this by hand; --i-know-its-peak needs it
 KILL_FLAG = STATE / "DISABLED"
 LOCK = STATE / "run.lock"
 NEEDED = ("ADA_HOST", "SSH_USER", "SSH_KEY", "PG_HOST", "PG_PORT", "PG_DB", "PG_USER", "PG_PASSWORD")
@@ -67,38 +69,58 @@ def tunnel_argv(cfg: Path) -> list[str]:
     return ["ssh", "-N", "-F", str(cfg), TUNNEL_HOST]
 
 
+PROBE_ATTEMPTS = 10
+
+
 @contextmanager
 def tunnel(env: dict):
-    """ONE ssh port-forward to ada. Command line holds hosts and key path, never a password."""
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    port = s.getsockname()[1]
-    s.close()
-    tmp = tempfile.mkdtemp(prefix="gov-studio-ssh-")  # 0700; holds a 0600 ssh config, removed on exit
-    cfg = Path(tmp) / "config"
-    fd = os.open(cfg, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(fd, "w") as f:
-        f.write(ssh_config(env, port))
-    p = subprocess.Popen(tunnel_argv(cfg), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    """ONE ssh port-forward to ada. Command line holds no host, user or password. Cleanup (child terminated, 0600
+    config removed) runs on every exit path, including SIGTERM/SIGHUP/SIGINT (they raise job.Killed)."""
+    p = None
+    tmp = tempfile.mkdtemp(prefix="gov-studio-ssh-")  # 0700; holds the 0600 ssh config
     try:
-        for _ in range(60):
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+        s.close()
+        cfg = Path(tmp) / "config"
+        fd = os.open(cfg, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(ssh_config(env, port))
+        p = subprocess.Popen(tunnel_argv(cfg), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        delay = 0.25
+        for _ in range(PROBE_ATTEMPTS):  # at most 10 raw connects, with backoff
             if p.poll() is not None:
                 raise RuntimeError("tunnel exited")
             try:
                 socket.create_connection(("127.0.0.1", port), 0.5).close()
                 break
             except OSError:
-                time.sleep(0.5)
+                time.sleep(delay)
+                delay = min(delay * 2, 4)
         else:
             raise RuntimeError("tunnel timeout")
         yield port
     finally:
-        p.terminate()
-        try:
-            p.wait(10)
-        except subprocess.TimeoutExpired:
-            p.kill()
+        if p is not None:
+            p.terminate()
+            try:
+                p.wait(10)
+            except subprocess.TimeoutExpired:
+                p.kill()
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def install_signal_handlers():
+    """SIGTERM/SIGHUP/SIGINT -> job.Killed so every finally block runs (ssh config removed, ssh child ended, connection
+    closed, run row marked killed). A second signal during cleanup is ignored."""
+    def on_signal(signum, frame):
+        for s in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+            signal.signal(s, signal.SIG_IGN)
+        raise Killed(signum)
+
+    old = {s: signal.signal(s, on_signal) for s in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)}
+    return lambda: [signal.signal(s, h) for s, h in old.items()]
 
 
 def db13_kwargs(env, port):
@@ -112,12 +134,22 @@ def db13_conn(env, port):
 
 
 def main(argv=None):
+    restore = []
+    try:
+        return _main(argv, restore)
+    finally:
+        for r in restore:
+            r()
+
+
+def _main(argv, restore):
     ap = argparse.ArgumentParser(prog="extract")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("scheduled", help="launchd entry: runs only inside 22:00-07:00 IST")
     r = sub.add_parser("run", help="on demand, any time, same caps")
     r.add_argument("--full", action="store_true", help="full refresh instead of incremental")
     r.add_argument("--tables", help="comma-separated subset")
+    r.add_argument("--i-know-its-peak", action="store_true", help="also read the large tables outside 22:00-07:00 IST; needs V's ALLOW_PEAK flag file")
     sub.add_parser("verify", help="first-session checks (VERIFY.md); no extract")
     a = ap.parse_args(argv)
 
@@ -127,7 +159,11 @@ def main(argv=None):
     if a.cmd == "scheduled" and not in_offpeak_window():
         print("outside the off-peak window; exiting")
         return 0
+    if getattr(a, "i_know_its_peak", False) and not PEAK_FLAG.exists():
+        print("refused: --i-know-its-peak needs V's flag file")
+        return 6
     STATE.mkdir(parents=True, exist_ok=True)
+    restore.append(install_signal_handlers())
     lock = open(LOCK, "w")
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -143,9 +179,13 @@ def main(argv=None):
             with psycopg.connect(DW_DSN_FILE.read_text().strip(), connect_timeout=15, autocommit=True) as dst:
                 run_id, counts = Extract(src, dst, throttle=Throttle()).run(
                     mode="full" if getattr(a, "full", False) else "incremental",
-                    tables=a.tables.split(",") if getattr(a, "tables", None) else None)
-        print(f"run {run_id} ok: " + " ".join(f"{k}={v}" for k, v in counts.items()))
+                    tables=a.tables.split(",") if getattr(a, "tables", None) else None,
+                    allow_peak=getattr(a, "i_know_its_peak", False))
+        print(f"run {run_id} done: " + " ".join(f"{k}={v}" for k, v in counts.items()))
         return 0
+    except Killed as k:
+        print("KILLED")
+        return 128 + k.args[0]
     except ReadOnlyRefused:
         print("REFUSED: DB13 session is not read-only")
         return 2

@@ -29,15 +29,15 @@ pytestmark = pytest.mark.skipif(importlib.util.find_spec("pgserver") is None, re
 K = {"individuals_prescriptions": "_id", "kx_ip_admissions": "_id", "kx_discharged_completed_patients": "_id", "kx_billing_records": "_id"}
 UUIDS = [str(uuid.UUID(int=i + 1)) for i in range(5)]
 EXTRA = {  # source-only columns: filter columns and sensitive columns the extract must never copy
-    "individuals_prescriptions": ["free_text text", "patient_details__allergies text"],
-    "dpipe_prescription_pipeline": ["name text", "mobile text", "membership_id text"],
+    "individuals_prescriptions": ["_update_time timestamptz", "free_text text", "patient_details__allergies text"],
+    "dpipe_prescription_pipeline": ["_update_time timestamptz", "name text", "mobile text", "membership_id text"],
     "kx_ip_admissions": ["modified_at timestamptz", "patient_name text", "patient_address text", "uhid text"],
     "kx_discharged_completed_patients": ["modified_at timestamptz", "patient_age text", "payer_type text"],
     "kx_billing_records": ["amount numeric", "net_amt numeric"],
     "surgery_cases": ["updated_at timestamptz", "financial__amount numeric"],
-    "doctors": ["mobile text", "bank_account__number text", "uploaded_proofs__pan text", "tariffs jsonb", "karexpert_metadata__mobile text"],
+    "doctors": ["email text", "name_with_prefix text", "type text", "disabled boolean", "mobile text", "bank_account__number text", "uploaded_proofs__pan text", "tariffs jsonb", "karexpert_metadata__mobile text"],
 }
-SENSITIVE = {"free_text", "patient_details__allergies", "name", "mobile", "membership_id", "patient_name", "patient_address", "patient_age",
+SENSITIVE = {"email", "name_with_prefix", "free_text", "patient_details__allergies", "name", "mobile", "membership_id", "patient_name", "patient_address", "patient_age",
              "payer_type", "amount", "net_amt", "financial__amount", "bank_account__number", "uploaded_proofs__pan", "tariffs",
              "karexpert_metadata__mobile"}
 SRC_TYPE = {"_id": "uuid", "uploaded_at": "timestamp"}  # native types differ from the destination on purpose
@@ -69,8 +69,8 @@ def url(server, user, db="postgres"):
 def seed_source(c):
     now = "now() - interval '2 days'"
     for i, u in enumerate(UUIDS):
-        c.execute(f"""INSERT INTO public."individuals-prescriptions" (_id,_parent_id,uid,doctor_uid,"timestamp",uploaded_at,is_draft,medications,
-                        diagnosis_icd_codes,consult_types,free_text) VALUES (%s,%s,%s,'d1',{now},{now},false,%s::jsonb,%s,%s,'SECRET')""",
+        c.execute(f"""INSERT INTO public."individuals-prescriptions" (_id,_parent_id,uid,doctor_uid,"timestamp",uploaded_at,_update_time,is_draft,medications,
+                        diagnosis_icd_codes,consult_types,free_text) VALUES (%s,%s,%s,'d1',{now},{now},{now},false,%s::jsonb,%s,%s,'SECRET')""",
                   [u, f"p{i}", f"u{i}", '[{"generic":"x"}]', ["M54.5"], ["opd"]])
         c.execute(f"""INSERT INTO public.kx_ip_admissions (_id,uid,encounter_id,current_treating_doctor_id,facility_name,admission_date_time,
                         encounter_type,modified_at,patient_name,uhid) VALUES (%s,%s,%s,'t1','Even-EHRC',{now},'ip_admission',{now},'PHI','UH1')""",
@@ -78,13 +78,13 @@ def seed_source(c):
         c.execute(f"""INSERT INTO public.kx_discharged_completed_patients (_id,uid,encounter_id,uhid,facility_name,discharge_date,status,modified_at)
                         VALUES (%s,%s,%s,'UH1','Even',{now},'completed',{now})""", [u, f"a{i}", f"e{i}"])
         c.execute(f"INSERT INTO public.kx_billing_records (_id,uid,uhid,patient_type,bill_date_time,amount) VALUES (%s,%s,'UH1','IP',{now},99)", [u, f"b{i}"])
-        c.execute(f"INSERT INTO public.dpipe_prescription_pipeline (presc_uid,individual_uid,age,uploaded_at,medicines,name,mobile) "
-                  f"VALUES (%s,'i1',{60 + i},{now},'[]'::jsonb,'PHI','999')", [f"rx{i}"])
+        c.execute(f"INSERT INTO public.dpipe_prescription_pipeline (presc_uid,individual_uid,age,uploaded_at,_update_time,medicines,name,mobile) "
+                  f"VALUES (%s,'i1',{60 + i},{now},{now},'[]'::jsonb,'PHI','SENT-7c1e')", [f"rx{i}"])
         c.execute("INSERT INTO public.dpipe_prescription_pipeline__diagnosis (_parent_id,diagnosis,icd_code) VALUES (%s,'LBP','M54.5'),(%s,'HA','R51')",
                   [f"rx{i}", f"rx{i}"])
         c.execute(f"INSERT INTO public.surgery_cases (uid,individual_uid,status,created_at,updated_at,planned_surgery_date,financial__amount) "
                   f"VALUES (%s,'i1','BOOKED',{now},{now},current_date,5)", [f"s{i}"])
-        c.execute("INSERT INTO public.doctors (uid,email,name_with_prefix,disabled,mobile,bank_account__number,tariffs) VALUES (%s,%s,'Dr X',false,'999','123','{}')",
+        c.execute("INSERT INTO public.doctors (uid,email,name_with_prefix,disabled,mobile,bank_account__number,tariffs) VALUES (%s,%s,'Dr X',false,'SENT-7c1e','123','{}')",
                   [f"d{i}", f"d{i}@x"])
 
 
@@ -126,7 +126,7 @@ def conns(clusters):
     dst = psycopg.connect(url(gov, "studio_dw_writer", "govdb"), autocommit=True)
     owner = psycopg.connect(url(gov, "gov_owner", "govdb"), autocommit=True)
     sup = psycopg.connect(db13.get_uri(), autocommit=True)
-    owner.execute("TRUNCATE " + ", ".join(f"studio_dw.{t.name}" for t in TABLES) + ", studio_dw.extract_runs")
+    owner.execute("TRUNCATE " + ", ".join(f"studio_dw.{t.name}" for t in TABLES) + ", studio_dw.extract_run_tables, studio_dw.extract_runs")
     yield src, dst, owner, sup
     for c in (src, dst, owner, sup):
         c.close()
@@ -175,7 +175,7 @@ def test_spec_has_no_sensitive_columns():
 def test_full_extract_end_to_end(conns):
     src, dst, owner, _ = conns
     x, _ = extractor(src, dst, batch_size=2)
-    run_id, counts = x.run(mode="full")
+    run_id, counts = x.run(allow_peak=True, mode="full")
     assert counts == {"individuals_prescriptions": 5, "dpipe_prescription_pipeline": 5, "dpipe_prescription_diagnosis": 10, "kx_ip_admissions": 5,
                       "kx_discharged_completed_patients": 5, "kx_billing_records": 5, "surgery_cases": 5, "doctors": 5}
     for t, n in counts.items():
@@ -187,49 +187,59 @@ def test_full_extract_end_to_end(conns):
     # no sensitive value anywhere in the destination
     for t in TABLES:
         dump = owner.execute(f"SELECT t::text FROM studio_dw.{t.name} t").fetchall()
-        assert not any(s in row[0] for row in dump for s in ("PHI", "SECRET", "999"))
+        assert not any(s in row[0] for row in dump for s in ("PHI", "SECRET", "SENT-7c1e"))
 
 
 def test_incremental_watermark(conns):
     src, dst, owner, sup = conns
     x, _ = extractor(src, dst, batch_size=2)
-    x.run(mode="incremental")  # no prior run: everything
+    x.run(allow_peak=True, mode="incremental")  # no prior run: everything
     assert count(owner, "kx_ip_admissions") == 5
     sup.execute("UPDATE public.kx_ip_admissions SET facility_name='Even-EHBR', modified_at=now()+interval '1 hour' WHERE uid='a2'")
     sup.execute("INSERT INTO public.kx_ip_admissions (_id,uid,encounter_id,modified_at) VALUES (%s,'a9','e9',now()+interval '1 hour')", [str(uuid.UUID(int=99))])
+    sup.execute("""UPDATE public."individuals-prescriptions" SET _update_time = now() + interval '1 hour' WHERE uid='u1'""")
     try:
-        _, counts = x.run(mode="incremental")
+        _, counts = x.run(allow_peak=True, mode="incremental")
         assert counts["kx_ip_admissions"] == 2  # only the changed + new row
-        assert counts["surgery_cases"] == 0 and counts["individuals_prescriptions"] == 0
+        assert counts["individuals_prescriptions"] == 1  # _update_time, not uploaded_at
+        assert counts["surgery_cases"] == 0
         assert counts["doctors"] == 5 and counts["dpipe_prescription_diagnosis"] == 10  # no watermark: always full
         assert owner.execute("SELECT facility_name FROM studio_dw.kx_ip_admissions WHERE uid='a2'").fetchone()[0] == "Even-EHBR"
         assert count(owner, "kx_ip_admissions") == 6
-        wm = owner.execute("SELECT watermarks FROM studio_dw.extract_runs WHERE status='ok' ORDER BY started_at DESC LIMIT 1").fetchone()[0]
-        assert wm["kx_ip_admissions"]["from"] and wm["kx_ip_admissions"]["to"]
+        f, to = owner.execute("SELECT watermark_from, watermark_to FROM studio_dw.extract_run_tables WHERE table_name='kx_ip_admissions' "
+                              "AND status='ok' ORDER BY started_at DESC LIMIT 1").fetchone()
+        assert f is not None and to is not None and to > f
     finally:
         sup.execute("DELETE FROM public.kx_ip_admissions WHERE uid='a9'")
         sup.execute("UPDATE public.kx_ip_admissions SET facility_name='Even-EHRC', modified_at=now() - interval '2 days' WHERE uid='a2'")
+        sup.execute("""UPDATE public."individuals-prescriptions" SET _update_time = now() - interval '2 days' WHERE uid='u1'""")
 
 
 def test_full_refresh_drops_vanished_rows(conns):
     src, dst, owner, sup = conns
     x, _ = extractor(src, dst, batch_size=3)
-    x.run(mode="full")
+    x.run(allow_peak=True, mode="full")
     sup.execute("INSERT INTO public.doctors (uid,email) VALUES ('gone','g@x')")
-    x.run(mode="full")
+    x.run(allow_peak=True, mode="full")
     assert count(owner, "doctors") == 6
     sup.execute("DELETE FROM public.doctors WHERE uid='gone'")
-    x.run(mode="full")
+    x.run(allow_peak=True, mode="full")
     assert count(owner, "doctors") == 5
 
 
 def test_provenance_rows(conns):
     src, dst, owner, _ = conns
-    x, _ = extractor(src, dst)
-    run_id, counts = x.run(mode="full")
-    r = owner.execute("SELECT status, mode, rows, db13_snapshot_now, db13_snapshot, queries, started_at, ended_at, error_class FROM studio_dw.extract_runs WHERE run_id=%s", [run_id]).fetchone()
-    assert r[0] == "ok" and r[1] == "full" and r[2] == counts and r[3] is not None and ":" in r[4] and r[5] > 8 and r[7] >= r[6] and r[8] is None
+    x, _ = extractor(src, dst, batch_size=2)
+    run_id, counts = x.run(allow_peak=True, mode="full")
+    r = owner.execute("SELECT status, mode, rows, db13_snapshot_now, queries, started_at, ended_at, error_class FROM studio_dw.extract_runs WHERE run_id=%s", [run_id]).fetchone()
+    assert r[0] == "ok" and r[1] == "full" and r[2] == counts and r[3] is not None and r[4] > 8 and r[6] >= r[5] and r[7] is None
+    tabs = {n: rest for n, *rest in owner.execute("SELECT table_name, status, rows_read, fetches, db13_snapshot, db13_snapshot_now, txn_seconds, watermark_to "
+                                                   "FROM studio_dw.extract_run_tables WHERE run_id=%s", [run_id])}
+    assert set(tabs) == {t.name for t in TABLES}
+    for n, (st, rows, fetches, snap, snow, secs, wto) in tabs.items():
+        assert st == "ok" and rows == counts[n] and fetches >= 2 and ":" in snap and snow is not None and secs is not None and wto == snow
     assert owner.execute("SELECT count(*) FROM studio_ro.dw_extract_status WHERE status='ok'").fetchone()[0] == 1
+    assert owner.execute("SELECT count(*) FROM studio_ro.dw_extract_tables").fetchone()[0] == 8
 
 
 def test_failure_stops_and_records_class_only(conns):
@@ -238,7 +248,7 @@ def test_failure_stops_and_records_class_only(conns):
     try:
         x, _ = extractor(src, dst)
         with pytest.raises(psycopg.errors.UndefinedColumn):
-            x.run(mode="full")
+            x.run(allow_peak=True, mode="full")
         r = owner.execute("SELECT status, error_class, rows FROM studio_dw.extract_runs").fetchone()
         assert r[0] == "failed" and r[1] == "UndefinedColumn" and "doctors" not in r[2]  # stopped at the first error
         assert src.info.transaction_status == psycopg.pq.TransactionStatus.IDLE  # source txn rolled back
@@ -247,20 +257,116 @@ def test_failure_stops_and_records_class_only(conns):
 
 
 def test_throttle_and_batching(conns):
-    src, dst, _, _ = conns
+    src, dst, owner, _ = conns
     x, ck = extractor(src, dst, batch_size=2)
-    x.run(mode="full")
+    x.run(allow_peak=True, mode="full")
     calls = x.throttle.calls
-    assert calls >= 30  # 5 rows / batch 2 over 8 tables
-    assert ck.t >= 0.5 * (calls - 1) - 1e-6  # <= 2 queries per second
+    assert calls >= 60  # session statements + DECLARE + every FETCH all count
+    assert ck.t >= 0.5 * (calls - 1) - 1e-6  # <= 2 statements per second
     assert min(ck.sleeps) > 0 and max(ck.sleeps) <= 0.5 + 1e-9
+    assert owner.execute("SELECT fetches FROM studio_dw.extract_run_tables WHERE table_name='doctors'").fetchone()[0] == 4  # 2+2+1+empty
     with pytest.raises(ValueError):
         job.Throttle(qps=3)
 
 
+def test_one_read_only_transaction_per_table(conns):
+    src, dst, owner, _ = conns
+    seen = []
+
+    class Spy:
+        def __init__(self, c):
+            self.c = c
+
+        def execute(self, sql, *a):
+            seen.append(sql.split()[0])
+            return self.c.execute(sql, *a)
+
+        def cursor(self, **k):
+            return self.c.cursor(**k)
+
+    x = job.Extract(Spy(src), dst, throttle=job.Throttle(clock=Clock().now, sleep=lambda s: None), log=lambda *_: None)
+    x.run(allow_peak=True, mode="full")
+    assert seen.count("BEGIN") == seen.count("COMMIT") == 8 and "ROLLBACK" not in seen
+    depth = 0
+    for s in seen:  # transactions never nest or overlap
+        depth += s == "BEGIN"
+        assert depth <= 1
+        depth -= s == "COMMIT"
+
+
+def test_table_over_the_limit_times_out_others_continue(conns):
+    src, dst, owner, _ = conns
+    ck = Clock()
+    x = job.Extract(src, dst, throttle=job.Throttle(clock=ck.now, sleep=ck.sleep), log=lambda *_: None, clock=ck.now,
+                    batch_size=1, max_txn_seconds=1.0)
+    run_id, counts = x.run(allow_peak=True, mode="full", tables=["individuals_prescriptions", "doctors"])
+    st = dict(owner.execute("SELECT table_name, status FROM studio_dw.extract_run_tables WHERE run_id=%s", [run_id]).fetchall())
+    assert set(st) == {"individuals_prescriptions", "doctors"} and st["individuals_prescriptions"] == "timeout"
+    assert owner.execute("SELECT status FROM studio_dw.extract_runs WHERE run_id=%s", [run_id]).fetchone()[0] == "partial"
+    assert "individuals_prescriptions" not in x.previous_watermarks()  # a timed-out table never advances its watermark
+    assert src.info.transaction_status == psycopg.pq.TransactionStatus.IDLE
+    assert job.MAX_TXN_SECONDS == 900  # default: no DB13 transaction longer than 15 minutes
+    ck2 = Clock()
+    y = job.Extract(src, dst, throttle=job.Throttle(clock=ck2.now, sleep=ck2.sleep), log=lambda *_: None, clock=ck2.now, batch_size=1, max_txn_seconds=1000)
+    rid, _ = y.run(allow_peak=True, mode="full", tables=["doctors"])
+    assert owner.execute("SELECT status FROM studio_dw.extract_runs WHERE run_id=%s", [rid]).fetchone()[0] == "ok"
+
+
+def test_large_tables_only_in_the_offpeak_window(conns):
+    src, dst, owner, _ = conns
+    x, _ = extractor(src, dst)
+    day = dt.datetime(2026, 10, 22, 14, 0, tzinfo=job.IST)
+    run_id, counts = x.run(mode="full", now=day)
+    skipped = {n for (n,) in owner.execute("SELECT table_name FROM studio_dw.extract_run_tables WHERE run_id=%s AND status='skipped'", [run_id])}
+    assert skipped == {t.name for t in TABLES if t.large} == {"individuals_prescriptions", "dpipe_prescription_pipeline", "dpipe_prescription_diagnosis", "kx_billing_records"}
+    assert set(counts) == {t.name for t in TABLES if not t.large}
+    assert owner.execute("SELECT status FROM studio_dw.extract_runs WHERE run_id=%s", [run_id]).fetchone()[0] == "partial"
+    assert count(owner, "individuals_prescriptions") == 0 and count(owner, "doctors") == 5
+    night = dt.datetime(2026, 10, 22, 23, 0, tzinfo=job.IST)
+    run_id, counts = x.run(mode="full", now=night)
+    assert set(counts) == {t.name for t in TABLES} and count(owner, "individuals_prescriptions") == 5
+
+
+def test_child_view_shows_only_the_latest_ok_run(conns):
+    src, dst, owner, _ = conns
+    x, _ = extractor(src, dst)
+    x.run(allow_peak=True, mode="full")
+    x.run(allow_peak=True, mode="full")
+    assert count(owner, "dpipe_prescription_diagnosis") == 10  # older run's rows deleted
+    assert owner.execute("SELECT count(*) FROM studio_ro.dw_dpipe_prescription_diagnosis").fetchone()[0] == 10
+    owner.execute("INSERT INTO studio_dw.dpipe_prescription_diagnosis (_parent_id, diagnosis, icd_code, _run_id) VALUES ('zz','x','y',gen_random_uuid())")
+    assert owner.execute("SELECT count(*) FROM studio_ro.dw_dpipe_prescription_diagnosis").fetchone()[0] == 10  # a run in progress is invisible
+
+
+def test_killed_run_is_recorded_and_rolled_back(conns):
+    src, dst, owner, _ = conns
+
+    class KillAt(job.Throttle):
+        def wait(self):
+            super().wait()
+            if self.calls == 17:
+                raise job.Killed(15)
+
+    ck = Clock()
+    x = job.Extract(src, dst, throttle=KillAt(clock=ck.now, sleep=ck.sleep), log=lambda *_: None)
+    with pytest.raises(job.Killed):
+        x.run(allow_peak=True, mode="full")
+    assert owner.execute("SELECT status, error_class FROM studio_dw.extract_runs").fetchone() == ("killed", "Killed")
+    assert "killed" in {s for (s,) in owner.execute("SELECT status FROM studio_dw.extract_run_tables")}
+    assert src.info.transaction_status == psycopg.pq.TransactionStatus.IDLE
+
+
+def test_idle_in_transaction_is_5_minutes_statement_timeout_60s(conns):
+    src, _, _, _ = conns
+    job.begin_read_only(job.Session(src, throttle=job.Throttle(clock=Clock().now, sleep=lambda s_: None)))
+    assert src.execute("SHOW idle_in_transaction_session_timeout").fetchone()[0] == "5min"
+    assert src.execute("SHOW statement_timeout").fetchone()[0] == "1min"
+    src.execute("ROLLBACK")
+
+
 def test_readonly_enforced(conns):
     src, dst, owner, _ = conns
-    job.begin_read_only(src)
+    job.begin_read_only(job.Session(src, throttle=job.Throttle(clock=Clock().now, sleep=lambda s: None)))
     with pytest.raises(psycopg.errors.ReadOnlySqlTransaction, match="cannot execute CREATE TABLE in a read-only transaction"):
         src.execute("CREATE TABLE public.nope (a int)")
     src.execute("ROLLBACK")
@@ -274,20 +380,20 @@ def test_readonly_enforced(conns):
             return self.c.execute(sql.replace("READ ONLY ISOLATION LEVEL REPEATABLE READ", "READ WRITE"), *a)
 
     w = NotReadOnly(src)
-    x = job.Extract(w, dst, log=lambda *_: None)
+    x = job.Extract(w, dst, log=lambda *_: None, throttle=job.Throttle(clock=Clock().now, sleep=lambda s: None))
     with pytest.raises(job.ReadOnlyRefused):
-        x.run(mode="full")
+        x.run(allow_peak=True, mode="full")
     assert not any("FROM public" in s for s in w.seen)  # no data query was sent
-    assert count(owner, "extract_runs") == 0  # and no run row
+    assert owner.execute("SELECT status, error_class FROM studio_dw.extract_runs").fetchone() == ("failed", "ReadOnlyRefused")
 
 
 def test_verify_session(conns):
     src, _, _, _ = conns
     lines = []
-    assert job.verify_session(src, "ro_user", log=lines.append) is True
+    assert job.verify_session(src, "ro_user", log=lines.append, throttle=job.Throttle(clock=Clock().now, sleep=lambda s: None)) is True
     assert len(lines) == 6 and sum(l.startswith("PASS") for l in lines) == 5 and sum(l.startswith("INFO") for l in lines) == 1
     lines.clear()
-    assert job.verify_session(src, "someone_else", log=lines.append) is False
+    assert job.verify_session(src, "someone_else", log=lines.append, throttle=job.Throttle(clock=Clock().now, sleep=lambda s: None)) is False
     assert sum(l.startswith("FAIL") for l in lines) == 1
 
 
@@ -390,10 +496,22 @@ def test_launchd_plist_and_runner():
 
 # ---- fable conditions (22 Oct 14:30): pinned queries, application_name, no credentials leaking ----------------------
 
-def test_every_column_has_a_metric_id():
+CATALOGUE = set("""M-AMS-01 M-AMS-02 M-AMS-03 M-AMS-04 M-AMS-05 M-DOC-01 M-IPD-01 M-IPD-02 M-IPD-03 M-IPD-04 M-LVC-01 M-LVC-02 M-LVC-03
+M-OPD-01 M-OPD-02 M-OPD-03 M-OPD-04 M-OPD-05 M-OPD-06 M-OPD-07 M-OPD-08 M-OPD-09 M-OPD-10 M-OPD-11 M-OPD-12 M-OPD-13 M-OPD-14
+M-OPD-15 M-OPD-16 M-OT-01 M-PRE-01 M-PRE-02 M-PRE-03 M-PRE-04 M-PRE-05 M-PRE-06 M-PRE-07 M-PRE-08 M-RDM-01 M-RDM-02 M-RDM-03
+M-RDM-04 M-STAY-01""".split())
+
+
+def test_every_column_has_real_catalogue_metric_ids():
     for t in TABLES:
         for c in t.cols:
-            assert c.metrics.strip(), (t.name, c.name)
+            ids_ = [i for i in c.metrics.split(",") if i]
+            assert set(ids_) <= CATALOGUE, (t.name, c.name, c.metrics)  # nothing but catalogue ids
+            if not ids_:
+                assert c.purpose.startswith("key"), (t.name, c.name)  # only technical keys may lack one
+            else:
+                assert c.purpose, (t.name, c.name)  # why it is there lives in purpose
+    assert not {c.name for t in TABLES for c in t.cols} & {"email", "name_with_prefix"}
 
 
 def test_manifest_matches_spec_and_hashes_every_query():
@@ -417,24 +535,30 @@ def test_modified_query_is_refused_before_it_reaches_db13(conns, monkeypatch):
             seen.append(sql)
             return self.c.execute(sql, *a)
 
-    orig = queries.rows_sql
-    monkeypatch.setattr(queries, "rows_sql", lambda *a, **k: orig(*a, **k) + " -- sneaky")
+        def cursor(self, **k):
+            raise AssertionError("cursor opened for an unpinned query")
+
+    orig = queries.cursor_sql
+    monkeypatch.setattr(queries, "cursor_sql", lambda *a, **k: orig(*a, **k) + " -- sneaky")
     x = job.Extract(Spy(src), dst, throttle=job.Throttle(clock=Clock().now, sleep=lambda s: None), log=lambda *_: None)
     with pytest.raises(job.QueryNotPinned) as e:
-        x.run(mode="full", tables=["doctors"])
+        x.run(allow_peak=True, mode="full", tables=["doctors"])
     assert "sneaky" not in str(e.value) and "FROM" not in str(e.value)
-    assert not any("sneaky" in s or "public.\"doctors\"" in s for s in seen)  # never sent
+    assert not any("sneaky" in s for s in seen)  # never sent
     assert owner.execute("SELECT status FROM studio_dw.extract_runs").fetchone()[0] == "failed"
+    assert src.info.transaction_status == psycopg.pq.TransactionStatus.IDLE
 
 
 def test_manifest_missing_a_hash_refuses(conns):
     src, dst, _, _ = conns
-    pinned = manifest.load() - {queries.sha(queries.count_sql(BY_NAME["doctors"]))}
-    x = job.Extract(src, dst, pinned=pinned, log=lambda *_: None, throttle=job.Throttle(clock=Clock().now, sleep=lambda s: None))
-    x.run(mode="full", tables=["doctors"])  # data queries are pinned
-    job.begin_read_only(src)
+    mk = lambda drop: job.Session(src, manifest.load() - {queries.sha(drop)}, job.Throttle(clock=Clock().now, sleep=lambda s: None))
+    # a session statement that is not pinned is refused too (they go through the same check as data queries)
+    x = job.Extract(mk(queries.SET_IDLE_SQL), dst, log=lambda *_: None)
     with pytest.raises(job.QueryNotPinned):
-        job._pinned(queries.count_sql(BY_NAME["doctors"]).replace("count(*)", "count(1)"))
+        x.run(allow_peak=True, mode="full", tables=["doctors"])
+    src.execute("ROLLBACK")
+    with pytest.raises(job.QueryNotPinned):
+        job.verify_session(mk(queries.count_sql(BY_NAME["doctors"])), "ro_user", log=lambda *_: None)
     src.execute("ROLLBACK")
 
 
@@ -502,6 +626,9 @@ def test_password_never_in_logs_argv_or_rows(clusters, tmp_path, monkeypatch, ca
     monkeypatch.setattr(cli, "STATE", state)
     monkeypatch.setattr(cli, "LOCK", state / "run.lock")
     monkeypatch.setattr(cli, "KILL_FLAG", state / "DISABLED")
+    monkeypatch.setattr(cli, "PEAK_FLAG", state / "ALLOW_PEAK")
+    state.mkdir()
+    (state / "ALLOW_PEAK").write_text("")
     popen_args = []
     monkeypatch.setattr(cli.subprocess, "Popen", lambda *a, **k: popen_args.append((a, k)))
 
@@ -516,10 +643,11 @@ def test_password_never_in_logs_argv_or_rows(clusters, tmp_path, monkeypatch, ca
         return psycopg.connect(url(db13, "ro_user"), application_name=captured["kw"]["application_name"], autocommit=True)
 
     monkeypatch.setattr(cli, "tunnel", fake_tunnel)
+    monkeypatch.setattr(cli, "Throttle", lambda: job.Throttle(clock=Clock().now, sleep=lambda s: None))
     monkeypatch.setattr(cli, "db13_conn", fake_conn)
     with psycopg.connect(url(gov, "gov_owner", "govdb"), autocommit=True) as o:
-        o.execute("TRUNCATE " + ", ".join(f"studio_dw.{t.name}" for t in TABLES) + ", studio_dw.extract_runs")
-        assert cli.main(["run", "--full"]) == 0
+        o.execute("TRUNCATE " + ", ".join(f"studio_dw.{t.name}" for t in TABLES) + ", studio_dw.extract_run_tables, studio_dw.extract_runs")
+        assert cli.main(["run", "--full", "--i-know-its-peak"]) == 0
         # a failing run too: only the class is printed
         with psycopg.connect(db13.get_uri(), autocommit=True) as sup:
             sup.execute("ALTER TABLE public.surgery_cases RENAME COLUMN status TO status_x")
@@ -536,3 +664,102 @@ def test_password_never_in_logs_argv_or_rows(clusters, tmp_path, monkeypatch, ca
             dump += " " + (o.execute(f"SELECT coalesce(string_agg(t::text, ' '), '') FROM studio_dw.{tb.name} t").fetchone()[0])
         assert pw not in dump and "ada.invalid" not in dump and "10.0.0.5" not in dump
     assert pw not in repr(popen_args)
+
+
+def test_probe_is_at_most_10_connects(monkeypatch):
+    attempts = []
+
+    class FakeProc:
+        terminated = False
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            FakeProc.terminated = True
+
+        def wait(self, *_):
+            pass
+
+    def refuse(*a, **k):
+        attempts.append(1)
+        raise OSError("nope")
+
+    sleeps, cfgs = [], []
+    monkeypatch.setattr(cli.subprocess, "Popen", lambda argv, **k: cfgs.append(Path(argv[argv.index("-F") + 1])) or FakeProc())
+    monkeypatch.setattr(cli.socket, "create_connection", refuse)
+    monkeypatch.setattr(cli.time, "sleep", sleeps.append)
+    with pytest.raises(RuntimeError):
+        with cli.tunnel(ENV):
+            pass
+    assert len(attempts) == cli.PROBE_ATTEMPTS == 10 and sleeps == sorted(sleeps) and max(sleeps) <= 4
+    assert FakeProc.terminated and not cfgs[0].exists() and not cfgs[0].parent.exists()
+
+
+def test_peak_override_needs_the_flag_file(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "KILL_FLAG", tmp_path / "DISABLED")
+    monkeypatch.setattr(cli, "PEAK_FLAG", tmp_path / "ALLOW_PEAK")
+    assert cli.main(["run", "--i-know-its-peak"]) == 6
+    assert "flag file" in capsys.readouterr().out
+
+
+FAKE_SSH = """#!{py}
+import os, socket, sys
+cfg = sys.argv[sys.argv.index("-F") + 1]
+port = int([l for l in open(cfg) if "LocalForward" in l][0].split()[1].split(":")[1])
+open(os.environ["FAKE_SSH_PID"], "w").write(str(os.getpid()))
+s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("127.0.0.1", port)); s.listen(5)
+conns = []
+while True:  # accept and never answer: the client hangs in its startup handshake
+    conns.append(s.accept()[0])
+"""
+
+
+@pytest.mark.parametrize("sig", ["SIGTERM", "SIGHUP", "SIGINT"])
+def test_signals_clean_up_ssh_config_and_child(tmp_path, sig):
+    import os
+    import signal
+    import subprocess
+    import time as _t
+
+    sg = getattr(signal, sig)
+    bin_dir, tmpdir, home = tmp_path / "bin", tmp_path / "tmp", tmp_path / "home"
+    for d in (bin_dir, tmpdir, home):
+        d.mkdir()
+    ssh = bin_dir / "ssh"
+    ssh.write_text(FAKE_SSH.format(py=sys.executable))
+    ssh.chmod(0o755)
+    env_file = tmp_path / "ada.env"
+    env_file.write_text("\n".join(f"{k}={v}" for k, v in ENV.items()) + "\n")
+    env_file.chmod(0o600)
+    pidfile = tmp_path / "ssh.pid"
+    env = {"PATH": f"{bin_dir}:{os.environ['PATH']}", "HOME": str(home), "TMPDIR": str(tmpdir), "ADA_ENV_FILE": str(env_file),
+           "FAKE_SSH_PID": str(pidfile)}
+    p = subprocess.Popen([sys.executable, "-m", "extract.cli", "run"], cwd=DB13, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    try:
+        for _ in range(100):
+            if pidfile.exists() and pidfile.read_text():
+                break
+            _t.sleep(0.1)
+        else:
+            pytest.fail("fake ssh never started")
+        _t.sleep(1.5)  # the job is now connecting through the tunnel
+        assert list(tmpdir.glob("gov-studio-ssh-*")), "ssh config should exist while running"
+        child = int(pidfile.read_text())
+        p.send_signal(sg)
+        out, _ = p.communicate(timeout=30)
+    finally:
+        if p.poll() is None:
+            p.kill()
+    assert p.returncode == 128 + sg, out
+    assert "KILLED" in out and ENV["PG_PASSWORD"] not in out
+    assert not list(tmpdir.glob("gov-studio-ssh-*"))  # config gone
+    for _ in range(50):  # no orphaned ssh
+        try:
+            os.kill(child, 0)
+        except ProcessLookupError:
+            break
+        _t.sleep(0.1)
+    else:
+        os.kill(child, signal.SIGKILL)
+        pytest.fail("ssh child still alive")
