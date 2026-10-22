@@ -11,5 +11,11 @@ fi
 if ! systemctl is-active --quiet studio-proxy.service; then
   echo "guard: studio-proxy.service inactive; stopping studio-agent"
   systemctl stop studio-agent.service
+  exit 0
+fi
+# the agent's only path out is agent -> pre-filter -> squid; without the ClientHello pre-filter it must not run
+if ! systemctl is-active --quiet studio-prefilter.service; then
+  echo "guard: studio-prefilter.service inactive; stopping studio-agent"
+  systemctl stop studio-agent.service
 fi
 exit 0

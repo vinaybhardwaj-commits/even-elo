@@ -4,6 +4,8 @@
 # plus two containers acting as fake Neon endpoints (real PostgreSQL 16 with TLS, certificates from a test CA, names
 # neonstub.test = the configured endpoint and neonstub2.test = a second endpoint with valid credentials that must stay
 # unreachable) and a dnsmasq in the first one as the DNS server.
+# R3-3 additions: ClientHello pre-filter (studio-ech-prefilter.py) in front of Squid: synthetic hellos with ECH extensions and malformed
+# hellos are dropped, a normal hello gets a real TLS handshake, Squid logs terminations with bytes, post-session-check tallies them.
 # Runs: install x3, hosts-block removal, pins, stale-IP refresh, parallel refresh, squid SNI allowlist (R5-A), pgbouncer
 # relay with verify-full + endpoint pinning (R5-B), sandbox probes (probe unit = copy of the live unit), fail-closed + guard,
 # boot-time Neon retry, upgrade, bad/slow releases (revert), 5 back-to-back installs, post-session check, rollback x2, purge.
@@ -51,7 +53,7 @@ for n in neonstub.test neonstub2.test neonstub6.test; do
   printf 'subjectAltName=DNS:%s' "$n" >"$PKI/$n.ext"
   openssl x509 -req -in "$PKI/$n.csr" -CA "$PKI/ca.crt" -CAkey "$PKI/ca.key" -CAcreateserial -out "$PKI/$n.crt" -days 3 -extfile "$PKI/$n.ext" 2>/dev/null
 done
-mkstub() { # mkstub CONTAINER CERTNAME ENDPOINT_ID  -> a PostgreSQL 16 with TLS; roles take the Neon "endpoint=<id>$password" form
+mkstub() { # mkstub CONTAINER CERTNAME ENDPOINT_ID  -> a PostgreSQL 16 with TLS; roles take the plain password (the relay sends it with SNI; Neon rejects the endpoint= form then, 21 Oct)
   docker run -d --name "$1" --cap-add NET_ADMIN "$IMG" sleep infinity >/dev/null || return 1
   docker exec "$1" mkdir -p /etc/ssl/pg
   docker cp "$PKI/$2.crt" "$1:/etc/ssl/pg/server.crt"; docker cp "$PKI/$2.key" "$1:/etc/ssl/pg/server.key"
@@ -62,8 +64,8 @@ mkstub() { # mkstub CONTAINER CERTNAME ENDPOINT_ID  -> a PostgreSQL 16 with TLS;
     pg_ctlcluster 16 main start && sleep 2'
   # SQL on stdin: a password in argv would end up in the journal as the _CMDLINE of runuser's PAM session message
   docker exec -i "$1" runuser -u postgres -- psql -q <<SQL
-create role neon_gov login password 'endpoint=$3\$govpw';
-create role neon_studio login password 'endpoint=$3\$studiopw';
+create role neon_gov login password 'govpw';
+create role neon_studio login password 'studiopw';
 create database govdb owner neon_gov;
 create database studiodb owner neon_studio;
 SQL
@@ -99,7 +101,7 @@ x 'chown postgres:postgres /etc/ssl/pg/server.*; chmod 600 /etc/ssl/pg/server.ke
    ip -6 addr add fd00:6::1/128 dev lo
    pg_ctlcluster 16 main restart && sleep 3' || echo "v6 stub start failed"
 xi 'runuser -u postgres -- psql -q' <<'SQL' || echo "v6 stub setup failed"
-create role neon_gov6 login password 'endpoint=neonstub6$govpw';
+create role neon_gov6 login password 'govpw';
 create database govdb6 owner neon_gov6;
 SQL
 docker cp "$PKI/ca.crt" "$C:/usr/local/share/ca-certificates/studio-ops-test-ca.crt"
@@ -157,6 +159,7 @@ check "no decryption configured (no bump action); exact names only, no regex, no
 api.typesafe.ai" ]'
 check "squid cannot read the agent tree" '! runuser -u proxy -- ls /opt/studio-agent >/dev/null 2>&1 && ! runuser -u proxy -- cat /etc/studio-agent/env >/dev/null 2>&1'
 check "proxy listens on 127.0.0.1:8888 only" '[ "$(ss -ltn | grep -c ":8888 ")" = 1 ] && ss -ltn | grep -q "127.0.0.1:8888 "'
+check "R3-3.1: :8888 is the ClientHello pre-filter (own uid studio-prefilter), squid moved to 127.0.0.1:8889 (uid proxy)" '[ "$(ps -o user= -p $(systemctl show studio-prefilter -p MainPID --value) | tr -d " ")" = studio-prefilter ] && [ "$(ss -ltn | grep -c ":8888 ")" = 1 ] && tr "\0" " " </proc/$(systemctl show studio-prefilter -p MainPID --value)/cmdline | grep -q studio-ech-prefilter && [ "$(ss -ltn | grep -c ":8889 ")" = 1 ] && ss -ltn | grep -q "127.0.0.1:8889 " && grep -q "^http_port 127.0.0.1:8889 " /etc/studio-proxy/squid.conf && ! grep -q ":8888" /etc/studio-proxy/squid.conf'
 check "nft table present" 'nft list table inet studio_agent'
 check "pins file {host:[ips]} 0640 root:studio-agent" "[ \"\$(stat -c '%a %U:%G' /run/studio-agent/neon-pins.json)\" = '640 root:studio-agent' ] && python3 -c 'import json,sys; d=json.load(open(\"/run/studio-agent/neon-pins.json\")); sys.exit(0 if d[\"$NEON\"]==[\"$NEONIP\"] and d[\"neonstub6.test\"]==[\"fd00:6::1\"] else 1)'"
 check "/etc/hosts has no studio block" '! grep -q studio-agent-neon /etc/hosts'
@@ -187,7 +190,7 @@ check "agent IPAddressAllow = 127.0.0.1/32 + the broker (no Neon address, not 12
 check "relay IPAddressAllow = 127.0.0.1/32 + neon pin" "a=\$(systemctl show studio-pgrelay -p IPAddressAllow --value); grep -q '127.0.0.1' <<<\"\$a\" && grep -q '$NEONIP' <<<\"\$a\""
 check "relay active as studio-pgrelay on 127.0.0.1:6432 only" '[ "$(ps -o user= -C pgbouncer | head -1 | tr -d " ")" = studio-pgrelay ] && [ "$(ss -ltn | grep -c ":6432 ")" = 1 ] && ss -ltn | grep -q "127.0.0.1:6432 "'
 check "agent env points at the relay, holds no Neon host or credential" 'grep -q "^GOV_RO_DATABASE_URL=postgresql://agent_gov:.*@127.0.0.1:6432/gov" /etc/studio-agent/env && grep -q "^STUDIO_DATABASE_URL=postgresql://agent_studio:.*@127.0.0.1:6432/studio" /etc/studio-agent/env && ! grep -Eq "neonstub|govpw|studiopw|endpoint=" /etc/studio-agent/env && ! tr "\0" "\n" </proc/$(systemctl show studio-agent -p MainPID --value)/environ | grep -Eq "neonstub|govpw|studiopw|endpoint="'
-for u in studio-agent studio-proxy studio-pgrelay; do
+for u in studio-agent studio-proxy studio-prefilter studio-pgrelay; do
   x "systemd-analyze security $u --no-pager | tail -1" | sed "s/^/     security: /"
   check "security score $u <= 3.0" "awk -v s=\"\$(systemd-analyze security $u --no-pager | tail -1 | grep -o '[0-9.]*' | head -1)\" 'BEGIN{exit !(s<=3.0)}'"
 done
@@ -237,7 +240,7 @@ check "IP-literal CONNECT is refused (v4)" "! $AS curl -s -m 8 -x http://127.0.0
 check "IP-literal CONNECT is refused (v6)" "! $AS curl -s -m 8 -x http://127.0.0.1:8888 'https://[2606:4700:4700::1111]/' -o /dev/null"
 check "no Google host is allowlisted (Host fronting): oauth2/iamcredentials/sts/storage.googleapis.com refused" "for h in oauth2 iamcredentials sts storage us-central1-aiplatform; do ! $AS curl -s -m 8 -x http://127.0.0.1:8888 https://\$h.googleapis.com/ -o /dev/null || exit 1; done"
 check "B1: spoofed PTR (1.1.1.1 -> api.typesafe.ai) does not turn an IP literal into an allowlisted name: TCP_DENIED, no handshake" "x=\$(timeout 15 $SCL -connect 1.1.1.1:443 -servername api.typesafe.ai </dev/null 2>&1); ! grep -q 'subject=' <<<\"\$x\" && ! grep -q 'studio-proxy-splice-only' <<<\"\$x\" && sleep 1 && journalctl -t squid --no-pager -o cat | grep -q 'TCP_DENIED.*CONNECT 1.1.1.1:443'"
-check "m3/m4: a denied CONNECT gets a plain reset: no '200 Connection established', no TLS with splice-only.pem" "o=\$($AS curl -s -m 8 -x http://127.0.0.1:8888 -v https://example.org/ -o /dev/null 2>&1); ! grep -q '< HTTP/1.1 200' <<<\"\$o\" && grep -qi 'reset\\|Recv failure\\|Empty reply' <<<\"\$o\""
+check "m3/m4: a denied CONNECT gets a plain reset: no '200 Connection established', no TLS with splice-only.pem" "o=\$($AS curl -s -m 8 -x http://127.0.0.1:8888 -v https://example.org/ -o /dev/null 2>&1); ! grep -q '< HTTP/1.1 200' <<<\"\$o\" && grep -qi 'reset\\|Recv failure\\|Empty reply\\|CONNECT aborted' <<<\"\$o\""
 check "control: the PTR really is spoofed for the proxy host" "dig +short -x 1.1.1.1 | grep -q 'api.typesafe.ai'"
 if [ "$INTERNET" = 1 ]; then
   APIIP=$(x "dig +short api.typesafe.ai | head -1")
@@ -248,6 +251,40 @@ if [ "$INTERNET" = 1 ]; then
   check "CONNECT bedrock-runtime.ap-south-1 with its own SNI -> spliced (a named destination)" "timeout 20 $SCL -connect bedrock-runtime.ap-south-1.amazonaws.com:443 -servername bedrock-runtime.ap-south-1.amazonaws.com </dev/null 2>&1 | grep -q 'subject='"
   check "allowlisted host via curl" "$AS curl -s -m 15 -o /dev/null -w '%{http_code}' -x http://127.0.0.1:8888 https://api.typesafe.ai/ | grep -qv 000"
 else echo "skip: allowlisted-host and SNI-mismatch checks need internet from the container"; fi
+echo "--- A2 (R3-3.1): ClientHello pre-filter, synthetic bytes"
+x 'install -d -m 0755 /usr/local/share/pftest && cp /root/asus/test_prefilter.py /root/asus/studio-ech-prefilter.py /usr/local/share/pftest/ && chmod 0644 /usr/local/share/pftest/*'
+PFC="$AS python3 -I /usr/local/share/pftest/test_prefilter.py client 8888"
+check "parser unit tests (synthetic hellos: ECH 0xfe0d/0xfe02/0xff02, fragmented, malformed, every prefix) pass in the container" 'python3 -I /usr/local/share/pftest/test_prefilter.py 2>&1 | tail -3 | grep -q "^OK"'
+check "agent uid reaches the pre-filter (:8888) but NOT squid directly (:8889)" "$AS timeout 5 bash -c '</dev/tcp/127.0.0.1/8888' && ! $AS timeout 5 bash -c '</dev/tcp/127.0.0.1/8889'"
+check "squid reached directly bypasses nothing for the agent: CONNECT to :8889 as the agent uid fails" "! $AS curl -s -m 6 -x http://127.0.0.1:8889 https://api.typesafe.ai/ -o /dev/null"
+check "non-CONNECT first bytes on :8888 are dropped (fail closed), logged" "printf 'GET http://api.typesafe.ai/ HTTP/1.1\\r\\nHost: api.typesafe.ai\\r\\n\\r\\n' | timeout 8 $AS nc 127.0.0.1 8888 | wc -c | grep -qx 0 && sleep 1 && journalctl -u studio-prefilter --no-pager -o cat | grep -q 'prefilter drop reason=not-connect'"
+check "a denied CONNECT (non-allowlisted host) still gets Squid's reset through the pre-filter (no 200)" "[ \"\$($PFC example.org:443 plain)\" = refused ]"
+x 'journalctl -t squid --no-pager -o cat | grep -c "TCP_TUNNEL" >/root/tun.before; true'
+for k in ech ech-draft02 ech-draftff02 fragmented; do
+  check "synthetic ClientHello kind=$k (outer SNI api.typesafe.ai, ECH extension): connection dropped, nothing from the far side" "[ \"\$($PFC api.typesafe.ai:443 $k)\" = dropped ]"
+done
+for k in garbage oversize dup; do
+  check "malformed hello kind=$k: dropped" "[ \"\$($PFC api.typesafe.ai:443 $k)\" = dropped ]"
+done
+check "malformed hello kind=truncated (stalls): dropped at the 10 s hello timeout" "[ \"\$($PFC api.typesafe.ai:443 truncated)\" = dropped ]"
+check "pre-filter log names each reason (ech with the extension id, malformed, hello-timeout) and the target, no payload" "j=\$(journalctl -u studio-prefilter --no-pager -o cat); grep -q 'prefilter drop reason=ech target=api.typesafe.ai:443 ext=0xfe0d' <<<\"\$j\" && grep -q 'ext=0xfe02' <<<\"\$j\" && grep -q 'ext=0xff02' <<<\"\$j\" && grep -q 'reason=malformed:not-handshake-record' <<<\"\$j\" && grep -q 'reason=malformed:duplicate-extension' <<<\"\$j\" && grep -q 'reason=hello-timeout' <<<\"\$j\""
+check "dropped hellos never became a tunnel at squid (no new TCP_TUNNEL line)" "sleep 2; [ \"\$(journalctl -t squid --no-pager -o cat | grep -c TCP_TUNNEL)\" = \"\$(cat /root/tun.before)\" ]"
+if [ "$INTERNET" = 1 ]; then
+  check "synthetic hello WITHOUT ECH to the allowed name passes the pre-filter: the far side answers (TLS record back)" "r=\$($PFC api.typesafe.ai:443 plain); [[ \$r == reply:* ]]"
+  check "synthetic hello with no extensions at all is not dropped by the pre-filter (cannot carry ECH; the far side may still refuse it)" "n=\$(journalctl -u studio-prefilter --no-pager -o cat | grep -c 'prefilter drop'); $PFC api.typesafe.ai:443 noext >/dev/null; sleep 1; [ \"\$(journalctl -u studio-prefilter --no-pager -o cat | grep -c 'prefilter drop')\" = \"\$n\" ]"
+  check "F1: clean first hello and a SECOND hello with ECH 0xfe0d sent straight behind it on the same tunnel: dropped (HRR CH2, N1 and the TLS 1.2 false drop are covered by the in-process stub-server tests run above)" "[ \"\$($PFC api.typesafe.ai:443 pipe-ech)\" = dropped ] && sleep 1 && journalctl -u studio-prefilter --no-pager -o cat | grep -Eq 'prefilter drop reason=(ech target=api.typesafe.ai:443 ext=0xfe0d phase=after-first-hello|malformed:trailing-bytes)'"
+  check "F3: the agent's own venv Python (httpx / ssl, X25519MLKEM768-era hello) through the pre-filter gets an HTTP status from api.typesafe.ai" "$AS env HTTPS_PROXY=http://127.0.0.1:8888 NO_PROXY=127.0.0.1 /opt/studio-agent/current/venv/bin/python -c 'import httpx,sys; r=httpx.get(\"https://api.typesafe.ai/\", timeout=20); print(r.status_code); sys.exit(0 if r.status_code else 1)'"
+  check "F3: ... and botocore/urllib3 to Bedrock (unsigned: 403 is the expected application answer)" "$AS env HTTPS_PROXY=http://127.0.0.1:8888 AWS_EC2_METADATA_DISABLED=true /opt/studio-agent/current/venv/bin/python -c 'import urllib3,sys; r=urllib3.ProxyManager(\"http://127.0.0.1:8888\").request(\"GET\",\"https://bedrock-runtime.ap-south-1.amazonaws.com/\", timeout=20, retries=False); print(r.status); sys.exit(0 if r.status else 1)'"
+  check "normal hello (openssl) through the pre-filter to an allowed name gets a real TLS handshake and a certificate" "timeout 20 $SCL -connect api.typesafe.ai:443 -servername api.typesafe.ai </dev/null 2>&1 | grep -q 'Verification\\|subject='"
+  check "normal hello through the pre-filter reaches the application: curl via the proxy gets an HTTP status" "$AS curl -s -m 15 -o /dev/null -w '%{http_code}' -x http://127.0.0.1:8888 https://api.typesafe.ai/ | grep -qv 000"
+fi
+check "F2: another local uid (nobody) cannot reach the pre-filter (nft: only the agent and relay uids), the agent uid can" "! runuser -u nobody -- timeout 5 bash -c '</dev/tcp/127.0.0.1/8888' && $AS timeout 5 bash -c '</dev/tcp/127.0.0.1/8888' && nft list table inet studio_agent | grep -E 'tcp dport 8888 ip daddr 127.0.0.1 meta skuid != ' | grep -q 'counter packets [1-9]'"
+check "pre-filter unit: no AF_UNIX, loopback only, own user, hardened (NoNewPrivileges, empty caps, MemoryDenyWriteExecute)" 'u=$(systemctl cat studio-prefilter); grep -q "^User=studio-prefilter" <<<"$u" && grep -q "^IPAddressAllow=127.0.0.1/32$" <<<"$u" && grep -q "^RestrictAddressFamilies=AF_INET AF_INET6$" <<<"$u" && grep -q "^NoNewPrivileges=yes" <<<"$u" && grep -q "^CapabilityBoundingSet=$" <<<"$u" && grep -q "^MemoryDenyWriteExecute=yes" <<<"$u"'
+if [ "$INTERNET" = 1 ]; then
+  check "R3-3.2: SNI-mismatch termination is logged (bump=terminate, sni=example.com, in= out= present)" "journalctl -t squid --no-pager -o cat | grep -Eq 'CONNECT api.typesafe.ai:443 sni=example.com in=[0-9]+ out=[0-9]+ bump=terminate'"
+  check "R3-3.2: no-SNI termination is logged (bump=terminate, sni=-)" "journalctl -t squid --no-pager -o cat | grep -Eq 'CONNECT api.typesafe.ai:443 sni=- in=[0-9]+ out=[0-9]+ bump=terminate'"
+  check "R3-3.2: a spliced tunnel logs the bytes it carried (TCP_TUNNEL ... in=N out=M, both > 0)" "journalctl -t squid --no-pager -o cat | grep -E 'TCP_TUNNEL/200 CONNECT api.typesafe.ai:443 sni=api.typesafe.ai in=[1-9][0-9]* out=[1-9][0-9]* bump=splice'"
+fi
 check "proxy access log (journal) carries host:port and SNI only, no URL paths" "journalctl -t squid --no-pager -o cat | grep -q 'sni=' && ! journalctl -t squid --no-pager -o cat | grep -q 'api.typesafe.ai/'"
 check "squid SNI helper installed 0750 root:proxy and used (SNI recorded on spliced tunnels)" '[ "$(stat -c "%a %U:%G" /etc/studio-proxy/sni-check.sh)" = "750 root:proxy" ] && pgrep -af sni-check.sh >/dev/null'
 check "squid left no disk cache and no files in /opt or /etc/studio-agent" '! ls /var/spool/squid/* >/dev/null 2>&1'
@@ -261,7 +298,7 @@ check "relay logs reach the journal (no AF_UNIX needed)" "journalctl -u studio-p
 check "relay is configured with verify-full and the system CA" "grep -q '^server_tls_sslmode = verify-full' /run/studio-pgrelay/pgbouncer.ini && grep -q '^server_tls_ca_file = /etc/ssl/certs/ca-certificates.crt' /run/studio-pgrelay/pgbouncer.ini"
 check "relay ini is 0600 studio-pgrelay on tmpfs; the Neon password is persisted only in neon.env" '[ "$(stat -c "%a %U" /run/studio-pgrelay/pgbouncer.ini)" = "600 studio-pgrelay" ] && [ "$(grep -rl govpw /etc /opt /var 2>/dev/null | sort)" = /etc/studio-pgrelay/neon.env ]'
 check "agent uid cannot reach the Neon address directly" "! $AS timeout 6 bash -c '</dev/tcp/$NEONIP/5432'"
-check "agent uid cannot reach the SECOND endpoint even with valid credentials" "! $AS env PGPASSWORD='endpoint=neonstub2\$govpw' PGCONNECT_TIMEOUT=6 psql -Atq 'host=$STUB2IP port=5432 user=neon_gov dbname=govdb sslmode=require' -c 'select 1'"
+check "agent uid cannot reach the SECOND endpoint even with valid credentials" "! $AS env PGPASSWORD=govpw PGCONNECT_TIMEOUT=6 psql -Atq 'host=$STUB2IP port=5432 user=neon_gov dbname=govdb sslmode=require' -c 'select 1'"
 check "agent uid cannot reach the second endpoint through the proxy either (host not allowlisted, :5432)" "! $AS curl -s -m 8 -x http://127.0.0.1:8888 https://neonstub2.test:5432/ -o /dev/null"
 check "the relay cannot be pointed elsewhere: unknown database names are rejected" "! $AS env PGPASSWORD=$GPW $PQ 'host=127.0.0.1 port=6432 user=agent_gov dbname=govdb sslmode=disable' -c 'select 1' && ! $AS env PGPASSWORD=$GPW $PQ 'host=127.0.0.1 port=6432 user=agent_gov dbname=neonstub2.test sslmode=disable' -c 'select 1'"
 check "startup parameters cannot redirect the relay (options=...)" "! $AS env PGPASSWORD=$GPW $PQ 'host=127.0.0.1 port=6432 user=agent_gov dbname=gov sslmode=disable options=-chost%3Dneonstub2.test' -c 'select 1'"
@@ -379,6 +416,7 @@ check "guard logged why" 'journalctl -u studio-agent-egress-guard -o cat --no-pa
 check "restarting the nft unit restores the table" 'systemctl restart studio-agent-nft || { journalctl -u studio-agent-nft -n 15 -o cat --no-pager; exit 1; }; nft list table inet studio_agent >/dev/null'
 check "agent can be started again after the guard stop" "systemctl reset-failed studio-agent; systemctl start studio-agent; $HEALTH"
 check "proxy stop under a running agent: BindsTo stops the agent" 'systemctl stop studio-proxy; sleep 2; ! systemctl is-active --quiet studio-agent; systemctl start studio-proxy'
+check "R3-3.1: pre-filter stop under a running agent: BindsTo stops the agent (no egress path without the filter)" "systemctl reset-failed studio-agent; systemctl start studio-agent; $HEALTH && systemctl stop studio-prefilter; for i in \$(seq 10); do systemctl is-active --quiet studio-agent || exit 0; sleep 1; done; exit 1"
 check "agent restarts after proxy back" "systemctl reset-failed studio-agent; systemctl start studio-agent; $HEALTH"
 
 echo "--- M7: Neon unresolvable at boot -> refresh retries until it resolves, then starts relay and agent"
@@ -413,6 +451,17 @@ CAN=CANARY-PATIENT-7731904
 PSC=/root/asus/post-session-check.sh
 x 'systemctl start studio-agent-egress-refresh.service'
 check "clean run exits 0" "printf %s $CAN | $PSC"
+check "F5: the default window names the agent start it used and how to override it" "o=\$(printf %s $CAN | $PSC); grep -q 'egress session: since .*(agent start)' <<<\"\$o\" && grep -q 'STUDIO_SESSION_SINCE' <<<\"\$o\""
+x "printf %s $CAN | STUDIO_SESSION_SINCE='2020-01-01 00:00:00' $PSC" >"$WORK/psc.egress" 2>&1; rc=$?
+echo "     post-session egress report:"; grep '^egress' "$WORK/psc.egress" | sed 's/^/       /'
+[ "$rc" = 0 ] && grep -q '^egress session: since 2020-01-01' "$WORK/psc.egress" && ok "R3-3.2: post-session-check reports the egress session header (clean run still exit 0)" || bad "post-session egress header (rc=$rc)"
+grep -q '^egress prefilter drops: [1-9][0-9]* (ech=[1-9]' "$WORK/psc.egress" && ok "R3-3.2: post-session-check reports the pre-filter drops (ech counted)" || bad "post-session prefilter drops"
+grep -q '^egress tunnelled api.typesafe.ai: tunnels=' "$WORK/psc.egress" && grep -q '^egress tunnelled bedrock-runtime.ap-south-1.amazonaws.com: tunnels=' "$WORK/psc.egress" && ok "R3-3.2: post-session-check reports bytes per allowed name (api.typesafe.ai and bedrock)" || bad "post-session per-name tally"
+if [ "$INTERNET" = 1 ]; then
+  grep -Eq '^egress terminations: [2-9]|^egress terminations: [1-9][0-9]+' "$WORK/psc.egress" && grep -Eq 'no-sni=[1-9]' "$WORK/psc.egress" && grep -Eq 'sni-mismatch=[1-9]' "$WORK/psc.egress" && ok "R3-3.2: post-session-check counts terminations (no-sni and sni-mismatch)" || bad "post-session terminations"
+  grep -Eq '^egress tunnelled api.typesafe.ai: tunnels=[1-9][0-9]* bytes_in\(client->server\)=[1-9][0-9]* bytes_out\(server->client\)=[1-9][0-9]*' "$WORK/psc.egress" && ok "R3-3.2: post-session-check reports bytes tunnelled to api.typesafe.ai (> 0 both ways)" || bad "post-session bytes to api.typesafe.ai"
+fi
+grep -q "$CAN" "$WORK/psc.egress" && bad "canary printed in egress report" || ok "egress report does not print the canary"
 x "mkdir -p /var/lib/refute; echo $CAN >/var/lib/refute/plain.txt; echo $CAN | gzip >/var/log/rotated.log.2.gz; echo $CAN | xz >/var/log/rotated.log.3.xz; echo $CAN | zstd -q >/var/log/rotated.log.4.zst; : >/var/lib/refute/name-$CAN; logger '$CAN'; sleep 1"
 x "printf %s $CAN | $PSC" >"$WORK/psc.out" 2>&1; rc=$?
 [ "$rc" = 1 ] && ok "hits exit 1" || bad "hits exit 1 (rc=$rc)"

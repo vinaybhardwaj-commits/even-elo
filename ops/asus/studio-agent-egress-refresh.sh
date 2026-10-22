@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Rebuild the studio-agent egress layers from the CURRENT upstream DNS answer for the Neon host(s):
 #   1. nftables table inet studio_agent:
-#        uid studio-agent  -> 127.0.0.1:8888 (squid), 127.0.0.1:6432 (pgbouncer relay) and the t4 credential broker (tailnet IP:port) only
+#        uid studio-agent  -> 127.0.0.1:8888 (ClientHello pre-filter -> squid on :8889, which this table does not open), 127.0.0.1:6432 (pgbouncer relay) and the t4 credential broker (tailnet IP:port) only
 #        uid studio-pgrelay -> the pinned Neon IPs on :5432 only
 #   2. IPAddressAllow= on studio-pgrelay.service (second layer; the agent unit is static 127.0.0.1/32)
 #   3. /run/studio-agent/neon-pins.json  {"<host>": [ipv4..., ipv6...]}  (0640 root:studio-agent)
@@ -123,6 +123,8 @@ delete table inet studio_agent
 table inet studio_agent {
   chain out {
     type filter hook output priority 0; policy accept;
+    # the ClientHello pre-filter (:$PROXY_PORT) serves the agent and the relay uid only: another local uid cannot hold its connection slots
+    tcp dport $PROXY_PORT ip daddr 127.0.0.1 meta skuid != { $UID_AGENT, $UID_RELAY } counter drop
     # replies of the agent's and the relay's own listeners (inbound connections on loopback)
     meta skuid { $UID_AGENT, $UID_RELAY } oifname "lo" ct state established,related accept
     # the agent: the allowlist proxy and the Neon relay on loopback, and the t4 credential broker on the tailnet, nothing else

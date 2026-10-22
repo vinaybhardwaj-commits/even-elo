@@ -6,17 +6,26 @@ The stock `squid` and `pgbouncer` units are disabled and masked by the installer
 
 ## Design (every connection the agent can make goes to a destination we name)
 ```
-studio-agent (uid studio-agent) --127.0.0.1:8888--> studio-proxy (squid, uid proxy)  --blind TLS tunnel--> bedrock-runtime.ap-south-1, api.typesafe.ai
+studio-agent (uid studio-agent) --127.0.0.1:8888--> studio-prefilter (ClientHello filter, uid studio-prefilter) --127.0.0.1:8889--> studio-proxy (squid, uid proxy)
+                                                                                                                  --blind TLS tunnel--> bedrock-runtime.ap-south-1, api.typesafe.ai
                                 --127.0.0.1:6432--> studio-pgrelay (pgbouncer, uid studio-pgrelay) --TLS verify-full--> the pinned Neon endpoint
                                 --tailnet IP:port--> credential broker on t4 (ops/t4-broker) --> short-lived, Bedrock-only AWS credentials
 ```
-- **Web egress (squid).** Exactly two names: `bedrock-runtime.ap-south-1.amazonaws.com` and `api.typesafe.ai` (`/etc/studio-proxy/hosts.txt`, one exact name per line).
+- **ClientHello pre-filter (`studio-ech-prefilter.py`, R3-3.1).** Squid 6 cannot match ClientHello extensions, so a ~250-line stdlib-only Python filter sits on `:8888` (the only port the
+  agent uid can reach; nft gives it no route to Squid on `:8889`). Each connection must start with `CONNECT host:port HTTP/1.x`; that is forwarded to Squid, and once Squid says `200` the
+  client's first TLS record(s) are read and parsed. The connection is **dropped** if the ClientHello carries extension `0xfe0d` (encrypted_client_hello) or the draft variants
+  `0xfe02` / `0xff02`, or is malformed (lengths that do not add up, duplicate extension, trailing bytes, not a handshake record), larger than 16 KiB, or late (10 s). Everything else
+  is relayed byte for byte, hello included. Fail closed: non-CONNECT first bytes, an unreadable hello or a dead Squid never become a tunnel. Own uid, loopback-only, no AF_UNIX,
+  After the first hello it keeps framing the client's records until the server's plaintext ServerHello has been seen: every client handshake record until then must be a ClientHello of the same size cap, checked as strictly as the first (a middlebox-compat CCS precedes the second hello after a HelloRetryRequest, so CCS is not a stop signal; an HRR, recognised by its fixed random, allows exactly one more hello); after a real ServerHello nothing is parsed, so TLS 1.2's encrypted Finished is never mis-read; a tunnel idle in both directions for 300 s (`PREFILTER_IDLE_SECONDS`) is closed, and nft lets only the agent and relay uids reach `:8888`, so no other uid can hold its 64 slots. `BindsTo` Squid; the agent unit `BindsTo` the filter and the guard stops the agent if the filter is down. Journal lines: `prefilter drop reason=ech|malformed:<why>|hello-timeout|not-connect target=host:port [ext=0x..]`.
+- **Web egress (squid, on 127.0.0.1:8889 behind the filter).** Exactly two names: `bedrock-runtime.ap-south-1.amazonaws.com` and `api.typesafe.ai` (`/etc/studio-proxy/hosts.txt`, one exact name per line).
   `CONNECT` to `:443` only; plain HTTP, other ports and **IP-literal targets (v4 and v6) are denied first** and with a plain TCP reset (no `200`, no handshake with the proxy's
   throwaway certificate). Matching never uses reverse DNS (`dstdomain -n`): a spoofed PTR cannot turn an IP into an allowlisted name. `ssl_bump peek` reads the TLS ClientHello and
   `splice`s (blind tunnel) only when the **server name (SNI)** is in the same list; otherwise the connection is terminated. A ClientHello **without SNI** is terminated too
   (Squid's own `ssl::server_name` falls back to the CONNECT host, so an external ACL fed the real client SNI, `sni-check.sh`, decides). There is no bump action: nothing is decrypted and no
   CA is trusted anywhere. Squid insists on a certificate when `ssl-bump` is on, so the installer generates a throwaway `splice-only.pem` (0640 root:proxy) that signs nothing.
-  No disk cache; the access log (journal, tag `squid`) carries only status, method, host:port and SNI.
+  No disk cache; the access log (journal, tag `squid`) carries only status, method, host:port, SNI, bytes and the bump decision:
+  `TCP_TUNNEL/200 CONNECT api.typesafe.ai:443 sni=api.typesafe.ai in=<client->server> out=<server->client> bump=splice` for a tunnel (bytes counted at close), and
+  `NONE_NONE/200 CONNECT ... sni=example.com|- in=.. out=0 bump=terminate` for every SNI-mismatch / no-SNI termination. `post-session-check.sh` tallies both per session.
 - **No Google on this host.** There is no `*.googleapis.com` (or STS) name on the allowlist: Google front ends route on the HTTP `Host` header whatever the SNI says, so an
   SNI allowlist cannot contain them. The GCP key and the GCP -> AWS federation live on t4 (`ops/t4-broker/README.md`). The agent gets AWS credentials through botocore's
   `credential_process` (`/usr/local/bin/studio-aws-creds`, configured in `/etc/studio-agent/aws-config`) from the broker over the tailnet: credentials with a session policy that
@@ -56,15 +65,18 @@ studio-agent (uid studio-agent) --127.0.0.1:8888--> studio-proxy (squid, uid pro
   - Units restart only when their rendered config changed; an unchanged install restarts nothing. `reset-failed` runs before restarts.
   - The agent and relay are enabled and started only when the env, `neon.env` and the broker token are complete.
   - `--dry-run [--render-dir DIR]` makes the same decisions, prints actions, and runs `nft -c` and `squid -k parse`.
+- `post-session-check.sh` also prints (informational) `egress terminations` (no-SNI / SNI mismatch / denied CONNECT), `egress prefilter drops` and `egress tunnelled <name>:
+  tunnels, bytes_in, bytes_out` for every allowed name, since the agent's last start (`STUDIO_SESSION_SINCE="YYYY-MM-DD HH:MM:SS"` overrides; an agent restart mid-session truncates the default window, and the output says so).
 - `post-session-check.sh`: canary grep over /var, /tmp, /run and /opt/studio-agent (plain, .gz, .xz, .zst, file names; each path once) and the journal, plus egress-refresh age and
   log level. Exit 0 clean (`PURGED` label after `--purge-secrets`), 1 hit/violation, 3 inconclusive. Prints hashed paths only.
 - Tests: `test-asus-ops.sh` (offline, no root; also runs the t4 broker's unit tests) and `test-asus-container.sh` (docker; privileged ubuntu:24.04 systemd container, two fake Neon
   endpoints (PostgreSQL + TLS), an IPv6-only one, a broker stub running the real broker code, `tailscale` stub).
 
 ## Limits worth knowing (residual risk, for fable)
-- **ECH.** Squid sees only the outer SNI. A client that puts an allowed name as outer SNI and a different *inner* name in an Encrypted ClientHello would be spliced, and a CDN that
-  supports ECH (Cloudflare fronts `api.typesafe.ai`) would route on the inner name. It needs code execution in the agent plus a hand-built ECH ClientHello; the agent has no DNS,
-  so it cannot fetch ECH configs from the HTTPS record, and the allowlisted names are not under our control either way. Not closed by this design.
+- **ECH (R3-3).** Squid sees only the outer SNI, so a hand-built ECH ClientHello (allowed outer name, other inner name) would be spliced by Squid alone. The pre-filter above drops any
+  ClientHello that carries `0xfe0d` / `0xfe02` / `0xff02`, tested with synthetic bytes in `test-asus-container.sh`. Not tested: a *working* ECH handshake against Cloudflare (we do not build an ECH
+  client; the filter does not depend on whether Cloudflare would serve another zone). Residual: an ECH-like extension under some other codepoint, and exfiltration inside the allowed
+  names themselves, which the per-session byte tally makes visible.
 - **Domain fronting inside an allowed provider** depends on that provider's own blocking (Cloudflare refuses the Host/SNI mismatch for `api.typesafe.ai`; to be re-tested on
   `bedrock-runtime.ap-south-1` by the refuter). That is why no Google name is allowed.
 - Neon login through the relay (plain password + SNI; verified by psql 15 Oct, recheck on `-pooler` hosts) and Bedrock's acceptance of the broker's session-policy ARNs are not testable offline;
