@@ -11,6 +11,7 @@
   <array><string>__REPO__/ops/db13/extract/run-extract.sh</string><string>scheduled</string></array>
   <key>StartCalendarInterval</key>
   <dict><key>Hour</key><integer>22</integer><key>Minute</key><integer>30</integer></dict>
+  <key>EnvironmentVariables</key><dict><key>PATH</key><string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string></dict>
   <key>Nice</key><integer>10</integer>
   <key>LowPriorityIO</key><true/>
   <key>StandardOutPath</key><string>__HOME__/Library/Logs/gov-studio-extract/extract.log</string>
