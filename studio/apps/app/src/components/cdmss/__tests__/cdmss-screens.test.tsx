@@ -207,17 +207,47 @@ describe("behaviour", () => {
     expect(lines.length).toBeGreaterThan(0);
     for (const l of Array.from(lines)) expect(l.getAttribute("data-site")).toBe("ALL");
   });
-  it("site comparison withheld: V4 shows the caption and the hospital-wide figure, no contributor table", async () => {
+  it("site comparison withheld: V2 withheld -> exactly one V4 call (site ALL) -> caption + hospital-wide row, no picker", async () => {
+    const cap = "Site comparison withheld: 13% of notes have no site (doctor home-site mapping). Fix pending.";
+    const v2 = JSON.parse(JSON.stringify(FIXTURES.scorecard));
+    v2.view.site_comparison = { withheld: true, coverage: 0.87, caption: cap };
+    v2.view.sites = [v2.view.sites[0]]; // the agent lists no per-site counts while withheld: ALL only
     const v4 = JSON.parse(JSON.stringify(FIXTURES.contributors));
-    v4.view.site_comparison = { withheld: true, coverage: 0.87, caption: "Site comparison withheld: 13% of notes have no site (doctor home-site mapping). Fix pending." };
+    v4.view.site_comparison = { withheld: true, coverage: 0.87, caption: cap };
     v4.view.contributors = [];
     v4.view.gap = null;
-    fetchMock.mockImplementation(async (url: string) => new Response(JSON.stringify(String(url).endsWith("scorecard") ? FIXTURES.scorecard : v4), { status: 200 }));
+    v4.view.sites = [v4.view.sites[0]];
+    fetchMock.mockImplementation(async (url: string) => new Response(JSON.stringify(String(url).endsWith("scorecard") ? v2 : v4), { status: 200 }));
     render(<ContributorsScreen />);
-    expect(await screen.findByTestId("site-withheld")).toBeInTheDocument();
+    expect(await screen.findByTestId("site-withheld")).toHaveTextContent(cap);
     expect(screen.getByLabelText("Hospital-wide")).toBeInTheDocument();
     expect(screen.queryByLabelText("Contributors")).toBeNull();
     expect(screen.queryByLabelText("Site")).toBeNull();
+    expect(screen.queryByText(/No site has notes/)).toBeNull();
+    const v4calls = fetchMock.mock.calls.filter(([u]) => String(u).endsWith("/contributors"));
+    expect(v4calls).toHaveLength(1);
+    expect(JSON.parse(v4calls[0][1].body)).toEqual({ site: "ALL", metric: "lv_rate", window_days: 28 });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(fetchMock).toHaveBeenCalledTimes(2); // V2 for the site list, one V4; no loop
+  });
+  it("outside the withholding ALL is never sent as a site", async () => {
+    render(<ContributorsScreen />);
+    await screen.findByTestId("provenance");
+    const v4calls = fetchMock.mock.calls.filter(([u]) => String(u).endsWith("/contributors"));
+    expect(JSON.parse(v4calls[0][1].body).site).toBe("SITEA");
+  });
+  it("R2: the scorecard keeps a section for every metric; one with no weekly series says so", async () => {
+    render(<ScorecardScreen />);
+    await screen.findByTestId("provenance");
+    const labels = FIXTURES.scorecard.view.metrics.map((m) => m.label);
+    for (const l of labels) expect(screen.getByLabelText(`Trend ${l}`)).toBeInTheDocument();
+    const withSeries = new Set(FIXTURES.scorecard.view.trend.map((t) => t.metric_id));
+    const without = FIXTURES.scorecard.view.metrics.filter((m) => !withSeries.has(m.metric_id));
+    expect(without.length).toBeGreaterThan(0); // M-OPD-02 and M-OPD-04 have no weekly series in the payload
+    for (const m of without) expect(screen.getByLabelText(`Trend ${m.label}`)).toHaveTextContent("Trend not available for this metric.");
+    for (const m of FIXTURES.scorecard.view.metrics.filter((x) => withSeries.has(x.metric_id))) {
+      expect(screen.getByLabelText(`Trend ${m.label}`).querySelector("polyline")).not.toBeNull();
+    }
   });
   it("after 10 s of loading the page says it is still loading (not an error)", async () => {
     vi.useFakeTimers();
