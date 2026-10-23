@@ -16,6 +16,16 @@ def _clean_studio_env(monkeypatch):
         monkeypatch.delenv(name, raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _fresh_cdmss_cache():
+    """The CDMSS result cache (300 s) never carries a payload from one test into the next."""
+    from src import studio_cdmss_tools
+
+    studio_cdmss_tools.clear_cache()
+    yield
+    studio_cdmss_tools.clear_cache()
+
+
 @pytest.fixture
 def anyio_backend():
     return "asyncio"

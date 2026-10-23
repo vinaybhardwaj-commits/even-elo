@@ -57,7 +57,8 @@ def test_p_values_and_change_rule():
     assert ct.prop_change_p(1, 0, 1, 10) is None
     assert ct.classify_change(10, 11.5, 0.01) == ("rising", pytest.approx(0.15))
     assert ct.classify_change(10, 8, 0.01) == ("falling", pytest.approx(-0.2))
-    assert ct.classify_change(10, 10.5, 0.01)[0] == "no clear change"  # significant but under 10% relative
+    assert ct.classify_change(10, 10.5, 0.01)[0] == "small change (under 10%)"  # significant (p < 0.05) but under 10% relative
+    assert ct.classify_change(10, 10.5, 0.30)[0] == "no clear change"  # not significant: still no clear change
     assert ct.classify_change(10, 12, 0.20)[0] == "no clear change"  # 20% but p >= 0.05
     assert ct.classify_change(10, 12, 0.05)[0] == "no clear change"  # p must be strictly below 0.05
     assert ct.classify_change(0, 5, 0.001) == ("no clear change", None) and ct.classify_change(None, 5, 0.001)[0] == "no clear change"
@@ -196,9 +197,15 @@ def test_tools_are_registered_for_the_screen_door_and_the_chat_agent():
                                    "cdmss_metric_catalogue", "cdmss_metric", "cdmss_drilldown", "cdmss_finding_detail"]
 
 
+def test_args_schema_json_matches_the_real_tool_arguments():
+    # The app pins its per-view parameter allowlist to this file: if an args schema changes, this fails first.
+    pinned = json.loads((Path(__file__).resolve().parent / "fixtures" / "cdmss" / "args_schema.json").read_text())
+    assert pinned == {t.name: sorted(t.args_schema.model_fields) for t in ct.CDMSS_TOOLS}
+
+
 def test_fixtures_and_screen_map_name_the_same_tools():
     # the committed fixtures are one per tool; every tool belongs to the cdmss screen
-    stems = sorted(p.stem for p in (Path(__file__).resolve().parent / "fixtures" / "cdmss").glob("*.json"))
+    stems = sorted(p.stem for p in (Path(__file__).resolve().parent / "fixtures" / "cdmss").glob("*.json") if p.stem != "args_schema")
     assert sorted(ct.CDMSS_TOOL_NAMES) == stems
     for n in ct.CDMSS_TOOL_NAMES:
         assert studio_access.GOVERNANCE_SCREEN[n] == "cdmss", n
@@ -288,7 +295,7 @@ async def test_database_errors_become_fixed_strings_and_are_audited(stub, monkey
         await t.ainvoke({"metric_id": "M-OPD-01"}, config=CFG)
     assert str(e.value) == "The governance database read failed." or str(e.value) == "The CDMSS database read failed."
     assert "internal.example" not in str(e.value)
-    assert audits[-1].outcome == "error" and audits[-1].row_count == 0
+    assert any(a.outcome == "error" and a.row_count == 0 for a in audits)  # sibling queries run together, so the error row is not necessarily the last
     status, body = await studio_screen.run_screen_tool("cdmss_metric", {"metric_id": "M-OPD-01"}, STAFF, ["staff", "super_admin"])
     assert status == 502 and body["error"] == "tool_failed" and "example" not in json.dumps(body)
 
@@ -340,3 +347,123 @@ def test_funnel_points_cover_10_to_max_n():
     assert pts[0]["n"] == 10 and pts[-1]["n"] == 200 and all(a["n"] < b["n"] for a, b in zip(pts, pts[1:]))
     assert all(0 <= p["lo998"] <= p["lo95"] <= 0.3 <= p["hi95"] <= p["hi998"] <= 1 for p in pts)
     assert ct.funnel_points(0.3, 5)[-1]["n"] == 60
+
+
+def test_plain_rate_gloss_for_per_100_and_per_1000():
+    assert ct.plain_rate(80.63, 100, "notes") == "about 81 in every 100 notes"
+    assert ct.plain_rate(49.6, 1000, "prescriptions") == "about 50 in every 1,000 prescriptions"
+    assert ct.plain_rate(None, 100, "notes") is None
+
+
+# --- result cache, single-flight, concurrency ----------------------------------------------------------------
+
+async def _run(name, args):
+    return json.loads(await next(t for t in ct.CDMSS_TOOLS if t.name == name).ainvoke(args, config=CFG))
+
+
+@pytest.mark.anyio
+async def test_cache_hit_runs_no_query_says_cached_at_and_is_audited_as_one_cache_row(stub):
+    calls, audits = stub
+    first = await _run("cdmss_v1_this_week", {})
+    ran, n_audits = len(calls), len(audits)
+    assert ran > 0 and "cached_at" not in first["view"]["envelope"]["provenance"]
+    second = await _run("cdmss_v1_this_week", {})
+    assert len(calls) == ran  # no SQL on a hit
+    prov = second["view"]["envelope"]["provenance"]
+    assert prov["cached"] is True and re.fullmatch(r"\d{4}-\d{2}-\d{2}T[0-9:+]+", prov["cached_at"])
+    assert second["view"]["families"] == first["view"]["families"] and second["source"] == first["source"]  # the same numbers
+    cache_rows = audits[n_audits:]
+    assert len(cache_rows) == 1 and cache_rows[0].staff_id == STAFF and cache_rows[0].tool == "cdmss_v1_this_week" and cache_rows[0].row_count == 0
+    assert cache_rows[0].params_hash not in {a.params_hash for a in audits[:n_audits]}  # never equal to a real query's hash
+    # other params, other tool: not shared
+    await _run("cdmss_v1_this_week", {"window_days": 14})
+    assert len(calls) > ran
+
+
+@pytest.mark.anyio
+async def test_cache_expires_after_300_seconds_and_a_failed_run_is_not_cached(stub, monkeypatch):
+    calls, audits = stub
+    await _run("cdmss_v3_doctor_variation", {})
+    n = len(calls)
+    key = next(iter(ct._cache))
+    at, iso, payload = ct._cache[key]
+    ct._cache[key] = (at - ct.CACHE_TTL_S - 1, iso, payload)
+    await _run("cdmss_v3_doctor_variation", {})
+    assert len(calls) > n  # expired -> recomputed
+    ct.clear_cache()
+
+    async def boom(sql, params):
+        raise RuntimeError("x")
+
+    monkeypatch.setattr(ct, "fetch_cdmss", boom)
+    with pytest.raises(ToolError):
+        await _run("cdmss_v1_this_week", {})
+    assert not ct._cache and not ct._inflight
+
+
+@pytest.mark.anyio
+async def test_identical_concurrent_requests_share_one_run(stub, monkeypatch):
+    import asyncio
+
+    calls, audits = stub
+    gate = asyncio.Event()
+
+    async def slow(sql, params):
+        calls.append((sql, params))
+        await gate.wait()
+        return []
+
+    monkeypatch.setattr(ct, "fetch_cdmss", slow)
+    monkeypatch.setattr(ct, "fetch_gov", slow)
+    tasks = [asyncio.ensure_future(_run("cdmss_v1_this_week", {})) for _ in range(3)]
+    await asyncio.sleep(0.05)
+    started = len(calls)
+    gate.set()
+    results = await asyncio.gather(*tasks)
+    assert len(calls) == started and started <= 2 * ct.POOL_PER_DB  # three requests, one run
+    assert sum(1 for r in results if r["view"]["envelope"]["provenance"].get("cached")) == 2
+    assert len(audits) == len(calls) + 2  # one row per real query + a cache row for each sharer
+
+
+@pytest.mark.anyio
+async def test_independent_queries_run_together_but_never_beyond_the_pool(stub, monkeypatch):
+    import asyncio
+
+    live = {"cdmss": 0, "gov": 0}
+    peak = {"cdmss": 0, "gov": 0}
+
+    def make(db):
+        async def f(sql, params):
+            live[db] += 1
+            peak[db] = max(peak[db], live[db])
+            await asyncio.sleep(0.02)
+            live[db] -= 1
+            return []
+        return f
+
+    monkeypatch.setattr(ct, "fetch_cdmss", make("cdmss"))
+    monkeypatch.setattr(ct, "fetch_gov", make("gov"))
+    await _run("cdmss_v2_scorecard", {})
+    assert 1 < max(peak.values()) and all(v <= ct.POOL_PER_DB for v in peak.values()), peak
+
+
+@pytest.mark.anyio
+async def test_a_failing_query_cancels_its_siblings(stub, monkeypatch):
+    import asyncio
+
+    finished = []
+
+    async def cdmss(sql, params):
+        await asyncio.sleep(0.2)
+        finished.append("cdmss")
+        return []
+
+    async def gov(sql, params):
+        raise RuntimeError("down")
+
+    monkeypatch.setattr(ct, "fetch_cdmss", cdmss)
+    monkeypatch.setattr(ct, "fetch_gov", gov)
+    with pytest.raises(ToolError):
+        await _run("cdmss_v1_this_week", {})
+    await asyncio.sleep(0.3)
+    assert finished == []  # the sibling read was cancelled, not left running and auditing

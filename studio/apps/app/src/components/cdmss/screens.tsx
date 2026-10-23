@@ -5,7 +5,7 @@ import { ScreenFrame } from "@/components/screens/screen-frame";
 import { DV_METRICS, FAMILIES, WORKLISTS, type SiteOption, type DvMetric, type Family, type ViewId, type ViewParams, type WorklistId } from "@/lib/cdmss/contract";
 import { useCdmssContext } from "@/lib/cdmss/use-cdmss-context";
 import { useCdmssView } from "@/lib/cdmss/use-cdmss-view";
-import { BandMix, ChangeLine, ContributorTable, DotWhisker, EnvelopeBlock, EvidenceList, Figure, FunnelPlot, ScorecardMatrix, SourceNote, TrendLines, ViewState, ViewTabs, WorklistTable, siteColour } from "./exhibits";
+import { BandMix, ChangeLine, ContributorTable, DotWhisker, EnvelopeBlock, EvidenceList, Figure, FunnelPlot, ScorecardMatrix, SiteWithheld, SourceNote, TrendLines, ViewState, ViewTabs, WorklistTable, siteColour } from "./exhibits";
 
 // One component per view. Each makes exactly ONE useCdmssView call (one POST per mount per distinct params), reports
 // the open view and filters to the side-panel agent, and renders the envelope above the exhibits.
@@ -99,12 +99,13 @@ export function ScorecardScreen() {
   return (
     <ScreenFrame title="CDMSS · Family scorecard">
       <ViewTabs current="scorecard" />
-      <form className="scr-filters scr-form" onSubmit={(e) => e.preventDefault()}><FamilyFilter p={params} set={setParams} /><WindowFilter p={params} set={setParams} /><SitePicker sites={sites} value={params.site} all onChange={(site) => setParams({ ...params, site })} /></form>
+      <form className="scr-filters scr-form" onSubmit={(e) => e.preventDefault()}><FamilyFilter p={params} set={setParams} /><WindowFilter p={params} set={setParams} />{!(state.status === "ok" && state.data.view.site_comparison?.withheld) && <SitePicker sites={sites} value={params.site} all onChange={(site) => setParams({ ...params, site })} />}</form>
       <ViewState state={state} retry={state.retry}>
         {(d) => {
           return (
             <>
               <EnvelopeBlock env={d.view.envelope} />
+              <SiteWithheld sc={d.view.site_comparison} />
               <section className="scr-card" aria-label="Site scorecard"><ScorecardMatrix data={d.view} /></section>
               {d.view.metrics.map((m) => (
                 <section key={m.metric_id} className="scr-card" aria-label={`Trend ${m.label}`}>
@@ -130,7 +131,7 @@ export function ScorecardScreen() {
 const DV_LABEL: Record<DvMetric, string> = { lv_rate: "Notes with a low-value finding", nqi: "Mean NQI" };
 
 export function DoctorsScreen() {
-  const { params, setParams, state } = useView("doctor_variation", { family: "opd", metric: "lv_rate", window_days: 28 });
+  const { params, setParams, state } = useView("doctor_variation", { metric: "lv_rate", window_days: 28 });
   return (
     <ScreenFrame title="CDMSS · Doctor variation">
       <ViewTabs current="doctor_variation" />
@@ -157,10 +158,10 @@ export function ContributorsScreen() {
   // waits (idle) until a site is chosen, by default the site with the most notes. Two reads per mount, no loop.
   const [window_days, setWindow] = useState(28);
   const [picked, setPicked] = useState<string | undefined>();
-  const siteRead = useCdmssView("scorecard", { family: "opd", window_days });
+  const siteRead = useCdmssView("scorecard", { window_days });
   const known = useSites(siteRead);
   const site = picked ?? known.filter((x) => x.code !== "ALL").sort((a, b) => b.n - a.n)[0]?.code;
-  const params: ViewParams | null = site ? { family: "opd", site, metric: "lv_rate", window_days } : null;
+  const params: ViewParams | null = site ? { site, metric: "lv_rate", window_days } : null;
   const state = useCdmssView("contributors", params);
   useCdmssContext("contributors", params ?? { window_days }, state.status, state.status === "ok" ? state.data.source.query_hash : null);
   const own = useSites(state);
@@ -169,7 +170,7 @@ export function ContributorsScreen() {
     <ScreenFrame title="CDMSS · Contributors">
       <ViewTabs current="contributors" />
       <form className="scr-filters scr-form" onSubmit={(e) => e.preventDefault()}>
-        <SitePicker sites={sites} value={site} all={false} onChange={setPicked} />
+        {!(state.status === "ok" && state.data.view.site_comparison?.withheld) && <SitePicker sites={sites} value={site} all={false} onChange={setPicked} />}
         <Select label="Window" value={window_days} options={WINDOWS.map((d) => [d, `${d} days`] as [number, string])} onChange={setWindow} />
       </form>
       {params === null && siteRead.status === "error" && <ViewState state={siteRead} retry={siteRead.retry}>{() => null}</ViewState>}
@@ -180,7 +181,12 @@ export function ContributorsScreen() {
           {(d) => (
             <>
               <EnvelopeBlock env={d.view.envelope} />
-              <section className="scr-card" aria-label="Contributors"><ContributorTable data={d.view} /></section>
+              <SiteWithheld sc={d.view.site_comparison} />
+              {d.view.site_comparison?.withheld ? (
+                <section className="scr-card" aria-label="Hospital-wide"><h3>Hospital-wide</h3><p><Figure s={d.view.site_rate} /></p></section>
+              ) : (
+                <section className="scr-card" aria-label="Contributors"><ContributorTable data={d.view} /></section>
+              )}
               <SourceNote d={d} />
             </>
           )}
@@ -191,7 +197,7 @@ export function ContributorsScreen() {
 }
 
 export function RedFlagsScreen() {
-  const { params, setParams, state } = useView("redflags", { family: "opd", window_days: 28 });
+  const { params, setParams, state } = useView("redflags", { window_days: 28 });
   return (
     <ScreenFrame title="CDMSS · Red-flag dossiers">
       <ViewTabs current="redflags" />
@@ -222,7 +228,7 @@ export function RedFlagsScreen() {
 }
 
 export function WorklistsScreen() {
-  const { params, setParams, state } = useView("worklists", { family: "opd", list: "low_value_findings", window_days: 28, limit: 500 });
+  const { params, setParams, state } = useView("worklists", { list: "low_value_findings", window_days: 28, limit: 500 });
   return (
     <ScreenFrame title="CDMSS · Worklists">
       <ViewTabs current="worklists" />

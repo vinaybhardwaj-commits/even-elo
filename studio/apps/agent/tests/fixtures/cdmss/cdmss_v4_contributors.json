@@ -149,6 +149,7 @@
      "coverage": null,
      "denominator": 100.0,
      "grey_reason": null,
+     "kind": "rate",
      "label": "Notes with at least one low-value finding",
      "metric_id": "M-OPD-05b",
      "n": 100,
@@ -177,6 +178,7 @@
      "coverage": null,
      "denominator": 35.0,
      "grey_reason": null,
+     "kind": "rate",
      "label": "Notes with at least one low-value finding",
      "metric_id": "M-OPD-05b",
      "n": 35,
@@ -212,6 +214,7 @@
    "coverage": null,
    "denominator": 35.0,
    "grey_reason": null,
+   "kind": "rate",
    "label": "Notes with at least one low-value finding",
    "metric_id": "M-OPD-05b",
    "n": 35,
@@ -230,6 +233,14 @@
    }
   },
   "site": "SITEA",
+  "site_comparison": {
+   "caption": null,
+   "coverage": 1.0,
+   "min_coverage": 0.9,
+   "notes": 135,
+   "notes_with_site": 135,
+   "withheld": false
+  },
   "site_rate": {
    "band": null,
    "change": {
@@ -257,6 +268,7 @@
    "coverage": null,
    "denominator": 100.0,
    "grey_reason": null,
+   "kind": "rate",
    "label": "Notes with at least one low-value finding",
    "metric_id": "M-OPD-05b",
    "n": 100,

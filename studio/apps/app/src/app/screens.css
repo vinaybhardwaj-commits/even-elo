@@ -106,3 +106,4 @@
 .cd-mixlabel { width: 110px; }
 .cd-mix { flex: 1; height: 16px; max-width: 420px; }
 .cd-action { margin-top: 6px; }
+.cd-withheld { padding: 10px 14px; font-weight: 600; }

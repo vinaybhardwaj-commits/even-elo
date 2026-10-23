@@ -4,7 +4,7 @@ import { agentHeaders } from "@/lib/zone/actor-token";
 import { canAccessScreen } from "@/lib/zone/access";
 import { ACTOR_ID_HEADER, ACTOR_ROLE_HEADER } from "@/lib/zone/authorize";
 import { AgentRetryError, fetchAgent, isTimeout } from "@/lib/agent-fetch";
-import { VIEW_IDS, VIEW_SCHEMAS, VIEW_TOOL, ViewParams, type ViewId } from "@/lib/cdmss/contract";
+import { VIEW_IDS, VIEW_SCHEMAS, VIEW_TOOL, ViewParams, paramsFor, type ViewId } from "@/lib/cdmss/contract";
 
 // CDMSS module view reads. READ ONLY: one POST forwards the typed params to the agent's /tools/cdmss_v* with
 // the same service token and actor JWT the screen route uses; the agent runs the audited query. No database here and
@@ -12,7 +12,8 @@ import { VIEW_IDS, VIEW_SCHEMAS, VIEW_TOOL, ViewParams, type ViewId } from "@/li
 
 export const maxDuration = 60;
 const MAX_BODY_BYTES = 2048;
-const AGENT_TIMEOUT_MS = 20_000;
+// A cold view runs several queries over the relay (the walk saw 20 s+ on a loaded day); maxDuration above is 60.
+const AGENT_TIMEOUT_MS = 50_000;
 const NO_STORE = { "Cache-Control": "no-store" };
 const fail = (status: number, error: string, extra?: Record<string, string>) => NextResponse.json({ ok: false, error }, { status, headers: { ...NO_STORE, ...extra } });
 
@@ -50,7 +51,7 @@ export const POST = async (req: NextRequest, ctx: { params: Promise<{ view: stri
   try {
     res = await fetchAgent(
       `${normalizeLanggraphUrl(agentUrl).replace(/\/+$/, "")}/tools/${VIEW_TOOL[view as ViewId]}`,
-      { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify(parsed.data), cache: "no-store", redirect: "error" },
+      { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify(paramsFor(view as ViewId, parsed.data)), cache: "no-store", redirect: "error" },
       AGENT_TIMEOUT_MS,
     );
   } catch (err) {
@@ -58,6 +59,9 @@ export const POST = async (req: NextRequest, ctx: { params: Promise<{ view: stri
     return fail(502, err instanceof AgentRetryError ? "agent_unreachable_after_retry" : "agent_unreachable");
   }
   if (res.status === 429) return fail(429, "rate_limited", { "Retry-After": "60" });
+  // The agent's own refusals keep their meaning: a rejected parameter is the caller's (422), a refused role is 403.
+  if (res.status === 422) return fail(422, "bad_params");
+  if (res.status === 403) return fail(403, "forbidden");
   if (!res.ok) return fail(502, "tool_failed");
 
   let body: unknown;

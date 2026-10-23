@@ -51,24 +51,28 @@ def validate_params(tool_name: str, params: Any) -> dict:
 async def run_screen_tool(tool_name: str, params: dict, staff_id: str, roles) -> tuple[int, dict]:
     """Returns (http_status, json_body). The tool's own JSON is returned unchanged on success."""
     if tool_name not in SCREEN_TOOLS:
+        logger.warning("screen tool=%s refused status=404 error=unknown_tool", tool_name[:60])
         return 404, {"ok": False, "error": "unknown_tool"}
     if not can_use_tool(roles, tool_name):  # per-tool predicate = the source page's access
+        logger.warning("screen tool=%s refused status=403 error=forbidden", tool_name)
         return 403, {"ok": False, "error": "forbidden"}
     try:
         clean = validate_params(tool_name, params)
     except ValueError:
+        logger.warning("screen tool=%s refused status=422 error=bad_params", tool_name)
         return 422, {"ok": False, "error": "bad_params"}
     try:
         raw = await SCREEN_TOOLS[tool_name].ainvoke(clean, config={"configurable": {STAFF_KEY: staff_id}})
     except ToolError as exc:  # ToolError text is safe by contract (fixed strings, no data)
+        logger.warning("screen tool=%s failed status=502 error=tool_failed", tool_name)
         return 502, {"ok": False, "error": "tool_failed", "message": str(exc)}
     except Exception as exc:
-        logger.warning("screen tool=%s failed type=%s", tool_name, type(exc).__name__)
+        logger.warning("screen tool=%s failed status=502 error=tool_failed type=%s", tool_name, type(exc).__name__)
         return 502, {"ok": False, "error": "tool_failed"}
     try:
         return 200, json.loads(raw)
     except (TypeError, ValueError):
-        logger.warning("screen tool=%s returned non-JSON", tool_name)
+        logger.warning("screen tool=%s returned non-JSON status=502 error=tool_failed", tool_name)
         return 502, {"ok": False, "error": "tool_failed"}
 
 

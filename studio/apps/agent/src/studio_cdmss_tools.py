@@ -15,6 +15,8 @@ funnel limits at z = 1.96 / 3.09 (binomial, the catalogue's method: no overdispe
 
 from __future__ import annotations
 
+import asyncio
+import copy
 import datetime as dt
 import hashlib
 import json
@@ -24,7 +26,7 @@ import os
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Any, Literal, Optional
+from typing import Any, Awaitable, Callable, Literal, Optional
 
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
@@ -40,6 +42,9 @@ logger = logging.getLogger("studio.cdmss")
 
 DOCTOR_MIN_N = 10  # doctor rows
 GROUP_MIN_N = 15  # site / specialty groups
+SITE_COMPARISON_MIN_COVERAGE = 0.90  # share of window notes whose doctor has exactly one home site; below it every site comparison is withheld (ruling, 23 Oct)
+POOL_PER_DB = 2  # pgbouncer relay pool_size per database: concurrent queries of one call never exceed it
+CACHE_TTL_S = 300  # finished payloads are reused for 5 minutes (same tool, same normalised params, same IST day)
 FUNNEL_MIN_N = 50  # funnel inclusion (audited notes)
 COVERAGE_GREY_PCT = 50.0
 SCAN_CAP = 50_000  # rows an aggregate may scan
@@ -143,13 +148,19 @@ def rate_change_p(e1: float, n1: float, e2: float, n2: float) -> Optional[float]
     return two_sided_p((r2 - r1) / math.sqrt(var))
 
 
+SMALL_CHANGE = "small change (under 10%)"
+
+
 def classify_change(early: Optional[float], late: Optional[float], p: Optional[float]) -> tuple[str, Optional[float]]:
-    """'rising'/'falling' only if p < 0.05 AND relative change >= 10%, else 'no clear change'."""
+    """'rising'/'falling' only if p < 0.05 AND relative change >= 10%. p < 0.05 with a smaller change is 'small change (under 10%)';
+    'no clear change' is kept for p >= 0.05 (or nothing to compare)."""
     if early is None or late is None or p is None or early == 0:
         return "no clear change", None
     rel = (late - early) / abs(early)
     if p < 0.05 and abs(rel) >= 0.10:
         return ("rising" if late > early else "falling"), rel
+    if p < 0.05:
+        return SMALL_CHANGE, rel
     return "no clear change", rel
 
 
@@ -157,6 +168,13 @@ def raw_band(score: Optional[float]) -> Optional[str]:
     if score is None:
         return None
     return "A" if score >= 85 else "B" if score >= 70 else "C" if score >= 55 else "D" if score >= 40 else "E"
+
+
+def plain_rate(v: Optional[float], per: int, noun: str) -> Optional[str]:
+    """Gloss for a value that is already per `per` (per 100 notes, per 1,000 prescriptions): 80.63 per 100 -> 'about 81 in every 100 notes'."""
+    if v is None:
+        return None
+    return f"about {v:,.0f} in every {per:,} {noun}"
 
 
 def plain_in_ten(p: Optional[float]) -> Optional[str]:
@@ -228,6 +246,18 @@ fetch_cdmss = _fetch_cdmss
 fetch_gov = _fetch_gov
 
 
+async def gather_all(*coros: Awaitable) -> list:
+    """asyncio.gather that does not leave siblings running (and auditing) after one fails: they are cancelled and awaited."""
+    tasks = [asyncio.ensure_future(c) for c in coros]
+    try:
+        return list(await asyncio.gather(*tasks))
+    except BaseException:
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+
+
 class Run:
     """One tool call: staff identity, the IST 'today', the audited query runner and the provenance it accumulates."""
 
@@ -245,6 +275,19 @@ class Run:
         self.versions: set[str] = set()
         self.db13_as_of: Optional[str] = None
         self.incomplete: list[str] = []
+        # Independent queries of one view run together (asyncio.gather) but never more than the relay pool can serve (pool_size 2 per DB).
+        self._sem = {"cdmss": asyncio.Semaphore(POOL_PER_DB), "gov": asyncio.Semaphore(POOL_PER_DB)}
+
+    async def audit_cache(self) -> None:
+        """A cache hit (or a shared single-flight result) is audited too: one row, no query, row_count 0. The table's CHECK only allows
+        outcome ok|error, so it is an 'ok' row whose params_hash covers {"args", "cache": true} and so never equals a real query's hash."""
+        try:
+            await studio_audit.audit_sink(
+                studio_audit.AuditRow(staff_id=self.staff, tool=self.tool, params_hash=studio_audit.params_hash({"args": self.params, "cache": True}), row_count=0, duration_ms=0, mode="live", outcome="ok")
+            )
+        except Exception as exc:  # fail closed, like every other read
+            logger.error("tool=%s audit write failed type=%s", self.tool, type(exc).__name__)
+            raise ToolError("The audit log is unavailable, so this read was refused.") from None
 
     async def q(self, db: Literal["cdmss", "gov"], sql: str, params: dict, source: str) -> list[dict]:
         started = time.monotonic()
@@ -266,10 +309,17 @@ class Run:
                 )
             )
 
+        # Bookkeeping in CALL order (not completion order), so the provenance and the query hash do not depend on timing.
+        self.sql.append(sql)
+        self.hashes.append(qh)
+        if source not in self.sources:
+            self.sources.append(source)
         failure: Optional[str] = None
         rows: list[dict] = []
         try:
-            rows = [{k: _json_safe(v) if not isinstance(v, (list, tuple)) else v for k, v in dict(r).items()} for r in await fetch(sql, params)]
+            async with self._sem[db]:
+                fetched = await fetch(sql, params)
+            rows = [{k: _json_safe(v) if not isinstance(v, (list, tuple)) else v for k, v in dict(r).items()} for r in fetched]
         except ToolError as exc:
             failure = str(exc)
         except NotConfigured:
@@ -291,10 +341,6 @@ class Run:
             logger.error("tool=%s audit write failed type=%s", self.tool, type(exc).__name__)
             raise ToolError("The audit log is unavailable, so this read was refused.") from None
         logger.info("tool=%s staff=%s db=%s rows=%d ms=%d", self.tool, self.staff, db, len(rows), int((time.monotonic() - started) * 1000))
-        self.sql.append(sql)
-        self.hashes.append(qh)
-        if source not in self.sources:
-            self.sources.append(source)
         return rows
 
     def query_hash(self) -> str:
@@ -647,7 +693,9 @@ async def fill_names(run: Run, docs: dict, uids) -> dict:
     return docs
 
 
-async def load_dataset(run: Run, days: int, *, need_rx: bool = False, weekly: bool = False, directory: Optional[dict] = None) -> Dataset:
+async def load_dataset(run: Run, days: int, *, need_rx: bool = False, weekly: bool = False, directory: Any = None) -> Dataset:
+    """`directory` may be a dict or an awaitable that yields one (a task shared by several loads). The independent reads (the
+    note aggregate, the directory, the uid list for the DB13 denominators) run together."""
     today = run.today
     if weekly:
         late, early = Window(today - dt.timedelta(days=days - 1), today), None
@@ -658,7 +706,16 @@ async def load_dataset(run: Run, days: int, *, need_rx: bool = False, weekly: bo
         sql = ALL_SQL_TEXTS["opd_agg_early_late"]
         frm = early.frm
     p = {"from": frm, "to": today, "late_from": late.frm, "late_to": late.to, "scan": SCAN_CAP + 1}
-    rows = await run.q("cdmss", sql, p, "cdmss_ro.opd_note_audit")
+    want_rx = need_rx and not weekly
+    jobs = [run.q("cdmss", sql, p, "cdmss_ro.opd_note_audit")]
+    if want_rx:
+        jobs.append(run.q("cdmss", ALL_SQL_TEXTS["opd_uids"], {**p, "r5": R5_RULE_REF}, "cdmss_ro.opd_note_audit"))
+    if directory is None:
+        jobs.append(load_directory(run))
+    res = await gather_all(*jobs)
+    rows = res[0]
+    notes = res[1] if want_rx else None
+    docs = res[-1] if directory is None else (await directory if asyncio.isfuture(directory) or asyncio.iscoroutine(directory) else directory)
     total = sum(float(r["n"] or 0) for r in rows)
     if total > SCAN_CAP:
         run.incomplete.append(f"The window holds more than {SCAN_CAP:,} audited notes; the newest {SCAN_CAP:,} were read, so every figure covers a truncated window.")
@@ -666,24 +723,27 @@ async def load_dataset(run: Run, days: int, *, need_rx: bool = False, weekly: bo
         if r.get("cutoff"):
             run.cutoffs.append(r["cutoff"])
         run.versions.update(v for v in (r.get("versions") or []) if v)
-    docs = directory if directory is not None else await load_directory(run)
-    await fill_names(run, docs, {r["doctor_uid"] for r in rows})
-    rx: dict = {}
-    if need_rx and not weekly:
-        rx = await load_rx(run, p)
+    names = fill_names(run, docs, {r["doctor_uid"] for r in rows})
+    if want_rx:
+        _, rx = await gather_all(names, load_rx(run, notes))
+    else:
+        await names
+        rx = {}
     return Dataset(run, late, early, rows, docs, rx, weekly, truncated=total > SCAN_CAP)
 
 
-async def load_rx(run: Run, p: dict) -> dict:
-    notes = await run.q("cdmss", ALL_SQL_TEXTS["opd_uids"], {**p, "r5": R5_RULE_REF}, "cdmss_ro.opd_note_audit")
+async def load_rx(run: Run, notes: list) -> dict:
+    """DB13 denominators for the notes already listed by the `opd_uids` read."""
     if len(notes) > SCAN_CAP:
         run.incomplete.append(f"More than {SCAN_CAP:,} audited notes in the window: DB13 denominators cover the first {SCAN_CAP:,}.")
         notes = notes[:SCAN_CAP]
     by_uid = {n["uid"]: n for n in notes}
     if not by_uid:
         return {}
-    rows = await run.q("gov", ALL_SQL_TEXTS["dw_rx"], {"uids": sorted(by_uid)}, "studio_ro.dw_individuals_prescriptions")
-    asof = await run.q("gov", DW_AS_OF_SQL, {}, "studio_ro.dw_extract_status")
+    rows, asof = await gather_all(
+        run.q("gov", ALL_SQL_TEXTS["dw_rx"], {"uids": sorted(by_uid)}, "studio_ro.dw_individuals_prescriptions"),
+        run.q("gov", DW_AS_OF_SQL, {}, "studio_ro.dw_extract_status"),
+    )
     if asof and asof[0].get("as_of"):
         run.db13_as_of = str(asof[0]["as_of"])
     out: dict = {}
@@ -766,6 +826,7 @@ def stat(
     extra=None,
     min_n: Optional[int] = None,
     label: Optional[str] = None,
+    measure: str = "rate",
 ) -> dict:
     """Build a Stat (CONTRACT section 1), applying the min-n and coverage gates."""
     meta = METRICS[mid]
@@ -785,6 +846,8 @@ def stat(
             extra = {"band_stats": extra["band_stats"]} if isinstance(extra, dict) and "band_stats" in extra else None
         if status == "ok" and coverage is not None and coverage["pct"] < COVERAGE_GREY_PCT:
             status, reason = "greyed", "coverage_lt_50"
+    if measure == "mean":
+        num = den = None  # a mean's numerator is a score sum ("165643/2055"): value, interval and n are the whole story
     out = {
         "metric_id": mid,
         "label": label or meta["label"],
@@ -803,6 +866,7 @@ def stat(
         "plain": plain,
         "note": note,
         "band": band,
+        "kind": measure,  # "mean" (score means: no numerator/denominator) or "rate"
     }
     if extra is not None:
         out["extra"] = extra
@@ -843,7 +907,7 @@ def _metric_stat(mid: str, g: Group, ds: Dataset, kind: str = "group") -> dict:
         em, _ = mean_sd(E.n_assessed, E.sum_nqi, E.ssq_nqi)
         cov = {"assessed": int(L.n_assessed), "total": int(L.n), "pct": round(100 * L.n_assessed / L.n, 1) if L.n else 0.0}
         ch = _change(ew, w, em, m, E.n_assessed, L.n_assessed, mean_change_p(E.n_assessed, E.sum_nqi, E.ssq_nqi, L.n_assessed, L.sum_nqi, L.ssq_nqi))
-        return stat(mid, w, value=m, num=L.sum_nqi, den=L.n_assessed, n=L.n_assessed, ci=mean_ci(L.n_assessed, L.sum_nqi, L.ssq_nqi), ci_method="mean_normal", kind=kind, coverage=cov, change=ch, band=raw_band(m),
+        return stat(mid, w, value=m, num=L.sum_nqi, den=L.n_assessed, n=L.n_assessed, ci=mean_ci(L.n_assessed, L.sum_nqi, L.ssq_nqi), ci_method="mean_normal", kind=kind, measure="mean", coverage=cov, change=ch, band=raw_band(m),
                     plain=f"about {m:.0f} out of 100 on {cov['pct']:.0f}% of notes" if m is not None else None)
     if mid == "M-OPD-02":
         k = L.band_a + L.band_b
@@ -861,12 +925,12 @@ def _metric_stat(mid: str, g: Group, ds: Dataset, kind: str = "group") -> dict:
         m, _ = mean_sd(L.n_clin, L.sum_clin, L.ssq_clin)
         em, _ = mean_sd(E.n_clin, E.sum_clin, E.ssq_clin)
         ch = _change(ew, w, em, m, E.n_clin, L.n_clin, mean_change_p(E.n_clin, E.sum_clin, E.ssq_clin, L.n_clin, L.sum_clin, L.ssq_clin))
-        return stat(mid, w, value=m, num=L.sum_clin, den=L.n_clin, n=L.n_clin, ci=mean_ci(L.n_clin, L.sum_clin, L.ssq_clin), ci_method="mean_normal", kind=kind, change=ch, band=raw_band(m),
+        return stat(mid, w, value=m, num=L.sum_clin, den=L.n_clin, n=L.n_clin, ci=mean_ci(L.n_clin, L.sum_clin, L.ssq_clin), ci_method="mean_normal", kind=kind, measure="mean", change=ch, band=raw_band(m),
                     plain=f"about {m:.0f} out of 100" if m is not None else None)
     if mid == "M-OPD-04":
         m = _ratio(L.sum_comp, L.n_comp)
         em = _ratio(E.sum_comp, E.n_comp)
-        return stat(mid, w, value=m, num=L.sum_comp, den=L.n_comp, n=L.n_comp, ci=mean_ci(L.n_comp, L.sum_comp, L.ssq_comp), ci_method="mean_normal", kind=kind,
+        return stat(mid, w, value=m, num=L.sum_comp, den=L.n_comp, n=L.n_comp, ci=mean_ci(L.n_comp, L.sum_comp, L.ssq_comp), ci_method="mean_normal", kind=kind, measure="mean",
                     plain=None if m is None else f"about {m:.0f}% of mandatory items present",
                     change=_change(ew, w, em, m, E.n_comp, L.n_comp, mean_change_p(E.n_comp, E.sum_comp, E.ssq_comp, L.n_comp, L.sum_comp, L.ssq_comp)))
     if mid == "M-OPD-05":
@@ -878,7 +942,7 @@ def _metric_stat(mid: str, g: Group, ds: Dataset, kind: str = "group") -> dict:
                  "pct_ci95": None if ci is None else [100 * ci[0], 100 * ci[1]], "ci_method": "wilson"}
         return stat(mid, w, value=None if r is None else 100 * r, num=L.n_lv, den=L.n, n=L.n, kind=kind, extra=extra,
                     change=_change(ew, w, None if er is None else 100 * er, None if r is None else 100 * r, E.n, L.n, rate_change_p(E.n_lv, E.n, L.n_lv, L.n)),
-                    plain=None if r is None else f"about {r:.0f} low-value findings for every 100 notes")
+                    plain=plain_rate(None if r is None else 100 * r, 100, "notes"))
     if mid == "M-OPD-05b":
         p, ep = _ratio(L.n_lv_notes, L.n), _ratio(E.n_lv_notes, E.n)
         ci = wilson(L.n_lv_notes, L.n)
@@ -892,7 +956,7 @@ def _metric_stat(mid: str, g: Group, ds: Dataset, kind: str = "group") -> dict:
         v = _ratio(1000 * k, R.n_rx)
         ev = _ratio(1000 * ek, RE.n_rx)
         return stat(mid, w, value=v, num=k, den=R.n_rx, n=R.n_rx, kind=kind, change=_change(ew, w, ev, v, RE.n_rx, R.n_rx, rate_change_p(ek, RE.n_rx, k, R.n_rx)),
-                    plain=None if v is None else f"about {v:.0f} for every 1,000 prescriptions", note=_unparsed_note(R))
+                    plain=plain_rate(v, 1000, "prescriptions"), note=_unparsed_note(R))
     if mid == "M-OPD-13":
         R, RE = g.rx_late, g.rx_early
         p = _ratio(R.n_5plus, R.n_rx)
@@ -1055,7 +1119,7 @@ def sentence(s: dict) -> str:
         if s["status"] == "greyed":
             tail += " (under half the notes were assessed, so treat it as indicative only)"
     ch = s.get("change")
-    chg = f" It is {ch['direction']} against the previous {w['days']} days." if ch and ch["direction"] != "no clear change" else (" There is no clear change against the previous period." if ch else "")
+    chg = f" It is {ch['direction']} against the previous {w['days']} days." if ch and ch["direction"] in ("rising", "falling") else (f" There is a small change (under 10%) against the previous {w['days']} days." if ch and ch["direction"] == SMALL_CHANGE else (" There is no clear change against the previous period." if ch else ""))
     return f"{s['label']} was {_fmt(s)} over {s['n']} {'prescriptions' if s['unit'] == 'per_1000' else 'notes'} between {span}{tail}.{chg}"
 
 
@@ -1151,6 +1215,31 @@ def groups_by(ds: Dataset, key) -> dict:
     return out
 
 
+def site_comparison(ds: Dataset) -> dict:
+    """Is the per-note site good enough to compare sites? OPD notes carry no site of their own: the site is the doctor's home site, and
+    doctors with none (UNMAPPED) or several (MULTI) cannot be placed. Coverage = placed notes / notes in the window."""
+    total = mapped = 0.0
+    for r in ds.rows:
+        if r.get("period") != "late":
+            continue
+        n = float(r.get("n") or 0)
+        total += n
+        if ds.doc(r["doctor_uid"]).site not in ("UNMAPPED", "MULTI"):
+            mapped += n
+    cov = mapped / total if total else 1.0
+    withheld = total > 0 and cov < SITE_COMPARISON_MIN_COVERAGE
+    caption = f"Site comparison withheld: {round(100 * (1 - cov))}% of notes have no site (doctor home-site mapping). Fix pending." if withheld else None
+    return {"withheld": withheld, "coverage": round(cov, 4), "min_coverage": SITE_COMPARISON_MIN_COVERAGE, "notes": int(total), "notes_with_site": int(mapped), "caption": caption}
+
+
+def withheld_stat(st: dict, caption: str) -> dict:
+    """A Stat reduced to its count: the figure and everything that gives it back (interval, numerator/denominator, change) is dropped."""
+    out = {**st, "value": None, "numerator": None, "denominator": None, "ci95": None, "ci_method": "none", "change": None, "plain": None, "status": "count_only", "grey_reason": "site_coverage", "note": caption}
+    if out.get("extra"):
+        out["extra"] = None
+    return out
+
+
 def site_of(ds: Dataset):
     return lambda uid: ds.doc(uid).site
 
@@ -1181,7 +1270,7 @@ async def build_v1(run: Run, days: int) -> str:
     tiles = lambda xs: [{"stat": s, "headline": sentence(s), "plain": s.get("plain")} for s in xs]  # noqa: E731
     first = opd[0]
     headline = sentence(first)
-    movers = [s for s in (*opd, *ams) if s.get("change") and s["change"]["direction"] != "no clear change"]
+    movers = [s for s in (*opd, *ams) if s.get("change") and s["change"]["direction"] in ("rising", "falling")]
     action = (
         f"Governance leads: {len(movers)} measure(s) are moving ({', '.join(s['metric_id'] for s in movers)}); open the scorecard for those first."
         if movers
@@ -1207,11 +1296,17 @@ TREND_METRICS = ("M-OPD-01", "M-OPD-03", "M-OPD-05")
 
 async def build_v2(run: Run, days: int, family: str, site_filter: Optional[str]) -> str:
     metrics = SCORECARD_METRICS[family]
-    ds = await load_dataset(run, days, need_rx=family == "ams")
-    directory = ds.docs
+    # The window aggregate and the weekly trend aggregate are independent reads: run them together, sharing one directory read.
+    directory = asyncio.ensure_future(load_directory(run))
+    if family == "opd":
+        ds, wds = await gather_all(load_dataset(run, days, directory=directory), load_dataset(run, days, weekly=True, directory=directory))
+    else:
+        ds, wds = await load_dataset(run, days, need_rx=True, directory=directory), None
     by_site = groups_by(ds, site_of(ds))
     allg = ds.group()
-    sites = ["ALL", *sorted(s for s in by_site if site_filter is None or s == site_filter)]
+    sc = site_comparison(ds)
+    # Withheld: only the hospital-wide ("ALL") row, trend and band mix are built; no site is compared with another.
+    sites = ["ALL"] if sc["withheld"] else ["ALL", *sorted(s for s in by_site if site_filter is None or s == site_filter)]
     site_list = [{"code": "ALL", "label": "All sites", "n": int(allg.late.n)}] + [{"code": k, "label": k, "n": int(by_site[k].late.n)} for k in sorted(by_site)]
     matrix, rows, band_mix = [], [], []
     for s in sites:
@@ -1227,7 +1322,6 @@ async def build_v2(run: Run, days: int, family: str, site_filter: Optional[str])
             rows.append({"site": s, "metric_id": m, "label": st["label"], "value": st["value"], "unit": st["unit"], "n": st["n"], "status": st["status"], "ci_lo": ci[0], "ci_hi": ci[1]})
     trend = []
     if family == "opd":
-        wds = await load_dataset(run, days, weekly=True, directory=directory)
         wby = groups_by(wds, site_of(wds))
         wall = wds.group()
         for s in sites:
@@ -1238,7 +1332,7 @@ async def build_v2(run: Run, days: int, family: str, site_filter: Optional[str])
                 pts = []
                 for k in range(days // 7 - 1, -1, -1):
                     wk = Window(wds.late.to - dt.timedelta(days=7 * k + 6), wds.late.to - dt.timedelta(days=7 * k))
-                    wd = Dataset(run, wk, None, [], directory, {}, False)
+                    wd = Dataset(run, wk, None, [], ds.docs, {}, False)
                     st = metric_stat(m, Group(late=g.periods.get(f"w{k}", OpdAgg())), wd, "all" if s == "ALL" else "site")
                     pts.append({"week_from": wk.frm.isoformat(), "week_to": wk.to.isoformat(), "value": st["value"], "n": st["n"], "status": st["status"]})
                 trend.append({"site": s, "metric_id": m, "points": pts})
@@ -1246,10 +1340,10 @@ async def build_v2(run: Run, days: int, family: str, site_filter: Optional[str])
     below = [m["site"] for m in matrix[1:] if any(c["status"] == "count_only" for c in m["cells"].values())]
     env = build_envelope(
         run, ds.late, sentence(head), head.get("plain") or sentence(head), [c for m in matrix for c in m["cells"].values()],
-        caveats=(SITE_CAVEAT,),
-        action=("Site medical heads: read your own row first; " + (f"{', '.join(below)} have too few audited notes for some measures." if below else "all listed sites have enough audited notes.")),
+        caveats=(SITE_CAVEAT, *((sc["caption"],) if sc["withheld"] else ())),
+        action=("Governance leads: site comparison is paused until each note has a site; read the hospital-wide row." if sc["withheld"] else "Site medical heads: read your own row first; " + (f"{', '.join(below)} have too few audited notes for some measures." if below else "all listed sites have enough audited notes.")),
     )
-    view = {"envelope": env, "site_basis": "doctor_home_site", "sites": site_list, "matrix_sites": sites, "band_mix": band_mix, "metrics": [{"metric_id": m, "label": METRICS[m]["label"], "unit": METRICS[m]["unit"]} for m in metrics], "matrix": matrix, "trend": trend}
+    view = {"envelope": env, "site_basis": "doctor_home_site", "site_comparison": sc, "sites": site_list, "matrix_sites": sites, "band_mix": band_mix, "metrics": [{"metric_id": m, "label": METRICS[m]["label"], "unit": METRICS[m]["unit"]} for m in metrics], "matrix": matrix, "trend": trend}
     return wrap(run, "cdmss_v2_scorecard", ["site", "metric_id", "label", "value", "unit", "n", "status", "ci_lo", "ci_hi"], rows, view)
 
 
@@ -1329,6 +1423,17 @@ async def build_v3(run: Run, days: int, metric: str, site: Optional[str], specia
 
 async def build_v4(run: Run, days: int, site: str) -> str:
     ds = await load_dataset(run, days)
+    sc = site_comparison(ds)
+    if sc["withheld"]:
+        # The whole view is a site comparison: show the caption and the hospital-wide figure only.
+        all_stat = metric_stat("M-OPD-05b", ds.group(), ds, "all")
+        other = {**withheld_stat(all_stat, sc["caption"]), "n": 0}
+        all_sites = groups_by(ds, site_of(ds))
+        site_list = [{"code": "ALL", "label": "All sites", "n": int(ds.group().late.n)}] + [{"code": k, "label": k, "n": int(all_sites[k].late.n)} for k in sorted(all_sites)]
+        env = build_envelope(run, ds.late, f"{sc['caption']} {sentence(all_stat)}", all_stat.get("plain") or sentence(all_stat), [all_stat], caveats=(SITE_CAVEAT, sc["caption"]),
+                             action="Governance leads: contributors by site are paused until each note has a site; use the hospital-wide figure and the doctor variation view.")
+        view = {"envelope": env, "site": site, "sites": site_list, "site_comparison": sc, "metric": "lv_rate", "site_rate": all_stat, "other_sites_rate": other, "gap": None, "contributors": [], "top_contributor_removed": None}
+        return wrap(run, "cdmss_v4_contributors", ["doctor_uid", "doctor_name", "n", "events", "rate", "share_of_gap", "rate_without"], [], view)
     gs = groups_by(ds, lambda u: u if ds.doc(u).site == site else None)
     in_site = ds.group(lambda u: ds.doc(u).site == site)
     other = ds.group(lambda u: ds.doc(u).site != site)
@@ -1377,7 +1482,7 @@ async def build_v4(run: Run, days: int, site: str) -> str:
     rows = [{"doctor_uid": c["doctor_uid"], "doctor_name": c["doctor_name"], "n": c["n"], "events": c["events"], "rate": c["rate"], "share_of_gap": c["share_of_gap"], "rate_without": c["site_rate_without"]} for c in contributors]
     all_sites = groups_by(ds, site_of(ds))
     site_list = [{"code": "ALL", "label": "All sites", "n": int(ds.group().late.n)}] + [{"code": k, "label": k, "n": int(all_sites[k].late.n)} for k in sorted(all_sites)]
-    view = {"envelope": env, "site": site, "sites": site_list, "metric": "lv_rate", "site_rate": site_stat, "other_sites_rate": other_stat, "gap": gap, "contributors": contributors,
+    view = {"envelope": env, "site": site, "sites": site_list, "site_comparison": sc, "metric": "lv_rate", "site_rate": site_stat, "other_sites_rate": other_stat, "gap": gap, "contributors": contributors,
             "top_contributor_removed": None if not top else {"doctor_uid": top["doctor_uid"], "site_rate_without": top["site_rate_without"]}}
     return wrap(run, "cdmss_v4_contributors", ["doctor_uid", "doctor_name", "n", "events", "rate", "share_of_gap", "rate_without"], rows, view)
 
@@ -1542,18 +1647,22 @@ async def build_metric(run: Run, mid: str, days: int, group_by: str, site: Optio
     else:
         gmap = groups_by(ds, lambda u: u if pred(u) else None)
         kind = "doctor"
+    sc = site_comparison(ds)
+    site_withheld = group_by == "site" and sc["withheld"]
     groups = []
     for k, g in gmap.items():
         st = metric_stat(mid, g, ds, kind)
+        if site_withheld:
+            st = withheld_stat(st, sc["caption"])
         label = k if group_by != "doctor" else (ds.doc(k).name or k)
         groups.append({"key": k, "label": label, "site": ds.doc(k).site if group_by == "doctor" else (k if group_by == "site" else None), "stat": st})
     groups.sort(key=lambda x: (x["stat"]["status"] not in ("ok", "greyed"), -(x["stat"]["value"] if x["stat"]["value"] is not None else -9e9), -x["stat"]["n"]))
     groups = groups[:limit]
     head = groups[0]["stat"] if group_by == "none" and groups else metric_stat(mid, ds.group(pred), ds, "all")
-    env = build_envelope(run, ds.late, sentence(head), head.get("plain") or sentence(head), [head] if group_by == "none" else [head, *[x["stat"] for x in groups]], caveats=(SITE_CAVEAT,) if group_by == "site" or site else (),
+    env = build_envelope(run, ds.late, sentence(head), head.get("plain") or sentence(head), [head] if group_by == "none" else [head, *[x["stat"] for x in groups]], caveats=((SITE_CAVEAT,) if group_by == "site" or site else ()) + ((sc["caption"],) if site_withheld else ()),
                          action="Governance leads: use the doctor view for outliers and the worklist for the notes behind the number.")
     rows = [{"key": x["key"], "label": x["label"], "value": x["stat"]["value"], "unit": x["stat"]["unit"], "n": x["stat"]["n"], "status": x["stat"]["status"]} for x in groups]
-    return wrap(run, "cdmss_metric", ["key", "label", "value", "unit", "n", "status"], rows, {"envelope": env, "metric": meta, "groups": groups})
+    return wrap(run, "cdmss_metric", ["key", "label", "value", "unit", "n", "status"], rows, {"envelope": env, "metric": meta, "groups": groups, "site_comparison": sc})
 
 
 DRILL = {
@@ -1696,6 +1805,70 @@ class FindingArgs(BaseModel):
     finding_no: Optional[int] = Field(default=None, ge=1, le=10_000)
 
 
+# --------------------------------------------------------------------------------------------------------------
+# Result cache (300 s) and single-flight. Same tool + same normalised params + same IST day => the finished payload is reused;
+# identical requests that arrive while one is running share that run. Nothing about SQL or numbers changes. Only successful
+# payloads are cached. Every request is audited: a real run audits each query, a hit or a shared result audits one cache row.
+# --------------------------------------------------------------------------------------------------------------
+
+_cache: dict = {}  # key -> (monotonic_at, cached_at_iso, payload dict)
+_inflight: dict = {}  # key -> asyncio.Future of the payload dict
+
+
+def clear_cache() -> None:
+    _cache.clear()
+    _inflight.clear()
+
+
+def _cached_copy(payload: dict, at_iso: str) -> str:
+    out = copy.deepcopy(payload)
+    try:
+        prov = out["view"]["envelope"]["provenance"]
+        prov["cached_at"] = at_iso
+        prov["cached"] = True
+    except (KeyError, TypeError):
+        pass
+    return json.dumps(out)
+
+
+async def cached(run: Run, build: Callable[[], Awaitable[str]]) -> str:
+    key = (run.tool, run.today.isoformat(), json.dumps(run.params, sort_keys=True, default=str))
+    hit = _cache.get(key)
+    if hit and time.monotonic() - hit[0] < CACHE_TTL_S:
+        await run.audit_cache()
+        return _cached_copy(hit[2], hit[1])
+    fut = _inflight.get(key)
+    if fut is not None:
+        try:
+            payload, at_iso = await asyncio.shield(fut)
+        except asyncio.CancelledError:
+            if fut.cancelled():  # the leader was cancelled (its client gave up), not this request: run it ourselves
+                return await build()
+            raise
+        await run.audit_cache()
+        return _cached_copy(payload, at_iso)
+    fut = asyncio.get_running_loop().create_future()
+    _inflight[key] = fut
+    try:
+        body = await build()
+        payload = json.loads(body)
+        at_iso = dt.datetime.now(KOLKATA).isoformat(timespec="seconds")
+        _cache[key] = (time.monotonic(), at_iso, payload)
+        if not fut.done():
+            fut.set_result((payload, at_iso))
+        return body
+    except BaseException as exc:
+        if not fut.done():
+            if isinstance(exc, asyncio.CancelledError):
+                fut.cancel()
+            else:
+                fut.set_exception(exc)
+                fut.exception()  # mark retrieved: no "never retrieved" warning when nobody else was waiting
+        raise
+    finally:
+        _inflight.pop(key, None)
+
+
 def _args(**kw) -> dict:
     return {k: v for k, v in kw.items()}
 
@@ -1705,42 +1878,43 @@ async def cdmss_v1_this_week(window_days: int = 7, config: RunnableConfig = None
     """CDMSS module home: this week's OPD note-audit and antimicrobial-stewardship tiles (mean NQI with coverage, Clinical NQI,
     band mix, low-value findings per 100 notes, completeness, URTI antibiotics) with change against the previous period. Read-only.
     Returns the module envelope (provenance, headline, stats, caveats, action line)."""
-    return await build_v1(Run("cdmss_v1_this_week", _args(window_days=window_days), config), window_days)
+    run = Run("cdmss_v1_this_week", _args(window_days=window_days), config)
+    return await cached(run, lambda: build_v1(run, window_days))
 
 
 @tool(args_schema=V2Args)
 async def cdmss_v2_scorecard(window_days: int = 28, family: str = "opd", site: Optional[str] = None, config: RunnableConfig = None) -> str:
     """CDMSS family scorecard: a site-by-measure matrix and weekly trend lines for the OPD note audit or antimicrobial stewardship. Read-only."""
     run = Run("cdmss_v2_scorecard", _args(window_days=window_days, family=family, site=site), config)
-    return await build_v2(run, window_days, family, site)
+    return await cached(run, lambda: build_v2(run, window_days, family, site))
 
 
 @tool(args_schema=V3Args)
 async def cdmss_v3_doctor_variation(window_days: int = 28, metric: str = "lv_rate", site: Optional[str] = None, specialty: Optional[str] = None, config: RunnableConfig = None) -> str:
     """CDMSS doctor variation: a funnel plot (share of notes with a low-value finding, with 95% and 99.8% limits) or a ranked mean-NQI list. Doctor names appear only beside note counts and intervals. Read-only."""
     run = Run("cdmss_v3_doctor_variation", _args(window_days=window_days, metric=metric, site=site, specialty=specialty), config)
-    return await build_v3(run, window_days, metric, site, specialty)
+    return await cached(run, lambda: build_v3(run, window_days, metric, site, specialty))
 
 
 @tool(args_schema=V4Args)
 async def cdmss_v4_contributors(site: str, window_days: int = 28, metric: str = "lv_rate", config: RunnableConfig = None) -> str:
     """CDMSS contributors: each doctor's share of a site's gap on low-value findings, and the site rate without them. Read-only."""
     run = Run("cdmss_v4_contributors", _args(window_days=window_days, site=site, metric=metric), config)
-    return await build_v4(run, window_days, site)
+    return await cached(run, lambda: build_v4(run, window_days, site))
 
 
 @tool(args_schema=V5Args)
 async def cdmss_v5_redflags(window_days: int = 28, site: Optional[str] = None, doctor_uid: Optional[str] = None, limit: int = 50, config: RunnableConfig = None) -> str:
     """CDMSS red-flag dossiers: doctors with open governance signals, the signals and their recent evidence findings with note quotes and case links. Read-only."""
     run = Run("cdmss_v5_redflags", _args(window_days=window_days, site=site, doctor_uid=doctor_uid, limit=limit), config)
-    return await build_v5(run, window_days, site, doctor_uid, limit)
+    return await cached(run, lambda: build_v5(run, window_days, site, doctor_uid, limit))
 
 
 @tool(args_schema=V8Args)
 async def cdmss_v8_worklists(list: str = "signals_open", window_days: int = 28, site: Optional[str] = None, doctor_uid: Optional[str] = None, limit: int = LIST_CAP, offset: int = 0, config: RunnableConfig = None) -> str:  # noqa: A002
     """CDMSS named worklists: open or overdue governance signals, low-value findings, or notes without a PDQI-9 assessment, with doctor, site, quote and case link. Up to 500 rows per page. Read-only."""
     run = Run("cdmss_v8_worklists", _args(list=list, window_days=window_days, site=site, doctor_uid=doctor_uid, limit=limit, offset=offset), config)
-    return await build_v8(run, window_days, list, site, doctor_uid, limit, offset)
+    return await cached(run, lambda: build_v8(run, window_days, list, site, doctor_uid, limit, offset))
 
 
 @tool(args_schema=NoArgs)
@@ -1753,21 +1927,21 @@ async def cdmss_metric_catalogue(config: RunnableConfig = None) -> str:
 async def cdmss_metric(metric_id: str, window_days: int = 28, group_by: str = "none", site: Optional[str] = None, doctor_uid: Optional[str] = None, limit: int = 50, config: RunnableConfig = None) -> str:
     """One CDMSS catalogue metric (e.g. M-OPD-01 mean NQI, M-OPD-03 Clinical NQI, M-OPD-05 low-value per 100 notes), overall or by site or doctor, with numerator, denominator, n, window, interval, coverage and change. Always present the headline, window and caveats. Read-only."""
     run = Run("cdmss_metric", _args(metric_id=metric_id, window_days=window_days, group_by=group_by, site=site, doctor_uid=doctor_uid, limit=limit), config)
-    return await build_metric(run, metric_id, window_days, group_by, site, doctor_uid, limit)
+    return await cached(run, lambda: build_metric(run, metric_id, window_days, group_by, site, doctor_uid, limit))
 
 
 @tool(args_schema=DrillArgs)
 async def cdmss_drilldown(metric_id: str, window_days: int = 28, site: Optional[str] = None, doctor_uid: Optional[str] = None, limit: int = 100, offset: int = 0, config: RunnableConfig = None) -> str:
     """The notes or findings behind a CDMSS metric (worklist rows with doctor, site, quote and CDMSS case link), filtered by site or doctor. Read-only."""
     run = Run("cdmss_drilldown", _args(metric_id=metric_id, window_days=window_days, site=site, doctor_uid=doctor_uid, limit=limit, offset=offset), config)
-    return await build_drilldown(run, metric_id, window_days, site, doctor_uid, limit, offset)
+    return await cached(run, lambda: build_drilldown(run, metric_id, window_days, site, doctor_uid, limit, offset))
 
 
 @tool(args_schema=FindingArgs)
 async def cdmss_finding_detail(uid: str, finding_no: Optional[int] = None, config: RunnableConfig = None) -> str:
     """One audited OPD note's findings in full: subject, verdict, rule, the note quote, rationale and the CDMSS case link. Read-only."""
     run = Run("cdmss_finding_detail", _args(uid=uid, finding_no=finding_no), config)
-    return await build_finding_detail(run, uid, finding_no)
+    return await cached(run, lambda: build_finding_detail(run, uid, finding_no))
 
 
 CDMSS_TOOLS = [

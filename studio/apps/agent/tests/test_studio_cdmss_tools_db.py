@@ -156,6 +156,7 @@ def tool(name):
 
 
 async def call(name, args, audits=None):
+    ct.clear_cache()  # these tests change the seed between calls; the 300 s result cache has its own tests
     return json.loads(await tool(name).ainvoke(args, config=CFG))
 
 
@@ -178,7 +179,7 @@ async def test_nqi_is_over_assessed_notes_only_with_coverage(world):
     body = await call("cdmss_metric", {"metric_id": "M-OPD-01", "window_days": 7})
     s = groups(body)["ALL"]
     # assessed: D1 12 (6x90 + 6x70 = 960), D2 20x60 = 1200, D3 5x50 = 250, D4 12x90 = 1080, D5 60x80 = 4800 -> 8290 / 109
-    assert s["numerator"] == 8290 and s["denominator"] == 109 and s["n"] == 109
+    assert s["numerator"] is None and s["denominator"] is None and s["kind"] == "mean" and s["n"] == 109  # a mean shows value, interval and n, never a score sum
     assert approx(s["value"], 8290 / 109)
     assert s["coverage"] == {"assessed": 109, "total": 135, "pct": 80.7} and s["status"] == "ok"
     assert s["band"] == "B" and s["metric_id"] == "M-OPD-01" and s["unit"] == "score"
@@ -192,7 +193,7 @@ async def test_the_view_keeps_old_versions_excluded_and_foreign_rows_out(world):
     body = await call("cdmss_metric", {"metric_id": "M-OPD-04", "window_days": 7, "group_by": "doctor"})
     d1 = groups(body)["D1"]
     # D1 has 20 notes (not 21+): the 0.81.20 duplicate, the house-account row and the foreign engine never count. completeness (10x90 + 10x70) / 20 = 80
-    assert d1["n"] == 20 and d1["numerator"] == 1600 and approx(d1["value"], 80)
+    assert d1["n"] == 20 and d1["numerator"] is None and approx(d1["value"], 80)
 
 
 @pytest.mark.anyio
@@ -200,7 +201,7 @@ async def test_clinical_nqi_reweights_two_domains_over_all_notes(world):
     body = await call("cdmss_metric", {"metric_id": "M-OPD-03", "window_days": 7})
     s = groups(body)["ALL"]
     # D1 10x70 + 10x50 (appropriateness only) = 1200; D2 20x40 = 800; D3 5x40 = 200; D4 30x40 = 1200; D5 60x80 = 4800 -> 8200 / 135
-    assert s["numerator"] == 8200 and s["denominator"] == 135 and approx(s["value"], 8200 / 135)
+    assert s["numerator"] is None and s["denominator"] is None and s["kind"] == "mean" and approx(s["value"], 8200 / 135)
     assert s["coverage"] is None  # unassessed PDQI-9 notes stay in the denominator of Clinical NQI
 
 
@@ -246,8 +247,8 @@ async def test_doctor_min_n_and_coverage_greying(world):
 async def test_site_groups_use_the_home_site_and_the_15_note_floor(world):
     g = groups(await call("cdmss_metric", {"metric_id": "M-OPD-01", "window_days": 7, "group_by": "site"}))
     # SITEA = D1 + D2 + D5: assessed 12 + 20 + 60 = 92, sum 960 + 1200 + 4800 = 6960 ; SITEB = D3 + D4: assessed 5 + 12 = 17 of 35 notes (48.6% < 50%)
-    assert g["SITEA"]["numerator"] == 6960 and g["SITEA"]["denominator"] == 92 and g["SITEA"]["status"] == "ok"
-    assert g["SITEB"]["denominator"] == 17 and g["SITEB"]["status"] == "greyed" and g["SITEB"]["coverage"]["pct"] == 48.6
+    assert g["SITEA"]["numerator"] is None and approx(g["SITEA"]["value"], 6960 / 92) and g["SITEA"]["n"] == 92 and g["SITEA"]["status"] == "ok"
+    assert g["SITEB"]["n"] == 17 and g["SITEB"]["status"] == "greyed" and g["SITEB"]["coverage"]["pct"] == 48.6
     # D6 (two engaged hospitals) has no notes, so MULTI does not appear; none of the audited doctors is unmapped
     assert set(g) == {"SITEA", "SITEB"}
 
@@ -482,7 +483,7 @@ async def test_every_query_is_audited_with_user_tool_and_query_hash(world):
     again = list(world)
     world.clear()
     await call("cdmss_v3_doctor_variation", {"window_days": 7})
-    assert [r.params_hash for r in world] == [r.params_hash for r in again]  # stable
+    assert sorted(r.params_hash for r in world) == sorted(r.params_hash for r in again)  # stable (rows land in completion order: independent queries run together)
 
 
 # --- fixtures for builder B ----------------------------------------------------------------------------------
@@ -676,3 +677,59 @@ async def test_completeness_change_is_computed_and_truncation_never_claims_a_cha
     changes = [x["stat"]["change"] for x in body["view"]["groups"] if x["stat"]["change"]]
     assert changes and all(c["direction"] == "not computed (truncated)" and c["p_value"] is None and c["relative_change"] is None for c in changes)
     assert "incomplete" in body and "newest 150" in body["incomplete"]
+
+
+# --- site comparison is withheld below 90% site coverage (ruling 23 Oct) ----------------------------------------
+
+async def _site_views():
+    v2 = (await call("cdmss_v2_scorecard", {"window_days": 7}))["view"]
+    v4 = (await call("cdmss_v4_contributors", {"site": "SITEA", "window_days": 7}))["view"]
+    t1 = (await call("cdmss_metric", {"metric_id": "M-OPD-01", "window_days": 7, "group_by": "site"}))["view"]
+    return v2, v4, t1
+
+
+@pytest.mark.anyio
+async def test_site_comparison_is_shown_at_or_above_90_percent_coverage(world, cdmss):
+    c = cdmss
+    for i in range(1, 11):  # D6 is MULTI: 10 unplaced notes of 145 -> coverage 135/145 = 93.1%
+        add_note(c, f"D6-SC-{i:02d}", "D6", findings=[f("lvx")])
+    try:
+        v2, v4, t1 = await _site_views()
+        for v in (v2, v4, t1):
+            assert v["site_comparison"]["withheld"] is False and v["site_comparison"]["caption"] is None and approx(v["site_comparison"]["coverage"], 135 / 145, 1e-3)
+        assert {m["site"] for m in v2["matrix"]} >= {"ALL", "SITEA", "SITEB"} and v2["trend"] and v4["contributors"]
+        assert any(g["stat"]["status"] in ("ok", "greyed") for g in t1["groups"])
+    finally:
+        drop_notes(c, "D6-SC-")
+
+
+@pytest.mark.anyio
+async def test_site_comparison_is_withheld_below_90_percent_coverage_but_hospital_wide_stays(world, cdmss):
+    c = cdmss
+    for i in range(1, 21):  # 20 unplaced notes of 155 -> coverage 135/155 = 87.1%
+        add_note(c, f"D6-SC-{i:02d}", "D6", findings=[f("lvx")])
+    try:
+        v2, v4, t1 = await _site_views()
+        caption = "Site comparison withheld: 13% of notes have no site (doctor home-site mapping). Fix pending."
+        for v in (v2, v4, t1):
+            assert v["site_comparison"]["withheld"] is True and v["site_comparison"]["caption"] == caption
+            assert caption in v["envelope"]["caveats"]
+        # V2: hospital-wide row, trend and band mix only
+        assert [m["site"] for m in v2["matrix"]] == ["ALL"] and {t["site"] for t in v2["trend"]} == {"ALL"} and [b["site"] for b in v2["band_mix"]] == ["ALL"]
+        assert v2["matrix"][0]["cells"]["M-OPD-01"]["status"] == "ok"  # hospital-wide figures stay
+        # V4: the caption and the hospital-wide figure only
+        assert v4["contributors"] == [] and v4["gap"] is None and v4["top_contributor_removed"] is None
+        assert v4["site_rate"]["status"] == "ok" and v4["site_rate"]["n"] == 155
+        assert v4["other_sites_rate"]["status"] == "count_only" and v4["other_sites_rate"]["value"] is None and v4["other_sites_rate"]["numerator"] is None
+        # T1 group_by=site: every group is count_only with the caption; the hospital-wide head is intact
+        assert t1["groups"] and all(g["stat"]["status"] == "count_only" and g["stat"]["value"] is None and g["stat"]["note"] == caption and g["stat"]["numerator"] is None for g in t1["groups"])
+        assert t1["envelope"]["stats"][0]["status"] == "ok"
+        # group_by=none and group_by=doctor are not site comparisons
+        none = (await call("cdmss_metric", {"metric_id": "M-OPD-01", "window_days": 7}))["view"]
+        assert none["groups"][0]["stat"]["status"] == "ok"
+    finally:
+        drop_notes(c, "D6-SC-")
+
+
+def test_site_comparison_threshold_constant_is_90_percent():
+    assert ct.SITE_COMPARISON_MIN_COVERAGE == 0.90

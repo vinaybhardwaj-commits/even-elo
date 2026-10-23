@@ -248,6 +248,7 @@
      "coverage": null,
      "denominator": null,
      "grey_reason": null,
+     "kind": "rate",
      "label": "Low-value findings (worklist size)",
      "metric_id": "M-WL-01",
      "n": 46,

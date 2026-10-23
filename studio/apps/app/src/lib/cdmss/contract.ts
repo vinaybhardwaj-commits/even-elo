@@ -40,11 +40,28 @@ export const ViewParams = z
   .strict();
 export type ViewParams = z.infer<typeof ViewParams>;
 
+/** The keys each agent tool's args schema accepts. The agent REFUSES any other key (422), so the route forwards only
+ * these and screens build only these. Pinned to the agent's real schemas by tests/fixtures/cdmss/args_schema.json
+ * (see the cross-check test). */
+export const VIEW_PARAM_KEYS: Record<ViewId, ReadonlyArray<keyof ViewParams>> = {
+  this_week: ["window_days"],
+  scorecard: ["window_days", "family", "site"],
+  doctor_variation: ["window_days", "metric", "site", "specialty"],
+  contributors: ["window_days", "site", "metric"],
+  redflags: ["window_days", "site", "doctor_uid", "limit"],
+  worklists: ["list", "window_days", "site", "doctor_uid", "limit", "offset"],
+};
+/** The params object a view may send: only its own keys. */
+export function paramsFor(view: ViewId, p: ViewParams): ViewParams {
+  const allowed = new Set<string>(VIEW_PARAM_KEYS[view]);
+  return Object.fromEntries(Object.entries(p).filter(([k, v]) => allowed.has(k) && v !== undefined)) as ViewParams;
+}
+
 const num = z.number().nullable();
 const Window = z.object({ from: z.string(), to: z.string(), days: z.number().optional() });
 
 const Change = z.object({
-  direction: z.enum(["rising", "falling", "no clear change", "not computed (truncated)"]), // last: a capped scan (CONTRACT A3)
+  direction: z.enum(["rising", "falling", "no clear change", "small change (under 10%)", "not computed (truncated)"]), // last: a capped scan (CONTRACT A3)
   p_value: num,
   relative_change: num,
   early: z.object({ from: z.string(), to: z.string(), value: num, n: z.number() }),
@@ -72,6 +89,7 @@ export const Stat = z.object({
   note: z.string().nullable(),
   band: z.string().nullable().optional(),
   extra: z.record(z.string(), z.unknown()).nullable().optional(),
+  kind: z.enum(["mean", "rate"]).optional(), // "mean": no numerator/denominator, value + interval + n only
 });
 export type Stat = z.infer<typeof Stat>;
 
@@ -127,12 +145,21 @@ export const ThisWeekView = z.object({
     }),
   ),
 });
+/** Ruling 23 Oct: site comparisons are withheld while fewer than 90% of window notes can be placed at a site. */
+export const SiteComparison = z.object({
+  withheld: z.boolean(),
+  coverage: z.number(),
+  min_coverage: z.number().optional(),
+  caption: z.string().nullable(),
+});
+export type SiteComparison = z.infer<typeof SiteComparison>;
 const SiteOption = z.object({ code: z.string(), label: z.string(), n: z.number() });
 export type SiteOption = z.infer<typeof SiteOption>;
 // 3.2
 export const ScorecardView = z.object({
   envelope: Envelope,
   site_basis: z.string(),
+  site_comparison: SiteComparison.optional(),
   sites: z.array(SiteOption), // every site with notes in the window (CONTRACT-CHANGES B1)
   matrix_sites: z.array(z.string()), // the rows present in `matrix`
   metrics: z.array(z.object({ metric_id: z.string(), label: z.string(), unit: z.string() })),
@@ -184,6 +211,7 @@ export const ContributorsView = z.object({
   envelope: Envelope,
   site: z.string(),
   sites: z.array(SiteOption),
+  site_comparison: SiteComparison.optional(),
   metric: z.string(),
   site_rate: Stat,
   other_sites_rate: Stat,
