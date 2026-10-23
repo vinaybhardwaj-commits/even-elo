@@ -107,7 +107,7 @@ export function ScorecardScreen() {
               <EnvelopeBlock env={d.view.envelope} />
               <SiteWithheld sc={d.view.site_comparison} />
               <section className="scr-card" aria-label="Site scorecard"><ScorecardMatrix data={d.view} /></section>
-              {d.view.metrics.filter((m) => d.view.trend.some((t) => t.metric_id === m.metric_id)).map((m) => (
+              {d.view.metrics.map((m) => (
                 <section key={m.metric_id} className="scr-card" aria-label={`Trend ${m.label}`}>
                   <h3>{m.label}: weekly trend</h3>
                   <TrendLines data={d.view} metricId={m.metric_id} />
@@ -160,7 +160,12 @@ export function ContributorsScreen() {
   const [picked, setPicked] = useState<string | undefined>();
   const siteRead = useCdmssView("scorecard", { window_days });
   const known = useSites(siteRead);
-  const site = picked ?? known.filter((x) => x.code !== "ALL").sort((a, b) => b.n - a.n)[0]?.code;
+  const busiest = known.filter((x) => x.code !== "ALL").sort((a, b) => b.n - a.n)[0]?.code;
+  // While withheld the V2 list holds only "ALL" (no per-site counts), so there is no site to pick. The agent's V4 accepts "ALL"
+  // (site pattern ^[A-Za-z0-9_\- ]{1,20}$) and, while withheld, ignores the site and answers hospital-wide with the caption. ALL is sent
+  // ONLY when V2 has said withheld: outside the withholding it would name a site that does not exist.
+  const v2Withheld = siteRead.status === "ok" && !!siteRead.data.view.site_comparison?.withheld;
+  const site = picked ?? busiest ?? (v2Withheld ? "ALL" : undefined);
   const params: ViewParams | null = site ? { site, metric: "lv_rate", window_days } : null;
   const state = useCdmssView("contributors", params);
   useCdmssContext("contributors", params ?? { window_days }, state.status, state.status === "ok" ? state.data.source.query_hash : null);
