@@ -136,7 +136,7 @@
   }
  ],
  "source": {
-  "query_hash": "293267718269",
+  "query_hash": "7c7f233339b9",
   "tool": "cdmss_drilldown"
  },
  "synthetic": true,
@@ -157,7 +157,7 @@
     "generated_at": "2026-10-23T12:00:00+05:30",
     "query_hashes": [
      "c5158c604742",
-     "a0c7f9000be7"
+     "2b42f064a44a"
     ],
     "sources": [
      "governance DB: physicians, physician_engagements, hospitals",

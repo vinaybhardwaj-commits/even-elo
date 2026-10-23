@@ -47,8 +47,8 @@
    "value": 83.22147651006712
   },
   {
-   "ci_hi": null,
-   "ci_lo": null,
+   "ci_hi": 80.50231647303315,
+   "ci_lo": 79.49768352696685,
    "label": "Documentation completeness",
    "metric_id": "M-OPD-04",
    "n": 175,
@@ -102,8 +102,8 @@
    "value": 84.84848484848484
   },
   {
-   "ci_hi": null,
-   "ci_lo": null,
+   "ci_hi": 80.62834715236475,
+   "ci_lo": 79.37165284763525,
    "label": "Documentation completeness",
    "metric_id": "M-OPD-04",
    "n": 140,
@@ -157,8 +157,8 @@
    "value": 70.58823529411765
   },
   {
-   "ci_hi": null,
-   "ci_lo": null,
+   "ci_hi": 80.0,
+   "ci_lo": 80.0,
    "label": "Documentation completeness",
    "metric_id": "M-OPD-04",
    "n": 35,
@@ -180,7 +180,7 @@
   }
  ],
  "source": {
-  "query_hash": "de3a4f372f05",
+  "query_hash": "e35aa5fe55b4",
   "tool": "cdmss_v2_scorecard"
  },
  "synthetic": true,
@@ -723,9 +723,9 @@
     "engine_family": "opd-note-audit/0.81.3+ (derived by shape in cdmss_ro.opd_note_audit); versions read: opd-note-audit/0.81.21",
     "generated_at": "2026-10-23T12:00:00+05:30",
     "query_hashes": [
-     "ec6f6c50cbdb",
+     "702bdfe8382b",
      "c5158c604742",
-     "20a1c1a5a643"
+     "65e51ebb14e0"
     ],
     "sources": [
      "cdmss_ro.opd_note_audit",
@@ -1010,8 +1010,11 @@
     {
      "band": null,
      "change": null,
-     "ci95": null,
-     "ci_method": "none",
+     "ci95": [
+      79.49768352696685,
+      80.50231647303315
+     ],
+     "ci_method": "mean_normal",
      "coverage": null,
      "denominator": 175.0,
      "grey_reason": null,
@@ -1336,8 +1339,11 @@
     {
      "band": null,
      "change": null,
-     "ci95": null,
-     "ci_method": "none",
+     "ci95": [
+      79.37165284763525,
+      80.62834715236475
+     ],
+     "ci_method": "mean_normal",
      "coverage": null,
      "denominator": 140.0,
      "grey_reason": null,
@@ -1662,8 +1668,11 @@
     {
      "band": null,
      "change": null,
-     "ci95": null,
-     "ci_method": "none",
+     "ci95": [
+      80.0,
+      80.0
+     ],
+     "ci_method": "mean_normal",
      "coverage": null,
      "denominator": 35.0,
      "grey_reason": null,
@@ -1993,8 +2002,11 @@
      "M-OPD-04": {
       "band": null,
       "change": null,
-      "ci95": null,
-      "ci_method": "none",
+      "ci95": [
+       79.49768352696685,
+       80.50231647303315
+      ],
+      "ci_method": "mean_normal",
       "coverage": null,
       "denominator": 175.0,
       "grey_reason": null,
@@ -2325,8 +2337,11 @@
      "M-OPD-04": {
       "band": null,
       "change": null,
-      "ci95": null,
-      "ci_method": "none",
+      "ci95": [
+       79.37165284763525,
+       80.62834715236475
+      ],
+      "ci_method": "mean_normal",
       "coverage": null,
       "denominator": 140.0,
       "grey_reason": null,
@@ -2657,8 +2672,11 @@
      "M-OPD-04": {
       "band": null,
       "change": null,
-      "ci95": null,
-      "ci_method": "none",
+      "ci95": [
+       80.0,
+       80.0
+      ],
+      "ci_method": "mean_normal",
       "coverage": null,
       "denominator": 35.0,
       "grey_reason": null,

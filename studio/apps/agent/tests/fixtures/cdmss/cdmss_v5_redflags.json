@@ -31,7 +31,7 @@
   }
  ],
  "source": {
-  "query_hash": "68114b33cbd7",
+  "query_hash": "c6f069b46459",
   "tool": "cdmss_v5_redflags"
  },
  "synthetic": true,
@@ -43,7 +43,7 @@
     "doctor_uid": "D5",
     "evidence": [
      {
-      "audit_id": "579e31de-7fa5-4edf-a7c6-a339c72e6802",
+      "audit_id": "ec59a837-a58c-4428-ac23-67de40f2fa44",
       "case": {
        "family": "opd",
        "uid": "D5-L-01",
@@ -65,7 +65,7 @@
       "verdict": "low-value"
      },
      {
-      "audit_id": "bc690f55-e525-47c5-b749-5d715813122d",
+      "audit_id": "b9acc7b7-ca31-43e1-9fa2-0720d49addf8",
       "case": {
        "family": "opd",
        "uid": "D5-L-02",
@@ -87,7 +87,7 @@
       "verdict": "low-value"
      },
      {
-      "audit_id": "9dce65bb-041d-4d37-8e3d-ac83539bdb36",
+      "audit_id": "427b8307-53b7-43ab-99fe-35e7eb6499f2",
       "case": {
        "family": "opd",
        "uid": "D5-L-03",
@@ -109,7 +109,7 @@
       "verdict": "low-value"
      },
      {
-      "audit_id": "6a5b5e43-3d34-41b2-ba29-855f94e1f1ce",
+      "audit_id": "1d6b6bbb-b7f2-4b50-9c93-c9c90bf2d1ca",
       "case": {
        "family": "opd",
        "uid": "D5-L-04",
@@ -131,7 +131,7 @@
       "verdict": "low-value"
      },
      {
-      "audit_id": "32f71c15-a896-4072-aa2e-f7c1a01d12b5",
+      "audit_id": "d2807cf9-e6ef-4577-90ea-fbfad96e8b0d",
       "case": {
        "family": "opd",
        "uid": "D5-L-05",
@@ -161,7 +161,7 @@
       "overdue": true,
       "reference": "SITEA-AUD-2026-0001",
       "response_required": true,
-      "signal_id": "481ab789-7c1e-4eaa-9107-2c8033f042d0",
+      "signal_id": "ed8a47bf-0ee1-4ff1-99d6-bb19a1e2d8bc",
       "signal_type": "low_value_pattern",
       "site": "SITEA",
       "sla_due_at": "2026-10-15T05:30:00+05:30",
@@ -184,7 +184,7 @@
       "overdue": false,
       "reference": "SITEB-AUD-2026-0003",
       "response_required": false,
-      "signal_id": "716efca8-ee1f-4dd9-b296-6eb455a267dd",
+      "signal_id": "0ebb20cc-8635-4307-b592-d539315ad9de",
       "signal_type": "documentation",
       "site": "SITEB",
       "sla_due_at": "2027-01-01T05:30:00+05:30",
@@ -214,8 +214,8 @@
     "generated_at": "2026-10-23T12:00:00+05:30",
     "query_hashes": [
      "c5158c604742",
-     "aa9ca7849eaf",
-     "e5b01a6276da"
+     "2e8645a4e8c3",
+     "08be48701bcf"
     ],
     "sources": [
      "governance DB: physicians, physician_engagements, hospitals",

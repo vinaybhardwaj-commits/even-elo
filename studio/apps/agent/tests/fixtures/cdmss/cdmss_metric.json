@@ -52,7 +52,7 @@
   }
  ],
  "source": {
-  "query_hash": "87257ed73f49",
+  "query_hash": "fb38d90e7159",
   "tool": "cdmss_metric"
  },
  "synthetic": true,
@@ -75,7 +75,7 @@
     "engine_family": "opd-note-audit/0.81.3+ (derived by shape in cdmss_ro.opd_note_audit); versions read: opd-note-audit/0.81.21",
     "generated_at": "2026-10-23T12:00:00+05:30",
     "query_hashes": [
-     "ec6f6c50cbdb",
+     "702bdfe8382b",
      "c5158c604742"
     ],
     "sources": [
@@ -309,13 +309,13 @@
       "pct": 100.0,
       "total": 5
      },
-     "denominator": 5.0,
+     "denominator": null,
      "grey_reason": "min_n",
      "label": "Mean OPD NQI (PDQI-assessed notes only)",
      "metric_id": "M-OPD-01",
      "n": 5,
      "note": null,
-     "numerator": 250.0,
+     "numerator": null,
      "plain": null,
      "status": "count_only",
      "unit": "score",
@@ -525,13 +525,13 @@
       "pct": 100.0,
       "total": 5
      },
-     "denominator": 5.0,
+     "denominator": null,
      "grey_reason": "min_n",
      "label": "Mean OPD NQI (PDQI-assessed notes only)",
      "metric_id": "M-OPD-01",
      "n": 5,
      "note": null,
-     "numerator": 250.0,
+     "numerator": null,
      "plain": null,
      "status": "count_only",
      "unit": "score",

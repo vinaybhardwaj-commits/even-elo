@@ -48,6 +48,7 @@ Z95, Z998 = 1.96, 3.09
 BANDS = ("A", "B", "C", "D", "E")
 R5_RULE_REF = "ehrc-f283f2c4-7739-46e2-b5c8-997d89a79f5c"  # ratified R5 "antibiotic for acute upper-respiratory illness" (catalogue M-AMS-03)
 CASE_BASE_DEFAULT = "https://even-cdmss.vercel.app"
+APP_SOURCE_DEFAULT = "standalone"  # the catalogue's APP_SOURCE (C-2) default; override with CDMSS_APP_SOURCE. Live value UNVERIFIED.
 ENGINE_FAMILY = "opd-note-audit/0.81.3+ (derived by shape in cdmss_ro.opd_note_audit)"
 
 PRECISION_LINE = "About 1 in 5 findings are wrong or contested (engine precision; the catalogue has no family-specific figure)."
@@ -57,6 +58,7 @@ C7_CAVEATS = (
     "Underuse findings carry zero penalty.",
 )
 NO_DB_SOURCE = "metric catalogue (module definitions; no database read)"
+DB13_LAG_CAVEAT = "Per-1,000-Rx figures count only notes already in the DB13 extract (with a medication line), in numerator and denominator alike: notes newer than 'DB13 as of' are excluded."
 SITE_CAVEAT = "OPD site is the doctor's home site (governance DB engagement), not where the note was written."
 
 
@@ -235,6 +237,7 @@ class Run:
         if not live_reads_enabled():
             raise ToolError("CDMSS tools have no fixtures: live reads are switched off.")
         self.today = now_ist().date()
+        self.app_source = os.environ.get("CDMSS_APP_SOURCE") or APP_SOURCE_DEFAULT
         self.sql: list[str] = []
         self.hashes: list[str] = []
         self.sources: list[str] = []
@@ -247,6 +250,8 @@ class Run:
         started = time.monotonic()
         qh = hashlib.sha256(sql.encode()).hexdigest()[:12]
         fetch = fetch_cdmss if db == "cdmss" else fetch_gov
+        if db == "cdmss":
+            params = {**params, "app": self.app_source}  # every opd_* / gov_signal read is pinned to one app_source
 
         async def audit(rows: int, outcome: str) -> None:
             await studio_audit.audit_sink(
@@ -325,7 +330,7 @@ SELECT s.doctor_uid, s.period, s.complexity_band,
        count(*) FILTER (WHERE s.assessed AND s.raw_band = 'D') AS band_d,
        count(*) FILTER (WHERE s.assessed AND s.raw_band = 'E') AS band_e,
        count(s.clin) AS n_clin, COALESCE(sum(s.clin), 0) AS sum_clin, COALESCE(sum(s.clin * s.clin), 0) AS ssq_clin,
-       count(s.completeness_pct) AS n_comp, COALESCE(sum(s.completeness_pct), 0) AS sum_comp,
+       count(s.completeness_pct) AS n_comp, COALESCE(sum(s.completeness_pct), 0) AS sum_comp, COALESCE(sum(s.completeness_pct * s.completeness_pct), 0) AS ssq_comp,
        count(*) FILTER (WHERE s.n_lv > 0) AS n_lv_notes,
        COALESCE(sum(s.n_lv), 0) AS n_lv, COALESCE(sum(s.n_dup), 0) AS n_dup, COALESCE(sum(s.n_nsaid_at), 0) AS n_nsaid_at,
        max(s.audited_at) AS cutoff,
@@ -343,7 +348,7 @@ FROM (
     SELECT count(*) FILTER (WHERE __LV__) AS n_lv, count(*) FILTER (WHERE __DUP__) AS n_dup, count(*) FILTER (WHERE __NSAID__) AS n_nsaid_at
     FROM __FINDINGS__
   ) fx
-  WHERE a.note_day_ist BETWEEN %(from)s AND %(to)s AND a.doctor_uid IS NOT NULL
+  WHERE a.note_day_ist BETWEEN %(from)s AND %(to)s AND a.doctor_uid IS NOT NULL AND a.app_source = %(app)s
   ORDER BY a.note_day_ist DESC, a.audit_id
   LIMIT %(scan)s
 ) s
@@ -364,9 +369,11 @@ def opd_agg_sql(period_expr: str) -> str:
 # Audited note identities (for the DB13 denominators) with the R5 flag per note.
 OPD_UIDS_SQL = f"""
 SELECT a.uid, a.doctor_uid, {PERIOD_EARLY_LATE} AS period,
-       EXISTS (SELECT 1 FROM {FINDINGS_ARR} WHERE e->>'rule_ref' = %(r5)s AND {NOT_INFO}) AS has_r5
+       EXISTS (SELECT 1 FROM {FINDINGS_ARR} WHERE e->>'rule_ref' = %(r5)s AND {NOT_INFO}) AS has_r5,
+       (SELECT count(*) FROM {FINDINGS_ARR} WHERE {DUP_PRED}) AS n_dup,
+       (SELECT count(*) FROM {FINDINGS_ARR} WHERE {NSAID_AT_PRED}) AS n_nsaid_at
 FROM cdmss_ro.opd_note_audit a
-WHERE a.note_day_ist BETWEEN %(from)s AND %(to)s AND a.doctor_uid IS NOT NULL
+WHERE a.note_day_ist BETWEEN %(from)s AND %(to)s AND a.doctor_uid IS NOT NULL AND a.app_source = %(app)s
 ORDER BY a.audit_id
 LIMIT %(scan)s
 """
@@ -411,7 +418,7 @@ SELECT s.signal_id::text AS signal_id, s.reference, s.doctor_uid, s.signal_type,
        (s.sla_due_at IS NOT NULL AND s.sla_due_at < now()) AS overdue,
        count(*) OVER () AS total_count
 FROM cdmss_ro.gov_signal s
-WHERE COALESCE(s.status, 'routed') NOT IN ('ruled', 'closed')
+WHERE s.app_source = %(app)s AND COALESCE(s.status, 'routed') NOT IN ('ruled', 'closed')
   AND COALESCE(s.note_class, 'opd') = 'opd'
   AND (%(overdue_only)s::boolean IS FALSE OR (s.sla_due_at IS NOT NULL AND s.sla_due_at < now()))
   AND (%(doctor)s::text IS NULL OR s.doctor_uid = %(doctor)s::text)
@@ -437,7 +444,7 @@ def findings_sql(kind: str, *, by_doctors: bool, by_one_doctor: bool, windowed: 
     return f"""
 SELECT {FINDING_COLS}, count(*) OVER () AS total_count
 FROM cdmss_ro.opd_finding f
-WHERE {FINDING_PREDICATES[kind]}
+WHERE {FINDING_PREDICATES[kind]} AND f.app_source = %(app)s
   AND f.note_day_ist BETWEEN %(from)s AND %(to)s
   {"AND f.doctor_uid = ANY(%(doctors)s::text[])" if by_doctors else ""}
   {"AND f.doctor_uid = %(doctor)s::text" if by_one_doctor else ""}
@@ -453,7 +460,7 @@ SELECT a.audit_id::text AS audit_id, a.uid, a.doctor_uid, a.note_day_ist::text A
        a.score_appropriateness, a.score_prescribing_safety, a.completeness_pct,
        count(*) OVER () AS total_count
 FROM cdmss_ro.opd_note_audit a
-WHERE a.note_day_ist BETWEEN %(from)s AND %(to)s AND a.doctor_uid IS NOT NULL
+WHERE a.note_day_ist BETWEEN %(from)s AND %(to)s AND a.doctor_uid IS NOT NULL AND a.app_source = %(app)s
   {"AND (a.pdqi9_assessed AND a.scorecard_recorded AND a.pdqi9_assessed_basis = 'scorecard')" if assessed_only else ""}
   {"AND NOT (a.pdqi9_assessed AND a.scorecard_recorded AND a.pdqi9_assessed_basis = 'scorecard')" if unassessed_only else ""}
   {"AND a.doctor_uid = ANY(%(doctors)s::text[])" if by_doctors else ""}
@@ -473,7 +480,7 @@ NOTE_HEADER_SQL = """
 SELECT a.audit_id::text AS audit_id, a.uid, a.doctor_uid, a.note_day_ist::text AS note_day, a.engine_version, a.raw_band, a.note_quality_index AS nqi,
        (a.pdqi9_assessed AND a.scorecard_recorded AND a.pdqi9_assessed_basis = 'scorecard') AS assessed, a.audited_at
 FROM cdmss_ro.opd_note_audit a
-WHERE a.uid = %(uid)s::text
+WHERE a.uid = %(uid)s::text AND a.app_source = %(app)s
 ORDER BY a.audited_at DESC NULLS LAST
 LIMIT 5
 """
@@ -481,7 +488,7 @@ LIMIT 5
 FINDING_DETAIL_SQL = f"""
 SELECT {FINDING_COLS}
 FROM cdmss_ro.opd_finding f
-WHERE f.uid = %(uid)s::text AND (%(finding_no)s::int IS NULL OR f.finding_no = %(finding_no)s::int)
+WHERE f.uid = %(uid)s::text AND f.app_source = %(app)s AND (%(finding_no)s::int IS NULL OR f.finding_no = %(finding_no)s::int)
 ORDER BY f.finding_no
 LIMIT 200
 """
@@ -508,7 +515,7 @@ DW_VIEWS = ("studio_ro.dw_individuals_prescriptions", "studio_ro.dw_extract_stat
 # --------------------------------------------------------------------------------------------------------------
 
 _SUM_FIELDS = (
-    "n n_assessed sum_nqi ssq_nqi band_a band_b band_c band_d band_e n_clin sum_clin ssq_clin n_comp sum_comp n_lv_notes n_lv n_dup n_nsaid_at"
+    "n n_assessed sum_nqi ssq_nqi band_a band_b band_c band_d band_e n_clin sum_clin ssq_clin n_comp sum_comp ssq_comp n_lv_notes n_lv n_dup n_nsaid_at"
 ).split()
 
 
@@ -528,6 +535,7 @@ class OpdAgg:
     ssq_clin: float = 0
     n_comp: float = 0
     sum_comp: float = 0
+    ssq_comp: float = 0
     n_lv_notes: float = 0
     n_lv: float = 0
     n_dup: float = 0
@@ -547,6 +555,8 @@ class RxAgg:
     n_urti: float = 0
     n_urti_r5: float = 0
     n_unparsed: float = 0
+    n_dup: float = 0  # findings on the SAME notes as n_rx (found in the extract with a medication line)
+    n_nsaid_at: float = 0
 
     def add(self, o: "RxAgg") -> None:
         for f in self.__dataclass_fields__:
@@ -586,6 +596,7 @@ class Dataset:
     docs: dict
     rx: dict  # (doctor, period) -> RxAgg
     weekly: bool = False
+    truncated: bool = False  # the scan cap cut the window (newest rows kept), so early vs late is not comparable
 
     @property
     def model(self) -> dict:
@@ -660,7 +671,7 @@ async def load_dataset(run: Run, days: int, *, need_rx: bool = False, weekly: bo
     rx: dict = {}
     if need_rx and not weekly:
         rx = await load_rx(run, p)
-    return Dataset(run, late, early, rows, docs, rx, weekly)
+    return Dataset(run, late, early, rows, docs, rx, weekly, truncated=total > SCAN_CAP)
 
 
 async def load_rx(run: Run, p: dict) -> dict:
@@ -684,6 +695,8 @@ async def load_rx(run: Run, p: dict) -> dict:
         a.n_notes += 1
         if (r.get("n_med") or 0) > 0:
             a.n_rx += 1
+            a.n_dup += float(n.get("n_dup") or 0)
+            a.n_nsaid_at += float(n.get("n_nsaid_at") or 0)
             if r["n_med"] >= 5:
                 a.n_5plus += 1
         a.sum_inv += r.get("n_inv") or 0
@@ -712,9 +725,10 @@ _m("M-OPD-02", "NQI band mix (raw band)", "opd", "percent", "ok", "Share of PDQI
 _m("M-OPD-03", "Clinical NQI", "opd", "score", "ok", "Prescribing-safety and appropriateness domain scores, equally weighted and reweighted to 100 (documentation, patient-centredness and PDQI-9 excluded); over all canonical notes.", _OPD_SRC, caveats=("Domain scores are assumed to be on the same 0-100 scale as the NQI.",))
 _m("M-OPD-04", "Documentation completeness", "opd", "percent", "ok", "Mean completeness_pct over canonical notes (NABH-OPD mandatory items).", _OPD_SRC)
 _m("M-OPD-05", "Low-value findings per 100 notes", "opd", "per_100", "ok", "Non-informational, non-underuse findings with verdict low-value per 100 canonical notes; also the share of notes with at least one.", _OPD_SRC)
+_m("M-OPD-05b", "Notes with at least one low-value finding", "opd", "percent", "ok", "Share of canonical notes with at least one non-informational, non-underuse low-value finding (the board's pct_low). This is the rate V3's funnel and V4's contributors use; M-OPD-05 counts findings per 100 notes.", _OPD_SRC)
 _m("M-OPD-06", "Low-value care observed/expected", "opd", "ratio", "ok", "Notes with a low-value finding (O) over the sum of complexity-band stratum rates (E). Unbanded notes excluded. Not age-adjusted (age is not stored).", _OPD_SRC, "doctor", caveats=("Complexity-adjusted only; age band is not available.",))
-_m("M-OPD-08", "Same-class duplicates per 1,000 Rx", "opd", "per_1000", "ok", "Duplicate-prescription / duplicate-molecule / therapeutic-duplication findings per 1,000 prescriptions (with a medication line) among the audited notes found in the DB13 extract.", _RX_SRC, caveats=("Class membership is the audit's rule text; completeness UNVERIFIED.",))
-_m("M-OPD-12", "NSAID with an antithrombotic per 1,000 Rx", "opd", "per_1000", "ok", "drug_interaction findings whose rationale names an NSAID and an anticoagulant/antiplatelet, per 1,000 prescriptions.", _RX_SRC, caveats=("Text match on the finding rationale; no structured rule id is stored. Low-dose aspirin may be counted in both classes (UNVERIFIED).",))
+_m("M-OPD-08", "Same-class duplicates per 1,000 Rx", "opd", "per_1000", "ok", "Duplicate-prescription / duplicate-molecule / therapeutic-duplication findings per 1,000 prescriptions (with a medication line) among the audited notes found in the DB13 extract.", _RX_SRC, caveats=("Class membership is the audit's rule text; completeness UNVERIFIED.", DB13_LAG_CAVEAT))
+_m("M-OPD-12", "NSAID with an antithrombotic per 1,000 Rx", "opd", "per_1000", "ok", "drug_interaction findings whose rationale names an NSAID and an anticoagulant/antiplatelet, per 1,000 prescriptions.", _RX_SRC, caveats=("Text match on the finding rationale; no structured rule id is stored. Low-dose aspirin may be counted in both classes (UNVERIFIED).", DB13_LAG_CAVEAT))
 _m("M-OPD-13", "Prescriptions with 5 or more medicines", "opd", "percent", "ok", "Share of prescriptions (with a medication line) listing five or more medicines, from the DB13 extract.", _RX_SRC)
 _m("M-OPD-14", "Tests per consult", "opd", "count", "ok", "Investigation lines per audited consult found in the DB13 extract (further_investigation array length).", _RX_SRC, caveats=("Shape of further_investigation in the extract is UNVERIFIED; a non-array counts as 0 tests.",))
 for _mid, _lab, _why in (
@@ -765,7 +779,11 @@ def stat(
             status, reason, value, ci, change, plain, band = "count_only", "min_n", None, None, None, None, None
         elif value is None:
             status, reason = "count_only", "no_denominator"
-        elif coverage is not None and coverage["pct"] < COVERAGE_GREY_PCT:
+        if status == "count_only":
+            # Below the floor only the count n is shown: a numerator/denominator pair (or counts in `extra`) would give the hidden value back.
+            num = den = None
+            extra = {"band_stats": extra["band_stats"]} if isinstance(extra, dict) and "band_stats" in extra else None
+        if status == "ok" and coverage is not None and coverage["pct"] < COVERAGE_GREY_PCT:
             status, reason = "greyed", "coverage_lt_50"
     out = {
         "metric_id": mid,
@@ -809,7 +827,14 @@ def _ratio(a: float, b: float) -> Optional[float]:
 
 
 def metric_stat(mid: str, g: Group, ds: Dataset, kind: str = "group") -> dict:
-    """The Stat for one catalogue metric over one slice."""
+    """The Stat for one catalogue metric over one slice; a truncated scan never claims a change."""
+    out = _metric_stat(mid, g, ds, kind)
+    if ds.truncated and out.get("change"):
+        out["change"] = {"direction": "not computed (truncated)", "p_value": None, "relative_change": None, "early": out["change"]["early"], "late": out["change"]["late"]}
+    return out
+
+
+def _metric_stat(mid: str, g: Group, ds: Dataset, kind: str = "group") -> dict:
     L, E, w, ew = g.late, g.early, ds.late, ds.early
     if METRICS[mid]["status"] == "unavailable":
         return stat(mid, w, kind=kind)
@@ -841,8 +866,9 @@ def metric_stat(mid: str, g: Group, ds: Dataset, kind: str = "group") -> dict:
     if mid == "M-OPD-04":
         m = _ratio(L.sum_comp, L.n_comp)
         em = _ratio(E.sum_comp, E.n_comp)
-        return stat(mid, w, value=m, num=L.sum_comp, den=L.n_comp, n=L.n_comp, kind=kind, plain=None if m is None else f"about {m:.0f}% of mandatory items present",
-                    change=_change(ew, w, em, m, E.n_comp, L.n_comp, None))
+        return stat(mid, w, value=m, num=L.sum_comp, den=L.n_comp, n=L.n_comp, ci=mean_ci(L.n_comp, L.sum_comp, L.ssq_comp), ci_method="mean_normal", kind=kind,
+                    plain=None if m is None else f"about {m:.0f}% of mandatory items present",
+                    change=_change(ew, w, em, m, E.n_comp, L.n_comp, mean_change_p(E.n_comp, E.sum_comp, E.ssq_comp, L.n_comp, L.sum_comp, L.ssq_comp)))
     if mid == "M-OPD-05":
         r = _ratio(L.n_lv, L.n)
         er = _ratio(E.n_lv, E.n)
@@ -853,11 +879,16 @@ def metric_stat(mid: str, g: Group, ds: Dataset, kind: str = "group") -> dict:
         return stat(mid, w, value=None if r is None else 100 * r, num=L.n_lv, den=L.n, n=L.n, kind=kind, extra=extra,
                     change=_change(ew, w, None if er is None else 100 * er, None if r is None else 100 * r, E.n, L.n, rate_change_p(E.n_lv, E.n, L.n_lv, L.n)),
                     plain=None if r is None else f"about {r:.0f} low-value findings for every 100 notes")
+    if mid == "M-OPD-05b":
+        p, ep = _ratio(L.n_lv_notes, L.n), _ratio(E.n_lv_notes, E.n)
+        ci = wilson(L.n_lv_notes, L.n)
+        return stat(mid, w, value=None if p is None else 100 * p, num=L.n_lv_notes, den=L.n, n=L.n, ci=None if ci is None else (100 * ci[0], 100 * ci[1]), ci_method="wilson", kind=kind,
+                    change=_change(ew, w, None if ep is None else 100 * ep, None if p is None else 100 * p, E.n, L.n, prop_change_p(E.n_lv_notes, E.n, L.n_lv_notes, L.n)), plain=plain_in_ten(p))
     if mid == "M-OPD-06":
         return stat(mid, w, **{**oe_parts(g, ds.model), "kind": kind})
     if mid in ("M-OPD-08", "M-OPD-12"):
         R, RE = g.rx_late, g.rx_early
-        k, ek = (L.n_dup, E.n_dup) if mid == "M-OPD-08" else (L.n_nsaid_at, E.n_nsaid_at)
+        k, ek = (R.n_dup, RE.n_dup) if mid == "M-OPD-08" else (R.n_nsaid_at, RE.n_nsaid_at)  # same notes as the denominator
         v = _ratio(1000 * k, R.n_rx)
         ev = _ratio(1000 * ek, RE.n_rx)
         return stat(mid, w, value=v, num=k, den=R.n_rx, n=R.n_rx, kind=kind, change=_change(ew, w, ev, v, RE.n_rx, R.n_rx, rate_change_p(ek, RE.n_rx, k, R.n_rx)),
@@ -1041,6 +1072,8 @@ def build_envelope(run: Run, window: Window, headline: str, plain: str, stats: l
         cav.extend(C7_CAVEATS)
     cav.extend(caveats)
     cav.extend(run.incomplete)
+    if run.db13_as_of:
+        cav.append(f"Notes newer than DB13 as of {run.db13_as_of} are not in the extract and are excluded from the per-1,000-Rx metrics (and the other DB13-based figures).")
     for s in stats:
         cav.extend(METRICS.get(s["metric_id"], {}).get("caveats", []))
         if s.get("note") and s["status"] != "unavailable":
@@ -1188,7 +1221,7 @@ async def build_v2(run: Run, days: int, family: str, site_filter: Optional[str])
         matrix.append({"site": s, "n_notes": int(g.late.n), "cells": cells})
         if family == "opd":
             mix = cells["M-OPD-02"]
-            band_mix.append({"site": s, "counts": mix["extra"]["counts"], "bands": mix["extra"]["band_stats"]})
+            band_mix.append({"site": s, "counts": (mix.get("extra") or {}).get("counts"), "bands": mix["extra"]["band_stats"]})
         for m, st in cells.items():
             ci = st["ci95"] or [None, None]
             rows.append({"site": s, "metric_id": m, "label": st["label"], "value": st["value"], "unit": st["unit"], "n": st["n"], "status": st["status"], "ci_lo": ci[0], "ci_hi": ci[1]})
@@ -1250,14 +1283,14 @@ async def build_v3(run: Run, days: int, metric: str, site: Optional[str], specia
             continue
         d = ds.doc(uid)
         if metric == "lv_rate":
-            st = metric_stat("M-OPD-05", g, ds, "doctor")
+            st = metric_stat("M-OPD-05b", g, ds, "doctor")
             oe = metric_stat("M-OPD-06", g, ds, "doctor")
             ci = wilson(L.n_lv_notes, L.n)
             value = _ratio(L.n_lv_notes, L.n)
             small = L.n < DOCTOR_MIN_N
             pos = "greyed" if (small or L.n < FUNNEL_MIN_N or p_bar is None) else position(value, p_bar, int(L.n))
             row = {"doctor_uid": uid, "doctor_name": d.name, "site": d.site, "speciality": d.speciality, "n": int(L.n), "value": None if small else value,
-                   "ci95": None if small or ci is None else list(ci), "numerator": L.n_lv_notes, "denominator": L.n,
+                   "ci95": None if small or ci is None else list(ci), "numerator": None if small else L.n_lv_notes, "denominator": None if small else L.n,
                    "expected_rate": None if small else oe["extra"]["expected_rate"] if oe.get("extra") else None, "oe": None if small else oe["value"], "position": pos, "stat": st}
         else:
             st = metric_stat("M-OPD-01", g, ds, "doctor")
@@ -1280,7 +1313,7 @@ async def build_v3(run: Run, days: int, metric: str, site: Optional[str], specia
         funnel = {"centre": p_bar, "centre_basis": "pooled rate over doctors with at least 50 audited notes", "z95": Z95, "z998": Z998,
                   "adjustment": "plain binomial limits (the catalogue's method): no overdispersion adjustment and no age adjustment", "min_n_include": FUNNEL_MIN_N,
                   "limits": funnel_points(p_bar, max((int(g.late.n) for g in included), default=0)) if p_bar is not None else []}
-    head = metric_stat("M-OPD-05" if metric == "lv_rate" else "M-OPD-01", ds.group(ok_doc), ds, "all")
+    head = metric_stat("M-OPD-05b" if metric == "lv_rate" else "M-OPD-01", ds.group(ok_doc), ds, "all")
     env = build_envelope(
         run, ds.late, sentence(head), head.get("plain") or sentence(head), [head],
         caveats=(SITE_CAVEAT, "Variation between doctors reflects case mix and documentation habits as well as quality; a position beyond a limit is a prompt to look, not a verdict.")
@@ -1301,12 +1334,16 @@ async def build_v4(run: Run, days: int, site: str) -> str:
     other = ds.group(lambda u: ds.doc(u).site != site)
     s_n, s_e = in_site.late.n, in_site.late.n_lv_notes
     o_n, o_e = other.late.n, other.late.n_lv_notes
-    site_stat = metric_stat("M-OPD-05", in_site, ds, "site")
-    other_stat = metric_stat("M-OPD-05", other, ds, "site")
+    site_stat = metric_stat("M-OPD-05b", in_site, ds, "site")
+    other_stat = metric_stat("M-OPD-05b", other, ds, "site")
     rate_site, rate_other = _ratio(s_e, s_n), _ratio(o_e, o_n)
+    site_small = s_n < GROUP_MIN_N  # under the site floor: the gap, the other sites' inputs and every share would give the site's rate back
+    if site_small:
+        other_stat = {**other_stat, "value": None, "numerator": None, "denominator": None, "ci95": None, "ci_method": "none", "change": None, "plain": None,
+                      "status": "count_only", "grey_reason": "min_n", "n": 0, "note": f"Withheld: {site} has fewer than {GROUP_MIN_N} audited notes."}
     gap = None
     excess = None
-    if rate_site is not None and rate_other is not None:
+    if not site_small and rate_site is not None and rate_other is not None:
         gap = {"absolute": rate_site - rate_other, "relative": (rate_site - rate_other) / rate_other if rate_other else None}
         excess = s_e - s_n * rate_other
     contributors = []
@@ -1316,10 +1353,11 @@ async def build_v4(run: Run, days: int, site: str) -> str:
         small = L.n < DOCTOR_MIN_N
         ci = wilson(L.n_lv_notes, L.n)
         share = None
-        if not small and excess is not None and excess > 0 and rate_other is not None:
+        if not small and not site_small and excess is not None and excess > 0 and rate_other is not None:
             share = (L.n_lv_notes - L.n * rate_other) / excess
-        without = _ratio(s_e - L.n_lv_notes, s_n - L.n) if s_n - L.n > 0 else None
-        contributors.append({"doctor_uid": uid, "doctor_name": d.name, "n": int(L.n), "events": int(L.n_lv_notes), "rate": None if small else _ratio(L.n_lv_notes, L.n),
+        # the remainder must itself be a group above the doctor floor, else it is one small doctor's rate
+        without = _ratio(s_e - L.n_lv_notes, s_n - L.n) if s_n - L.n >= DOCTOR_MIN_N and not site_small else None
+        contributors.append({"doctor_uid": uid, "doctor_name": d.name, "n": int(L.n), "events": None if small else int(L.n_lv_notes), "rate": None if small else _ratio(L.n_lv_notes, L.n),
                              "ci95": None if small or ci is None else list(ci), "share_of_gap": share, "site_rate_without": None if small else without,
                              "status": "count_only" if small else "ok"})
     contributors.sort(key=lambda r: (r["status"] != "ok", -(r["share_of_gap"] if r["share_of_gap"] is not None else -9e9), -r["n"]))
@@ -1516,7 +1554,7 @@ async def build_metric(run: Run, mid: str, days: int, group_by: str, site: Optio
 
 DRILL = {
     "M-OPD-01": ("notes", "nqi_asc", True), "M-OPD-02": ("notes", "nqi_asc", True), "M-OPD-03": ("notes", "nqi_asc", False), "M-OPD-04": ("notes", "completeness_asc", False),
-    "M-OPD-05": ("findings", "lv", None), "M-OPD-06": ("findings", "lv", None), "M-OPD-08": ("findings", "dup", None), "M-OPD-12": ("findings", "nsaid", None), "M-AMS-03": ("findings", "r5", None),
+    "M-OPD-05": ("findings", "lv", None), "M-OPD-05b": ("findings", "lv", None), "M-OPD-06": ("findings", "lv", None), "M-OPD-08": ("findings", "dup", None), "M-OPD-12": ("findings", "nsaid", None), "M-AMS-03": ("findings", "r5", None),
 }
 DRILL_COLUMNS = ["note_day", "doctor_uid", "doctor_name", "site", "uid", "finding_no", "subject", "value", "quote", "case_url"]
 

@@ -34,7 +34,7 @@
   }
  ],
  "source": {
-  "query_hash": "acaa4cba731c",
+  "query_hash": "d6e7c3ee305c",
   "tool": "cdmss_finding_detail"
  },
  "synthetic": true,
@@ -59,8 +59,8 @@
     "engine_family": "opd-note-audit/0.81.3+ (derived by shape in cdmss_ro.opd_note_audit); versions read: opd-note-audit/0.81.21",
     "generated_at": "2026-10-23T12:00:00+05:30",
     "query_hashes": [
-     "cc8029220e24",
-     "50c1310b0082",
+     "50818cac20b1",
+     "f5c233830e78",
      "c5158c604742"
     ],
     "sources": [
@@ -80,7 +80,7 @@
   },
   "findings": [
    {
-    "audit_id": "e2e65fd7-5272-4749-bfb1-9725d36caf4a",
+    "audit_id": "9d815f04-9159-4d4e-abab-8aa85d382e83",
     "case": {
      "family": "opd",
      "uid": "D1-L-01",
@@ -105,7 +105,7 @@
     "verdict": "low-value"
    },
    {
-    "audit_id": "e2e65fd7-5272-4749-bfb1-9725d36caf4a",
+    "audit_id": "9d815f04-9159-4d4e-abab-8aa85d382e83",
     "case": {
      "family": "opd",
      "uid": "D1-L-01",
@@ -131,7 +131,7 @@
    }
   ],
   "note": {
-   "audit_id": "e2e65fd7-5272-4749-bfb1-9725d36caf4a",
+   "audit_id": "9d815f04-9159-4d4e-abab-8aa85d382e83",
    "doctor_name": "Dr One",
    "doctor_uid": "D1",
    "engine_version": "opd-note-audit/0.81.21",

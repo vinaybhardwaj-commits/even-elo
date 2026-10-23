@@ -7,7 +7,7 @@
   "unit"
  ],
  "mode": "fixture",
- "row_count": 18,
+ "row_count": 19,
  "rows": [
   {
    "family": "opd",
@@ -43,6 +43,13 @@
    "label": "Low-value findings per 100 notes",
    "status": "ok",
    "unit": "per_100"
+  },
+  {
+   "family": "opd",
+   "id": "M-OPD-05b",
+   "label": "Notes with at least one low-value finding",
+   "status": "ok",
+   "unit": "percent"
   },
   {
    "family": "opd",
@@ -147,7 +154,7 @@
    "caveats": [],
    "headline": {
     "plain": "",
-    "sentence": "18 catalogue metrics are defined for Phase 1; 7 cannot be reported yet and say why."
+    "sentence": "19 catalogue metrics are defined for Phase 1; 7 cannot be reported yet and say why."
    },
    "precision_line": "About 1 in 5 findings are wrong or contested (engine precision; the catalogue has no family-specific figure).",
    "provenance": {
@@ -246,6 +253,19 @@
     "unit": "per_100"
    },
    {
+    "caveats": [],
+    "definition": "Share of canonical notes with at least one non-informational, non-underuse low-value finding (the board's pct_low). This is the rate V3's funnel and V4's contributors use; M-OPD-05 counts findings per 100 notes.",
+    "family": "opd",
+    "id": "M-OPD-05b",
+    "label": "Notes with at least one low-value finding",
+    "min_n_kind": "group",
+    "sources": [
+     "cdmss_ro.opd_note_audit"
+    ],
+    "status": "ok",
+    "unit": "percent"
+   },
+   {
     "caveats": [
      "Complexity-adjusted only; age band is not available."
     ],
@@ -262,7 +282,8 @@
    },
    {
     "caveats": [
-     "Class membership is the audit's rule text; completeness UNVERIFIED."
+     "Class membership is the audit's rule text; completeness UNVERIFIED.",
+     "Per-1,000-Rx figures count only notes already in the DB13 extract (with a medication line), in numerator and denominator alike: notes newer than 'DB13 as of' are excluded."
     ],
     "definition": "Duplicate-prescription / duplicate-molecule / therapeutic-duplication findings per 1,000 prescriptions (with a medication line) among the audited notes found in the DB13 extract.",
     "family": "opd",
@@ -311,7 +332,8 @@
    },
    {
     "caveats": [
-     "Text match on the finding rationale; no structured rule id is stored. Low-dose aspirin may be counted in both classes (UNVERIFIED)."
+     "Text match on the finding rationale; no structured rule id is stored. Low-dose aspirin may be counted in both classes (UNVERIFIED).",
+     "Per-1,000-Rx figures count only notes already in the DB13 extract (with a medication line), in numerator and denominator alike: notes newer than 'DB13 as of' are excluded."
     ],
     "definition": "drug_interaction findings whose rationale names an NSAID and an anticoagulant/antiplatelet, per 1,000 prescriptions.",
     "family": "opd",
