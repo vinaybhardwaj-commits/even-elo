@@ -6,6 +6,8 @@
 //   overview, physicians (+360), document-audits, rmo-inbox, feedback, onboarding   any active staff
 //   audit-findings        super_admin | site_medical_head | sgc_member   (src/lib/staff-guard.ts staffAllows "view")
 //   incidents (e-IRIS)    super_admin | sgc_member                       (src/app/safety/page.tsx, /api/safety proxy)
+//   cdmss (module)        super_admin | site_medical_head | sgc_member   (governance leads; SGO = sgc_member. Named clinical
+//                         reviewers: NO role flag exists yet, see report)
 //   surgical, admin       super_admin                                    (src/middleware.ts /surgical-governance, /admin)
 //
 // MIRROR of /studio-access.js at the even-elo repo root (the even-elo middleware cannot import from this app).
@@ -22,6 +24,7 @@ export const SCREEN_IDS = [
   "physicians",
   "audit-findings",
   "document-audits",
+  "cdmss",
   "rmo-inbox",
   "incidents",
   "feedback",
@@ -69,6 +72,7 @@ export const SCREEN_ACCESS: Record<ScreenId, Pred> = {
   physicians: any,
   "audit-findings": oneOf("super_admin", "site_medical_head", "sgc_member"),
   "document-audits": any,
+  cdmss: oneOf("super_admin", "site_medical_head", "sgc_member"),
   "rmo-inbox": any,
   incidents: oneOf("super_admin", "sgc_member"),
   feedback: any,
@@ -99,6 +103,7 @@ const API_FAMILY: Record<string, ScreenId> = {
   feedback: "feedback",
   rmo: "rmo-inbox",
   "audit-findings": "audit-findings",
+  cdmss: "cdmss",
 };
 
 /** API path (basePath stripped) -> screen. /api/screen/<tool> follows the tool; unknown tools are the route's 404. */
@@ -162,6 +167,7 @@ export function screenForTool(tool: string): ScreenId | null {
   if (tool.startsWith("surgical_")) return "surgical";
   if (tool.startsWith("onboarding_")) return "onboarding";
   if (tool.startsWith("admin_")) return "admin";
+  if (tool.startsWith("cdmss_")) return "cdmss";
   return null;
 }
 

@@ -1,0 +1,567 @@
+{
+ "columns": [
+  "key",
+  "label",
+  "value",
+  "unit",
+  "n",
+  "status"
+ ],
+ "mode": "fixture",
+ "row_count": 5,
+ "rows": [
+  {
+   "key": "D4",
+   "label": "Dr Four",
+   "n": 12,
+   "status": "greyed",
+   "unit": "score",
+   "value": 90.0
+  },
+  {
+   "key": "D5",
+   "label": "Dr Five",
+   "n": 60,
+   "status": "ok",
+   "unit": "score",
+   "value": 80.0
+  },
+  {
+   "key": "D1",
+   "label": "Dr One",
+   "n": 12,
+   "status": "ok",
+   "unit": "score",
+   "value": 80.0
+  },
+  {
+   "key": "D2",
+   "label": "Dr Two",
+   "n": 20,
+   "status": "ok",
+   "unit": "score",
+   "value": 60.0
+  },
+  {
+   "key": "D3",
+   "label": "Dr Three",
+   "n": 5,
+   "status": "count_only",
+   "unit": "score",
+   "value": null
+  }
+ ],
+ "source": {
+  "query_hash": "fb38d90e7159",
+  "tool": "cdmss_metric"
+ },
+ "synthetic": true,
+ "view": {
+  "envelope": {
+   "action_line": "Governance leads: use the doctor view for outliers and the worklist for the notes behind the number.",
+   "caveats": [
+    "The score is an encounter proxy, not a clinician scorecard.",
+    "Notes where PDQI-9 was not assessed score 0 on note quality, which raises the index, so full NQI is shown over assessed notes only.",
+    "Underuse findings carry zero penalty."
+   ],
+   "headline": {
+    "plain": "about 76 out of 100 on 81% of notes",
+    "sentence": "Mean OPD NQI (PDQI-assessed notes only) was 76 over 109 notes between 2026-10-17 to 2026-10-23, on 81% of notes. There is no clear change against the previous period."
+   },
+   "precision_line": "About 1 in 5 findings are wrong or contested (engine precision; the catalogue has no family-specific figure).",
+   "provenance": {
+    "data_cutoff": "2026-10-23T06:45:00+05:30",
+    "db13_as_of": null,
+    "engine_family": "opd-note-audit/0.81.3+ (derived by shape in cdmss_ro.opd_note_audit); versions read: opd-note-audit/0.81.21",
+    "generated_at": "2026-10-23T12:00:00+05:30",
+    "query_hashes": [
+     "702bdfe8382b",
+     "c5158c604742"
+    ],
+    "sources": [
+     "cdmss_ro.opd_note_audit",
+     "governance DB: physicians, physician_engagements, hospitals"
+    ],
+    "window": {
+     "anchor": "today (IST calendar days, inclusive)",
+     "days": 7,
+     "from": "2026-10-17",
+     "to": "2026-10-23",
+     "tz": "Asia/Kolkata"
+    }
+   },
+   "stats": [
+    {
+     "band": "B",
+     "change": {
+      "direction": "no clear change",
+      "early": {
+       "from": "2026-10-10",
+       "n": 40,
+       "to": "2026-10-16",
+       "value": 77.5
+      },
+      "late": {
+       "from": "2026-10-17",
+       "n": 109,
+       "to": "2026-10-23",
+       "value": 76.05504587155963
+      },
+      "p_value": 0.20187150377026253,
+      "relative_change": -0.01864456939923061
+     },
+     "ci95": [
+      73.97928046092602,
+      78.13081128219324
+     ],
+     "ci_method": "mean_normal",
+     "coverage": {
+      "assessed": 109,
+      "pct": 80.7,
+      "total": 135
+     },
+     "denominator": 109.0,
+     "grey_reason": null,
+     "label": "Mean OPD NQI (PDQI-assessed notes only)",
+     "metric_id": "M-OPD-01",
+     "n": 109,
+     "note": null,
+     "numerator": 8290.0,
+     "plain": "about 76 out of 100 on 81% of notes",
+     "status": "ok",
+     "unit": "score",
+     "value": 76.05504587155963,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 7,
+      "from": "2026-10-17",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    },
+    {
+     "band": "A",
+     "change": null,
+     "ci95": [
+      90.0,
+      90.0
+     ],
+     "ci_method": "mean_normal",
+     "coverage": {
+      "assessed": 12,
+      "pct": 40.0,
+      "total": 30
+     },
+     "denominator": 12.0,
+     "grey_reason": "coverage_lt_50",
+     "label": "Mean OPD NQI (PDQI-assessed notes only)",
+     "metric_id": "M-OPD-01",
+     "n": 12,
+     "note": null,
+     "numerator": 1080.0,
+     "plain": "about 90 out of 100 on 40% of notes",
+     "status": "greyed",
+     "unit": "score",
+     "value": 90.0,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 7,
+      "from": "2026-10-17",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    },
+    {
+     "band": "B",
+     "change": null,
+     "ci95": [
+      80.0,
+      80.0
+     ],
+     "ci_method": "mean_normal",
+     "coverage": {
+      "assessed": 60,
+      "pct": 100.0,
+      "total": 60
+     },
+     "denominator": 60.0,
+     "grey_reason": null,
+     "label": "Mean OPD NQI (PDQI-assessed notes only)",
+     "metric_id": "M-OPD-01",
+     "n": 60,
+     "note": null,
+     "numerator": 4800.0,
+     "plain": "about 80 out of 100 on 100% of notes",
+     "status": "ok",
+     "unit": "score",
+     "value": 80.0,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 7,
+      "from": "2026-10-17",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    },
+    {
+     "band": "B",
+     "change": {
+      "direction": "no clear change",
+      "early": {
+       "from": "2026-10-10",
+       "n": 20,
+       "to": "2026-10-16",
+       "value": 80.0
+      },
+      "late": {
+       "from": "2026-10-17",
+       "n": 12,
+       "to": "2026-10-23",
+       "value": 80.0
+      },
+      "p_value": 1.0,
+      "relative_change": 0.0
+     },
+     "ci95": [
+      74.09037764627584,
+      85.90962235372416
+     ],
+     "ci_method": "mean_normal",
+     "coverage": {
+      "assessed": 12,
+      "pct": 60.0,
+      "total": 20
+     },
+     "denominator": 12.0,
+     "grey_reason": null,
+     "label": "Mean OPD NQI (PDQI-assessed notes only)",
+     "metric_id": "M-OPD-01",
+     "n": 12,
+     "note": null,
+     "numerator": 960.0,
+     "plain": "about 80 out of 100 on 60% of notes",
+     "status": "ok",
+     "unit": "score",
+     "value": 80.0,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 7,
+      "from": "2026-10-17",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    },
+    {
+     "band": "C",
+     "change": {
+      "direction": "falling",
+      "early": {
+       "from": "2026-10-10",
+       "n": 20,
+       "to": "2026-10-16",
+       "value": 75.0
+      },
+      "late": {
+       "from": "2026-10-17",
+       "n": 20,
+       "to": "2026-10-23",
+       "value": 60.0
+      },
+      "p_value": 0.0,
+      "relative_change": -0.2
+     },
+     "ci95": [
+      60.0,
+      60.0
+     ],
+     "ci_method": "mean_normal",
+     "coverage": {
+      "assessed": 20,
+      "pct": 100.0,
+      "total": 20
+     },
+     "denominator": 20.0,
+     "grey_reason": null,
+     "label": "Mean OPD NQI (PDQI-assessed notes only)",
+     "metric_id": "M-OPD-01",
+     "n": 20,
+     "note": null,
+     "numerator": 1200.0,
+     "plain": "about 60 out of 100 on 100% of notes",
+     "status": "ok",
+     "unit": "score",
+     "value": 60.0,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 7,
+      "from": "2026-10-17",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    },
+    {
+     "band": null,
+     "change": null,
+     "ci95": null,
+     "ci_method": "none",
+     "coverage": {
+      "assessed": 5,
+      "pct": 100.0,
+      "total": 5
+     },
+     "denominator": null,
+     "grey_reason": "min_n",
+     "label": "Mean OPD NQI (PDQI-assessed notes only)",
+     "metric_id": "M-OPD-01",
+     "n": 5,
+     "note": null,
+     "numerator": null,
+     "plain": null,
+     "status": "count_only",
+     "unit": "score",
+     "value": null,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 7,
+      "from": "2026-10-17",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    }
+   ]
+  },
+  "groups": [
+   {
+    "key": "D4",
+    "label": "Dr Four",
+    "site": "SITEB",
+    "stat": {
+     "band": "A",
+     "change": null,
+     "ci95": [
+      90.0,
+      90.0
+     ],
+     "ci_method": "mean_normal",
+     "coverage": {
+      "assessed": 12,
+      "pct": 40.0,
+      "total": 30
+     },
+     "denominator": 12.0,
+     "grey_reason": "coverage_lt_50",
+     "label": "Mean OPD NQI (PDQI-assessed notes only)",
+     "metric_id": "M-OPD-01",
+     "n": 12,
+     "note": null,
+     "numerator": 1080.0,
+     "plain": "about 90 out of 100 on 40% of notes",
+     "status": "greyed",
+     "unit": "score",
+     "value": 90.0,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 7,
+      "from": "2026-10-17",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    }
+   },
+   {
+    "key": "D5",
+    "label": "Dr Five",
+    "site": "SITEA",
+    "stat": {
+     "band": "B",
+     "change": null,
+     "ci95": [
+      80.0,
+      80.0
+     ],
+     "ci_method": "mean_normal",
+     "coverage": {
+      "assessed": 60,
+      "pct": 100.0,
+      "total": 60
+     },
+     "denominator": 60.0,
+     "grey_reason": null,
+     "label": "Mean OPD NQI (PDQI-assessed notes only)",
+     "metric_id": "M-OPD-01",
+     "n": 60,
+     "note": null,
+     "numerator": 4800.0,
+     "plain": "about 80 out of 100 on 100% of notes",
+     "status": "ok",
+     "unit": "score",
+     "value": 80.0,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 7,
+      "from": "2026-10-17",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    }
+   },
+   {
+    "key": "D1",
+    "label": "Dr One",
+    "site": "SITEA",
+    "stat": {
+     "band": "B",
+     "change": {
+      "direction": "no clear change",
+      "early": {
+       "from": "2026-10-10",
+       "n": 20,
+       "to": "2026-10-16",
+       "value": 80.0
+      },
+      "late": {
+       "from": "2026-10-17",
+       "n": 12,
+       "to": "2026-10-23",
+       "value": 80.0
+      },
+      "p_value": 1.0,
+      "relative_change": 0.0
+     },
+     "ci95": [
+      74.09037764627584,
+      85.90962235372416
+     ],
+     "ci_method": "mean_normal",
+     "coverage": {
+      "assessed": 12,
+      "pct": 60.0,
+      "total": 20
+     },
+     "denominator": 12.0,
+     "grey_reason": null,
+     "label": "Mean OPD NQI (PDQI-assessed notes only)",
+     "metric_id": "M-OPD-01",
+     "n": 12,
+     "note": null,
+     "numerator": 960.0,
+     "plain": "about 80 out of 100 on 60% of notes",
+     "status": "ok",
+     "unit": "score",
+     "value": 80.0,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 7,
+      "from": "2026-10-17",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    }
+   },
+   {
+    "key": "D2",
+    "label": "Dr Two",
+    "site": "SITEA",
+    "stat": {
+     "band": "C",
+     "change": {
+      "direction": "falling",
+      "early": {
+       "from": "2026-10-10",
+       "n": 20,
+       "to": "2026-10-16",
+       "value": 75.0
+      },
+      "late": {
+       "from": "2026-10-17",
+       "n": 20,
+       "to": "2026-10-23",
+       "value": 60.0
+      },
+      "p_value": 0.0,
+      "relative_change": -0.2
+     },
+     "ci95": [
+      60.0,
+      60.0
+     ],
+     "ci_method": "mean_normal",
+     "coverage": {
+      "assessed": 20,
+      "pct": 100.0,
+      "total": 20
+     },
+     "denominator": 20.0,
+     "grey_reason": null,
+     "label": "Mean OPD NQI (PDQI-assessed notes only)",
+     "metric_id": "M-OPD-01",
+     "n": 20,
+     "note": null,
+     "numerator": 1200.0,
+     "plain": "about 60 out of 100 on 100% of notes",
+     "status": "ok",
+     "unit": "score",
+     "value": 60.0,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 7,
+      "from": "2026-10-17",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    }
+   },
+   {
+    "key": "D3",
+    "label": "Dr Three",
+    "site": "SITEB",
+    "stat": {
+     "band": null,
+     "change": null,
+     "ci95": null,
+     "ci_method": "none",
+     "coverage": {
+      "assessed": 5,
+      "pct": 100.0,
+      "total": 5
+     },
+     "denominator": null,
+     "grey_reason": "min_n",
+     "label": "Mean OPD NQI (PDQI-assessed notes only)",
+     "metric_id": "M-OPD-01",
+     "n": 5,
+     "note": null,
+     "numerator": null,
+     "plain": null,
+     "status": "count_only",
+     "unit": "score",
+     "value": null,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 7,
+      "from": "2026-10-17",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    }
+   }
+  ],
+  "metric": {
+   "caveats": [
+    "The score is an encounter proxy, not a clinician scorecard.",
+    "Notes where PDQI-9 was not assessed score 0 on note quality, which raises the index, so full NQI is shown over assessed notes only.",
+    "Underuse findings carry zero penalty."
+   ],
+   "definition": "Mean of the stored note_quality_index over notes where PDQI-9 was assessed (scorecard recorded and note_quality weight > 0); coverage = assessed / canonical notes; greyed under 50% coverage.",
+   "family": "opd",
+   "id": "M-OPD-01",
+   "label": "Mean OPD NQI (PDQI-assessed notes only)",
+   "min_n_kind": "group",
+   "sources": [
+    "cdmss_ro.opd_note_audit"
+   ],
+   "status": "ok",
+   "unit": "score"
+  }
+ }
+}

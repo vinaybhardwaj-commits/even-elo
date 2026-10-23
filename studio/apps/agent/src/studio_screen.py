@@ -21,12 +21,13 @@ from typing import Any
 from pydantic import ValidationError
 
 from src.studio_access import can_use_tool
+from src.studio_cdmss_tools import CDMSS_TOOLS
 from src.studio_docaudit_tools import DOCAUDIT_TOOLS
 from src.studio_tools import GOVERNANCE_TOOLS, STAFF_KEY, ToolError
 
 logger = logging.getLogger("studio.screen")
 
-SCREEN_TOOLS = {t.name: t for t in [*GOVERNANCE_TOOLS, *DOCAUDIT_TOOLS]}
+SCREEN_TOOLS = {t.name: t for t in [*GOVERNANCE_TOOLS, *DOCAUDIT_TOOLS, *CDMSS_TOOLS]}
 MAX_BODY_BYTES = 4096
 
 
