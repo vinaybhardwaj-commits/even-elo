@@ -54,6 +54,7 @@ ENV_DEFAULTS=(
   "AWS_CONFIG_FILE=$AWS_CONFIG" AWS_EC2_METADATA_DISABLED=true STUDIO_BROKER_URL= STUDIO_BROKER_TOKEN=
   BEDROCK_MODEL_SONNET=global.anthropic.claude-sonnet-5-5 BEDROCK_MODEL_HAIKU=global.anthropic.claude-haiku-5-5
   TYPESAFE_API_KEY= JEV_MODEL=jev-latest
+  CDMSS_PREWARM=1 CDMSS_POOL_PER_DB=2
 )
 # Names an earlier release put in the env file that must not exist on this host any more (migration removes them).
 RETIRED_VARS=(GCP_SA_KEY_FILE GCP_SA_KEY_JSON GCP_AUDIENCE GOOGLE_APPLICATION_CREDENTIALS AWS_ROLE_ARN VERTEX_MODEL VERTEX_LOCATION)

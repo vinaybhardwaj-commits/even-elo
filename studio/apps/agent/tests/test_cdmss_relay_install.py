@@ -523,7 +523,26 @@ def test_squid_allowlist_and_proxy_config_are_byte_identical_to_the_base(tmp_pat
     # the agent unit differs from the base by NOTHING (CDMSS adds no agent egress): same network lines
     assert (tmp_path / "r_old" / "studio-agent.service").read_bytes() == (tmp_path / "r_new" / "studio-agent.service").read_bytes()
     # and the only env change is the new empty name
-    assert "CDMSS_RO_DATABASE_URL=" in subprocess.run(["bash", str(ASUS_OPS / "install-studio-agent.sh"), "--print-env-template"], capture_output=True, text=True).stdout.splitlines()
+    tpl = subprocess.run(["bash", str(ASUS_OPS / "install-studio-agent.sh"), "--print-env-template"], capture_output=True, text=True).stdout.splitlines()
+    assert "CDMSS_RO_DATABASE_URL=" in tpl
+    assert "CDMSS_PREWARM=1" in tpl and "CDMSS_POOL_PER_DB=2" in tpl  # P1.1: tuning defaults, appended to an existing env file only when missing
+
+
+def test_env_template_names_are_unique_and_the_append_never_overwrites(tmp_path):
+    tpl = subprocess.run(["bash", str(ASUS_OPS / "install-studio-agent.sh"), "--print-env-template"], capture_output=True, text=True).stdout.splitlines()
+    names = [l.split("=", 1)[0] for l in tpl]
+    assert len(names) == len(set(names))
+    # the installer's existing-file branch (grep -q "^name=" else append the default line), run on a file that already sets one of them
+    src = (ASUS_OPS / "install-studio-agent.sh").read_text()
+    assert 'if ! grep -q "^$name=" "$ENV_FILE"; then' in src
+    env = tmp_path / "env"
+    env.write_text("STUDIO_LIVE_READS=1\nCDMSS_POOL_PER_DB=4\n")
+    script = 'while IFS= read -r line; do name=${line%%=*}; if ! grep -q "^$name=" "$ENV_FILE"; then printf "%s\\n" "$line" >>"$ENV_FILE"; fi; done'
+    subprocess.run(["bash", "-c", script], input="\n".join(tpl) + "\n", env={**os.environ, "ENV_FILE": str(env)}, text=True, check=True)
+    out = env.read_text().splitlines()
+    assert "CDMSS_POOL_PER_DB=4" in out and "CDMSS_POOL_PER_DB=2" not in out  # an existing value is kept
+    assert "STUDIO_LIVE_READS=1" in out and "STUDIO_LIVE_READS=0" not in out
+    assert "CDMSS_PREWARM=1" in out and out.count("CDMSS_PREWARM=1") == 1
 
 
 def _nft(hosts_ips):

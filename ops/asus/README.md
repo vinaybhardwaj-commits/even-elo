@@ -57,6 +57,13 @@ studio-agent (uid studio-agent) --127.0.0.1:8888--> studio-prefilter (ClientHell
   Tarball = `git archive <commit> studio/apps/agent` made by gov-orch, copied over ssh. No git credentials on the Asus.
   - Fill `/etc/studio-pgrelay/neon.env` (`GOV_NEON_URL`, `STUDIO_NEON_URL`: `postgres://user:password@host/db?sslmode=require`) and the other empty values in
     `/etc/studio-agent/env` by hand, file-to-file. The installer writes the agent's two database URLs and `STUDIO_BROKER_URL` itself.
+  - **CDMSS tuning (names the installer adds to an existing env file with these defaults; a value already there is never overwritten).**
+
+    | Name | Default | Meaning |
+    |---|---|---|
+    | `CDMSS_PREWARM` | `1` | the agent warms the CDMSS view cache at start and on a timer (code default: off unless `1`) |
+    | `CDMSS_POOL_PER_DB` | `2` | concurrent CDMSS queries per database, clamped to 1..4; raise to `4` only after the relay's own pool is 4 (this release renders `pool_size=4` for gov and cdmss) |
+
   - `--receive-broker-token`: `ssh t4 'sudo sed -n s/^BROKER_TOKEN=//p /etc/studio-broker/env' | ssh asus 'sudo ./install-studio-agent.sh --receive-broker-token'`
     (stdin only; never in argv).
   - **Migration from R5**: the installer shreds `/etc/studio-agent/gcp-sa.json` and removes `GCP_*`, `GOOGLE_*`, `AWS_ROLE_ARN`, `VERTEX_*` from the env file.
