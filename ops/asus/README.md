@@ -37,6 +37,7 @@ studio-agent (uid studio-agent) --127.0.0.1:8888--> studio-prefilter (ClientHell
   IPv4/IPv6 addresses over `/etc/hosts`. Pool mode is `session`; the admin console is closed.
 - **nftables.** uid `studio-agent` may reach only `127.0.0.1:8888`, `127.0.0.1:6432` and the broker's `IP:port`; only uid `studio-pgrelay` may reach the pinned Neon IPs, on `:5432`.
   Everything else from those two uids is logged and dropped. `IPAddressDeny=any` on both units is an independent second layer (agent: `127.0.0.1/32` + the broker; relay: `127.0.0.1/32` + the pins).
+- **CDMSS alias (optional).** `ops/cdmss/relay-install.sh` adds `CDMSS_NEON_URL` to `neon.env`, `AGENT_CDMSS_PW` to `local.env`, `CDMSS_RO_DATABASE_URL` to the agent env and the endpoint host to `/etc/studio-agent/neon-hosts.extra` (read by the refresh, kept apart from `egress.conf` so an installer run cannot drop it). The relay renders `cdmss` (pool 2, read-only `connect_query`) only when present and pinned; Squid, the pre-filter and the agent's nft rules are unchanged.
 - **Pins.** `studio-agent-egress-refresh.sh` (run by `studio-agent-nft.service` and a 5-minute timer, serialised with flock) resolves the `--neon-host` names at the upstream
   resolver (`resolvectl query --cache=no --synthesize=no`, else `dig @upstream`), rewrites the nft table and the relay's `IPAddressAllow=`, replaces the relay's hosts file
   (temp file + rename) and writes `/run/studio-agent/neon-pins.json`. A bind mount follows the inode, so when the pins changed the **relay is restarted** to pick the new

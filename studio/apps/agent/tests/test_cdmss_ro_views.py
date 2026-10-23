@@ -9,7 +9,7 @@ from decimal import Decimal
 import psycopg
 import pytest
 
-from tests.cdmss_harness import ROLE, SQL_POST, cdmss, needs_env  # noqa: F401  (fixture)
+from tests.cdmss_harness import ROLE, SQL_POST, SQL_SETTINGS, cdmss, needs_env  # noqa: F401  (fixture)
 
 pytestmark = needs_env
 
@@ -166,6 +166,23 @@ def test_role_settings_and_no_membership(data):
         "(SELECT count(*) FROM pg_auth_members m WHERE m.member = r.oid) FROM pg_roles r WHERE rolname=%s", (ROLE,))[0]
     assert login is False and limit == 5 and sup is False and members == 0
     assert "default_transaction_read_only=on" in cfg and "statement_timeout=20s" in cfg
+
+
+def test_0004_role_settings_apply_idempotently_and_the_postcheck_is_exact(data):
+    """0004 (psql meta-commands stripped by the harness, so the ALTERs run): exactly four role settings, same after a second run."""
+    want = ["default_transaction_read_only=on", "idle_in_transaction_session_timeout=60s", "search_path=cdmss_ro, pg_catalog", "statement_timeout=30s"]
+    for _ in range(2):
+        data.owner_exec_file(SQL_SETTINGS)
+        assert sorted(data.su_exec("SELECT rolconfig FROM pg_roles WHERE rolname=%s", (ROLE,))[0][0]) == want
+    # drift is caught by the post-check (re-run without the ALTERs: the DO block alone)
+    data.su_exec("ALTER ROLE studio_cdmss_ro SET statement_timeout = '5s'")
+    post = SQL_SETTINGS.read_text().split("\\endif", 1)[1]
+    with pytest.raises(psycopg.errors.RaiseException, match="role settings are"):
+        with data.owner() as conn:
+            conn.execute("\n".join(l for l in post.splitlines() if not l.startswith("\\")), prepare=False)
+    data.owner_exec_file(SQL_SETTINGS)   # and the apply path repairs it
+    data.su_exec("ALTER ROLE studio_cdmss_ro SET statement_timeout = '20s'")                   # leave the cluster as 0001 made it
+    data.su_exec("ALTER ROLE studio_cdmss_ro SET idle_in_transaction_session_timeout = '30s'")
 
 
 def test_security_barrier_owner_owned_no_invoker(data):

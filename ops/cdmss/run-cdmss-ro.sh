@@ -3,10 +3,11 @@
 # here (not generated, not sent, not written): the password is issued later by the Neon API, and LOGIN is a separate
 # step (not in this script; the role stays NOLOGIN).
 #
-#   run-cdmss-ro.sh [--allow-disk-tmp] OWNER_URL_FILE    0000 PRE-CHECK (read-only), then 0001 role + 0002 views + 0003 post-check in ONE transaction
+#   run-cdmss-ro.sh [--allow-disk-tmp] OWNER_URL_FILE    0000 PRE-CHECK (read-only), then 0001 role + 0002 views + 0003 post-check + 0004 role settings (30s / 60s,
+#                                                         exact pg_db_role_setting post-check) in ONE transaction
 #   run-cdmss-ro.sh --precheck [--allow-disk-tmp] OWNER_URL_FILE  only 0000: list every view source column missing live (G-23), exit 4 if any
 #   run-cdmss-ro.sh --dry-run                            print the SQL, connect to nothing
-#   run-cdmss-ro.sh --check [--allow-disk-tmp] OWNER_URL_FILE   0000 pre-check (printed) + 0003 (read-only post-check) against the live DB
+#   run-cdmss-ro.sh --check [--allow-disk-tmp] OWNER_URL_FILE   0000 pre-check (printed) + 0003 and the 0004 settings post-check (read-only, :apply_settings=0)
 #
 # Refuses a superuser (checked here and again inside each SQL file). A failure anywhere rolls the whole thing back:
 # the role never exists without its post-check having passed in the same transaction.
@@ -20,7 +21,8 @@ umask 077
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 sql_dir=${CDMSS_RO_SQL_DIR:-$here}
 psql_bin=${PSQL:-psql}
-files=(0001_cdmss_ro_role.sql 0002_cdmss_ro_views.sql 0003_cdmss_ro_postcheck.sql)
+files=(0001_cdmss_ro_role.sql 0002_cdmss_ro_views.sql 0003_cdmss_ro_postcheck.sql 0004_role_settings.sql)
+apply_settings=1
 pre=0000_cdmss_ro_precheck.sql
 
 allow_disk=0 dry=0 check=0 precheck_only=0
@@ -28,7 +30,7 @@ while [[ ${1:-} == --* ]]; do
   case $1 in
     --allow-disk-tmp) allow_disk=1 ;;
     --dry-run) dry=1 ;;
-    --check) check=1; files=(0003_cdmss_ro_postcheck.sql) ;;
+    --check) check=1; apply_settings=0; files=(0003_cdmss_ro_postcheck.sql 0004_role_settings.sql) ;;
     --precheck) precheck_only=1; files=() ;;
     *) echo "unknown option $1" >&2; exit 2 ;;
   esac
@@ -37,7 +39,7 @@ done
 
 if [[ $dry -eq 1 ]]; then
   echo "-- dry run: nothing is connected; no password is generated, read or sent by this script"
-  echo "-- would: $psql_bin -X -q --single-transaction -v ON_ERROR_STOP=1 ${files[*]/#/-f $sql_dir/} (service file from the owner url, on tmpfs)"
+  echo "-- would: $psql_bin -X -q --single-transaction -v ON_ERROR_STOP=1 -v apply_settings=$apply_settings ${files[*]/#/-f $sql_dir/} (service file from the owner url, on tmpfs)"
   for f in "$pre" "${files[@]}"; do echo "-- ==== $f"; cat "$sql_dir/$f"; done
   exit 0
 fi
@@ -102,7 +104,7 @@ fi
 
 args=()
 for f in "${files[@]}"; do args+=(-f "$sql_dir/$f"); done
-PGSERVICEFILE="$tmp/svc" "$psql_bin" -X -q --single-transaction -v ON_ERROR_STOP=1 "${args[@]}" "service=owner" >/dev/null
+PGSERVICEFILE="$tmp/svc" "$psql_bin" -X -q --single-transaction -v ON_ERROR_STOP=1 -v "apply_settings=$apply_settings" "${args[@]}" "service=owner" >/dev/null
 
 if [[ $check -eq 1 ]]; then echo "studio_cdmss_ro: post-check passed (nothing changed)"
 else echo "studio_cdmss_ro: role (NOLOGIN, no password) + 16 views created/refreshed and post-check passed; next: issue the password via the Neon API, then enable LOGIN"; fi

@@ -48,7 +48,7 @@ PORT=8123
 # AWS credentials come from the t4 broker through credential_process (BEDROCK_AUTH=default-chain): no GCP variable, no AWS role,
 # no key file on this host. Vertex is OFF here (VERTEX_* unset).
 ENV_DEFAULTS=(
-  GOV_RO_DATABASE_URL= STUDIO_DATABASE_URL= STUDIO_SERVICE_TOKEN= STUDIO_ACTOR_SECRET=
+  GOV_RO_DATABASE_URL= STUDIO_DATABASE_URL= CDMSS_RO_DATABASE_URL= STUDIO_SERVICE_TOKEN= STUDIO_ACTOR_SECRET=
   STUDIO_LIVE_READS=0 STUDIO_RATE_PER_MIN=30 STUDIO_LOG_LEVEL=INFO
   BEDROCK_AUTH=default-chain BEDROCK_REGION=ap-south-1 AWS_REGION=ap-south-1 AWS_STS_REGIONAL_ENDPOINTS=regional
   "AWS_CONFIG_FILE=$AWS_CONFIG" AWS_EC2_METADATA_DISABLED=true STUDIO_BROKER_URL= STUDIO_BROKER_TOKEN=
@@ -58,6 +58,7 @@ ENV_DEFAULTS=(
 # Names an earlier release put in the env file that must not exist on this host any more (migration removes them).
 RETIRED_VARS=(GCP_SA_KEY_FILE GCP_SA_KEY_JSON GCP_AUDIENCE GOOGLE_APPLICATION_CREDENTIALS AWS_ROLE_ARN VERTEX_MODEL VERTEX_LOCATION)
 # GOV_RO_DATABASE_URL / STUDIO_DATABASE_URL are NOT operator-filled: the installer points them at the relay (127.0.0.1:6432);
+# CDMSS_RO_DATABASE_URL stays empty until ops/cdmss/relay-install.sh adds the cdmss alias (it then keeps pointing at the relay across installs);
 # STUDIO_BROKER_URL is derived from --broker. STUDIO_BROKER_TOKEN is the one secret copied from t4 by hand.
 REQUIRED_VARS=(
   STUDIO_SERVICE_TOKEN STUDIO_ACTOR_SECRET STUDIO_BROKER_TOKEN
@@ -181,6 +182,7 @@ if [ "$MODE" = purge ]; then
   run_t shred -u "$AWS_CONFIG"
   run_t shred -u "$NEON_ENV"
   run_t shred -u "$LOCAL_ENV"
+  run_t rm -f "$ETC_DIR/neon-hosts.extra"   # the CDMSS endpoint host pinned by ops/cdmss/relay-install.sh (not a secret, but it belongs to the purged credentials)
   exit 0
 fi
 
@@ -758,14 +760,17 @@ if [ ! -e "$LOCAL_ENV" ]; then
 fi
 # point the agent at the relay: loopback, local passwords, no Neon host or credential in the agent's environment
 if [ "$DRY" = 1 ]; then
-  echo "+ set GOV_RO_DATABASE_URL / STUDIO_DATABASE_URL in $ENV_FILE to postgresql://agent_*:<local pw>@127.0.0.1:$RELAY_PORT/{gov,studio}?sslmode=disable"
+  echo "+ set GOV_RO_DATABASE_URL / STUDIO_DATABASE_URL (and CDMSS_RO_DATABASE_URL when local.env holds AGENT_CDMSS_PW) in $ENV_FILE to postgresql://agent_*:<local pw>@127.0.0.1:$RELAY_PORT/{gov,studio,cdmss}?sslmode=disable"
 elif [ -r "$ENV_FILE" ] && [ -r "$LOCAL_ENV" ]; then
   gpw=$(sed -n 's/^AGENT_GOV_PW=//p' "$LOCAL_ENV"); spw=$(sed -n 's/^AGENT_STUDIO_PW=//p' "$LOCAL_ENV")
   [ -n "$gpw" ] && [ -n "$spw" ] || die "$LOCAL_ENV is incomplete"
+  # the cdmss alias exists only after ops/cdmss/relay-install.sh gave it a loopback password: then keep the line pointed at the relay
+  cpw=$(sed -n 's/^AGENT_CDMSS_PW=//p' "$LOCAL_ENV"); cdmss_sed=()
+  [ -z "$cpw" ] || cdmss_sed=(-e "s#^CDMSS_RO_DATABASE_URL=.*#CDMSS_RO_DATABASE_URL=postgresql://agent_cdmss:$cpw@127.0.0.1:$RELAY_PORT/cdmss?sslmode=disable#")
   tmp=$(mktemp "$ENV_FILE.XXXXXX")
   sed -e "s#^GOV_RO_DATABASE_URL=.*#GOV_RO_DATABASE_URL=postgresql://agent_gov:$gpw@127.0.0.1:$RELAY_PORT/gov?sslmode=disable#" \
       -e "s#^STUDIO_DATABASE_URL=.*#STUDIO_DATABASE_URL=postgresql://agent_studio:$spw@127.0.0.1:$RELAY_PORT/studio?sslmode=disable#" \
-      "$ENV_FILE" >"$tmp"
+      ${cdmss_sed[@]+"${cdmss_sed[@]}"} "$ENV_FILE" >"$tmp"
   chmod 0600 "$tmp"; chown "root:$SVC" "$tmp"; mv -f "$tmp" "$ENV_FILE"
 fi
 
