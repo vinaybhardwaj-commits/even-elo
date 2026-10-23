@@ -22,7 +22,7 @@ for pat in 'tar -xf /tmp/none.tar' 'uv sync --frozen' 'releases/0123456789ab' \
 done
 # state-independent: the env template comes from the installer itself, not from this host's /etc
 tpl=$(./install-studio-agent.sh --print-env-template)
-for pat in '^AWS_STS_REGIONAL_ENDPOINTS=regional$' '^TYPESAFE_API_KEY=$' '^JEV_MODEL=' '^STUDIO_LIVE_READS=0$' '^BEDROCK_MODEL_SONNET=' '^BEDROCK_AUTH=default-chain$' '^STUDIO_BROKER_TOKEN=$' '^AWS_CONFIG_FILE=/etc/studio-agent/aws-config$'; do
+for pat in '^AWS_STS_REGIONAL_ENDPOINTS=regional$' '^TYPESAFE_API_KEY=$' '^JEV_MODEL=' '^STUDIO_LIVE_READS=0$' '^BEDROCK_MODEL_SONNET=' '^BEDROCK_AUTH=default-chain$' '^STUDIO_BROKER_TOKEN=$' '^AWS_CONFIG_FILE=/etc/studio-agent/aws-config$' '^CDMSS_PREWARM=1$' '^CDMSS_POOL_PER_DB=2$'; do
   if grep -Eq -- "$pat" <<<"$tpl"; then ok "env template: $pat"; else bad "env template missing: $pat"; fi
 done
 u=$R/studio-agent.service
