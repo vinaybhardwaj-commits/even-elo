@@ -298,6 +298,23 @@
     "tz": "Asia/Kolkata"
    }
   },
+  "sites": [
+   {
+    "code": "ALL",
+    "label": "All sites",
+    "n": 135
+   },
+   {
+    "code": "SITEA",
+    "label": "SITEA",
+    "n": 100
+   },
+   {
+    "code": "SITEB",
+    "label": "SITEB",
+    "n": 35
+   }
+  ],
   "top_contributor_removed": {
    "doctor_uid": "D5",
    "site_rate_without": 0.375

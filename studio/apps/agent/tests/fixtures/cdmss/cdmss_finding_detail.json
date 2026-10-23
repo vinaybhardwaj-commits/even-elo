@@ -40,7 +40,8 @@
  "synthetic": true,
  "view": {
   "case": {
-   "url": "https://even-cdmss.vercel.app/care/D1-L-01"
+   "url": "https://even-cdmss.vercel.app/care/D1-L-01",
+   "url_verified": false
   },
   "envelope": {
    "action_line": "Open the CDMSS case to see the note in context.",
@@ -79,11 +80,12 @@
   },
   "findings": [
    {
-    "audit_id": "4a5ee3fe-bcb1-4c1b-b4ec-405094406f5d",
+    "audit_id": "e2e65fd7-5272-4749-bfb1-9725d36caf4a",
     "case": {
      "family": "opd",
      "uid": "D1-L-01",
-     "url": "https://even-cdmss.vercel.app/care/D1-L-01"
+     "url": "https://even-cdmss.vercel.app/care/D1-L-01",
+     "url_verified": false
     },
     "concept_id": null,
     "confidence": 0.8,
@@ -103,11 +105,12 @@
     "verdict": "low-value"
    },
    {
-    "audit_id": "4a5ee3fe-bcb1-4c1b-b4ec-405094406f5d",
+    "audit_id": "e2e65fd7-5272-4749-bfb1-9725d36caf4a",
     "case": {
      "family": "opd",
      "uid": "D1-L-01",
-     "url": "https://even-cdmss.vercel.app/care/D1-L-01"
+     "url": "https://even-cdmss.vercel.app/care/D1-L-01",
+     "url_verified": false
     },
     "concept_id": null,
     "confidence": 0.8,
@@ -128,7 +131,7 @@
    }
   ],
   "note": {
-   "audit_id": "4a5ee3fe-bcb1-4c1b-b4ec-405094406f5d",
+   "audit_id": "e2e65fd7-5272-4749-bfb1-9725d36caf4a",
    "doctor_name": "Dr One",
    "doctor_uid": "D1",
    "engine_version": "opd-note-audit/0.81.21",

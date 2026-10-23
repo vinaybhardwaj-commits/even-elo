@@ -19,7 +19,7 @@ Every view and every tool is one agent tool, reached exactly as existing screens
 | `cdmss_drilldown` | T2 worklist rows behind a metric/site/doctor | `cdmss` |
 | `cdmss_finding_detail` | T2 one finding: quote, rationale, case link | `cdmss` |
 
-**Access (`cdmss` screen, mirrored in `studio_access.py` and `tests/access_matrix.json`):** `super_admin`, `sgc_member` (SGO/SGC), `site_medical_head` (SMH). Everyone else 403, doctors never. **B must add the same `cdmss` screen to `apps/app/src/lib/zone/access.ts` and the ten names above to `lib/screens/tool-schema.ts`.** `tests/access_matrix.json` (pinned by `role-matrix.test.ts` against `access.ts`) is deliberately NOT changed on the agent branch, because that would turn the app's test red until B lands. The finished matrix is `.bc/access_matrix.cdmss.json`: the merger copies it over `studio/apps/agent/tests/access_matrix.json` in the same merge as B's `access.ts` (allowed personas for `cdmss` and all ten tools: super_admin, sgc_member, site_medical_head, sgo_and_hr). "Named clinical reviewers": no such role flag exists in `ops/neon/0011` — **UNVERIFIED / open question**, not gated in.
+**Access (`cdmss` screen, mirrored in `studio_access.py` and `tests/access_matrix.json`):** `super_admin`, `sgc_member` (SGO/SGC), `site_medical_head` (SMH). Everyone else 403, doctors never. **B must add the same `cdmss` screen to `apps/app/src/lib/zone/access.ts`.** (A2 ruling: transport is B's dedicated app route `/api/cdmss/[view]`; the shared `/api/screen` route and `tool-schema.ts` stay untouched.) Phase 1 access is exactly these three roles; "named clinical reviewers" are deferred until V names them. `tests/access_matrix.json` (pinned by `role-matrix.test.ts` against `access.ts`) is deliberately NOT changed on the agent branch, because that would turn the app's test red until B lands. The finished matrix is `.bc/access_matrix.cdmss.json`: the merger copies it over `studio/apps/agent/tests/access_matrix.json` in the same merge as B's `access.ts` (allowed personas for `cdmss` and all ten tools: super_admin, sgc_member, site_medical_head, sgo_and_hr). "Named clinical reviewers": deferred (A2 ruling); no role flag exists for them in `ops/neon/0011`.
 
 ### 0.1 Response wrapper (compatible with `SourceTablePayload`)
 ```jsonc
@@ -35,7 +35,7 @@ Every view and every tool is one agent tool, reached exactly as existing screens
   "view": { }                    // EVERYTHING ELSE: the envelope + view-specific blocks (sections 2-3)
 }
 ```
-**B action:** `SourceTablePayload` is a zod `z.object`, which STRIPS unknown keys, so the screen route must pass `view` through (add `view: z.unknown().optional()` for the cdmss tools) and may use a looser `Cell` for `rows`. Errors: `{ok:false,error:"forbidden"|"bad_params"|"tool_failed"|...}` as today; tool_failed `message` is a fixed string.
+**B action:** the dedicated `/api/cdmss/[view]` route must pass `view` through unchanged (a zod `z.object` strips unknown keys) and may use a looser `Cell` for `rows`. Errors: `{ok:false,error:"forbidden"|"bad_params"|"tool_failed"|...}` as today; tool_failed `message` is a fixed string.
 
 ### 0.2 Common param names
 `window_days` (int 7–182, default per view), `site` (string site code, e.g. `EHRC`), `doctor_uid` (string), `family` (`opd`|`ams`), `limit` (1–500), `offset`. Unknown keys → 422 `bad_params`.
@@ -77,7 +77,7 @@ Every view and every tool is one agent tool, reached exactly as existing screens
   "plain": "about 3 in 10" | null,
   "note": "string" | null,            // e.g. UNAVAILABLE reason, "lower bound" qualifier
   "band": "A".."E" | null,            // raw band of the value, NQI family only
-  "extra": { }                        // optional, metric-specific: M-OPD-02 {counts:{A..E}, pct_a, pct_ab, pct_ce, basis}; M-OPD-05 {pct_notes_with_one_or_more, notes_with_one_or_more, pct_ci95, ci_method}; M-OPD-06 {banded_coverage, expected_rate, raw_rate}
+  "extra": { }                        // optional, metric-specific: M-OPD-02 {counts:{A..E}, pct_a, pct_ab, pct_ce, basis, band_stats:{A..E: Stat}}; M-OPD-05 {pct_notes_with_one_or_more, notes_with_one_or_more, pct_ci95, ci_method}; M-OPD-06 {banded_coverage, expected_rate, raw_rate}
 }
 ```
 Rules the agent enforces (B only renders): doctor rows `n >= 10`, site/specialty groups `n >= 15`, funnel inclusion `>= 50` audited notes — below that `status:"count_only"` (value null, n kept, no rank, no ci). `coverage.pct < 50` ⇒ `status:"greyed"`, `grey_reason:"coverage_lt_50"` (value kept so the UI may show it greyed). `unavailable` ⇒ value null, `note` = the reason, `grey_reason:"not_available"`.
@@ -137,7 +137,9 @@ Flat table: one row per (site, metric): `columns:["site","metric_id","label","va
 "view": {
   "envelope": {...},
   "site_basis": "doctor_home_site",
-  "sites": ["ALL","EHRC","EHBR","UNMAPPED"],
+  "sites": [ {"code":"ALL","label":"All sites","n":412}, {"code":"EHRC","label":"EHRC","n":300} ],   // data-driven site picker: every site with audited notes in the window (n = canonical notes), not only the filtered one
+  "matrix_sites": ["ALL","EHRC"],                      // the rows actually in `matrix` (honours the `site` param)
+  "band_mix": [ { "site":"EHRC", "counts":{"A":6,"B":106,"C":20,"D":0,"E":0}, "bands": { "A": Stat, "B": Stat, "C": Stat, "D": Stat, "E": Stat } } ],   // opd only; for the stacked mix bar. Each Stat = that raw band's share (percent, Wilson CI) of PDQI-assessed notes, metric_id M-OPD-02, `band` = the letter; same min-n / coverage-grey rules
   "metrics": [ {"metric_id":"M-OPD-01","label":"...","unit":"score"} ],
   "matrix": [ { "site":"EHRC", "n_notes":412, "cells": { "M-OPD-01": Stat, "M-OPD-03": Stat, ... } } ],   // site group needs n>=15 else count_only
   "trend": [ { "site":"EHRC", "metric_id":"M-OPD-01", "points":[ {"week_from":"2026-10-04","week_to":"2026-10-10","value":77.1,"n":96,"status":"ok"} ] } ]  // IST calendar weeks ending at the window end, 4 points for 28 d
@@ -170,6 +172,7 @@ Flat table: `columns:["doctor_uid","doctor_name","n","events","rate","share_of_g
 "view": {
   "envelope": {...},
   "site": "EHRC", "metric":"lv_rate",
+  "sites": [ {"code":"ALL","label":"All sites","n":135}, {"code":"EHRC","label":"EHRC","n":100} ],   // same shape as V2: all sites in the window, for the picker
   "site_rate": Stat, "other_sites_rate": Stat,
   "gap": { "absolute": 0.06, "relative": 0.2 } | null,
   "contributors": [ { "doctor_uid","doctor_name","n","events","rate","ci95",
@@ -191,7 +194,7 @@ Flat table: `columns:["doctor_uid","doctor_name","site","n_signals","n_open","to
       "evidence":[ Evidence ] } ]       // <= 5 per dossier, newest first
 }
 ```
-`Evidence` = `{ "audit_id","uid","note_day","finding_no","subject","domain","verdict","signal_type","rule_ref","quote": "evidence text or null","rationale":"text or null","case": {"family":"opd","uid":"...","url":"https://.../care/<uid>"|null} }`.
+`Evidence` = `{ "audit_id","uid","note_day","finding_no","subject","domain","verdict","signal_type","rule_ref","quote": "evidence text or null","rationale":"text or null","case": {"family":"opd","uid":"...","url":"https://.../care/<uid>"|null,"url_verified":false} }`.
 **Red-flag basis (UNVERIFIED):** `gov_signal` rows with `response_required = true` or `importance` in the high set, plus the doctor's recent low-value/interaction findings as evidence. No stored dossier or severity table exists in `cdmss_ro` (catalogue §Worklists); importance and status vocabularies are passed through raw and never filtered on a guessed value.
 
 ### 3.6 `cdmss_v8_worklists` — params `{ list: "signals_open"|"signals_overdue"|"low_value_findings"|"missing_pdqi", window_days?: 28, site?, doctor_uid?, limit?: 500, offset?: 0 }`
@@ -214,7 +217,7 @@ Table of that note's findings; `view`: `{ envelope, note:{uid,audit_id,doctor_ui
 
 ## 5. Conventions
 - Dates `YYYY-MM-DD` = IST calendar day; timestamps ISO-8601 with offset. Numbers are JSON numbers (rates as fractions 0–1 when `unit:"percent"` is **not** used; `unit:"percent"` values are 0–100). Decimals rounded to 4 places (scores 1 place) only for display fields (`plain`); raw values are unrounded.
-- **Case link** (`case.url`): `${CDMSS_CASE_BASE_URL or "https://even-cdmss.vercel.app"}/care/${uid}`. The repo has no existing governance case-page pattern (the audit-findings screen links only to its own thread page `/audit-findings/<reference>`); `/care/[uid]` is the CDMSS prescription page and it is **UNVERIFIED** that its uid equals the OPD audit uid. `case.url` is null when no uid.
+- **Case link** (`case.url`): `${CDMSS_CASE_BASE_URL or "https://even-cdmss.vercel.app"}/care/${uid}`. The repo has no existing governance case-page pattern (the audit-findings screen links only to its own thread page `/audit-findings/<reference>`); `/care/[uid]` is the CDMSS prescription page and it is **UNVERIFIED** that its uid equals the OPD audit uid. `case.url` is null when no uid. Every `case` object (evidence rows and `cdmss_finding_detail.view.case`) carries `url_verified:false` until gov-orch confirms the pattern, so the UI can label the link as unverified.
 - **No PHI gating** (V's rule): names/UHIDs/quotes appear for anyone who can open the module. OPD views carry no UHID.
 - Band is always the RAW band (`raw_band`); `displayed_band` is never exposed in Phase 1.
 - Caps: aggregate scans ≤ 50,000 rows (`incomplete` set when hit), lists ≤ 500 rows, CDMSS statement timeout 30 s (a timeout ⇒ 502 `tool_failed`).

@@ -216,6 +216,9 @@ async def test_band_mix_uses_raw_band_over_assessed_notes(world):
     p, n = 84 / 109, 109
     d = 1 + z * z / n
     assert approx(lo, 100 * ((p + z * z / (2 * n)) - z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))) / d)
+    bs = s["extra"]["band_stats"]
+    assert [bs[x]["numerator"] for x in "ABCDE"] == [18, 66, 20, 5, 0] and all(bs[x]["denominator"] == 109 and bs[x]["band"] == x for x in "ABCDE")
+    assert approx(sum(bs[x]["value"] for x in "ABCDE"), 100.0)
 
 
 @pytest.mark.anyio
@@ -301,6 +304,7 @@ async def test_v4_contributors_shares_and_site_rate_without_top(world):
     c = {x["doctor_uid"]: x for x in v["contributors"]}
     assert approx(c["D5"]["share_of_gap"], 30 / 45) and approx(c["D2"]["share_of_gap"], 10 / 45) and approx(c["D1"]["share_of_gap"], 5 / 45)
     assert approx(c["D5"]["site_rate_without"], 15 / 40)
+    assert [x["code"] for x in v["sites"]] == ["ALL", "SITEA", "SITEB"] and [x["n"] for x in v["sites"]] == [135, 100, 35]  # data-driven picker: every site, not just this one
     assert v["top_contributor_removed"]["doctor_uid"] == "D5" and v["contributors"][0]["doctor_uid"] == "D5"
 
 
@@ -376,7 +380,14 @@ async def test_v2_matrix_trend_and_site_basis(world):
     body = await call("cdmss_v2_scorecard", {"window_days": 28})
     assert_envelope(body, "cdmss_v2_scorecard")
     v = body["view"]
-    assert v["site_basis"] == "doctor_home_site" and v["sites"] == ["ALL", "SITEA", "SITEB"]
+    assert v["site_basis"] == "doctor_home_site" and v["matrix_sites"] == ["ALL", "SITEA", "SITEB"]
+    assert v["sites"] == [{"code": "ALL", "label": "All sites", "n": 175}, {"code": "SITEA", "label": "SITEA", "n": 140}, {"code": "SITEB", "label": "SITEB", "n": 35}]
+    mix = {m["site"]: m for m in v["band_mix"]}
+    assert mix["ALL"]["counts"] == {"A": 18, "B": 106, "C": 20, "D": 5, "E": 0}
+    b = mix["ALL"]["bands"]["B"]  # 28-day window adds the 40 early assessed band-B notes: 106 of 149
+    assert b["metric_id"] == "M-OPD-02" and b["band"] == "B" and b["numerator"] == 106 and b["denominator"] == 149 and approx(b["value"], 100 * 106 / 149) and b["ci95"] and b["status"] == "ok"
+    assert mix["SITEA"]["counts"] == {"A": 6, "B": 106, "C": 20, "D": 0, "E": 0} and mix["SITEA"]["bands"]["E"]["value"] == 0.0
+    assert mix["SITEB"]["bands"]["A"]["status"] == "greyed" and mix["SITEB"]["bands"]["A"]["grey_reason"] == "coverage_lt_50"  # 17 of 35 assessed
     cells = {m["site"]: m["cells"] for m in v["matrix"]}
     assert cells["SITEB"]["M-OPD-01"]["status"] == "greyed" and cells["SITEA"]["M-OPD-01"]["status"] == "ok"
     pts = next(t for t in v["trend"] if t["site"] == "SITEA" and t["metric_id"] == "M-OPD-01")["points"]
@@ -394,7 +405,7 @@ async def test_v5_dossiers_carry_evidence_quotes_and_case_links(world):
     d5 = dos["D5"]
     assert d5["site"] == "SITEA" and d5["signals"][0]["overdue"] is True and d5["signals"][0]["response_required"] is True
     ev = d5["evidence"]
-    assert 0 < len(ev) <= 5 and ev[0]["quote"] == "quote for lv" and ev[0]["case"]["url"] == f"https://even-cdmss.vercel.app/care/{ev[0]['uid']}"
+    assert 0 < len(ev) <= 5 and ev[0]["quote"] == "quote for lv" and ev[0]["case"]["url"] == f"https://even-cdmss.vercel.app/care/{ev[0]['uid']}" and ev[0]["case"]["url_verified"] is False
     assert body["rows"][0]["doctor_uid"] == "D5"  # high importance first
     only_b = await call("cdmss_v5_redflags", {"window_days": 28, "site": "SITEB"})
     assert [d["doctor_uid"] for d in only_b["view"]["dossiers"]] == ["D4"]
@@ -432,7 +443,7 @@ async def test_drilldown_and_finding_detail(world):
     assert_envelope(det, "cdmss_finding_detail")
     assert det["view"]["note"]["doctor_name"] == "Dr One" and det["view"]["note"]["pdqi9_assessed"] is True and det["view"]["note"]["raw_band"] == "A"
     assert [x["subject"] for x in det["view"]["findings"]] == ["lv1", "lv1b"] and det["view"]["findings"][0]["quote"] == "quote for lv1"
-    assert det["view"]["case"]["url"].endswith("/care/D1-L-01")
+    assert det["view"]["case"]["url"].endswith("/care/D1-L-01") and det["view"]["case"]["url_verified"] is False
     one = await call("cdmss_finding_detail", {"uid": "D1-L-01", "finding_no": 2})
     assert [x["subject"] for x in one["view"]["findings"]] == ["lv1b"]
     gone = await call("cdmss_finding_detail", {"uid": "NOPE"})

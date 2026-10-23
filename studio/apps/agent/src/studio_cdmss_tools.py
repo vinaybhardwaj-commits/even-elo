@@ -829,7 +829,8 @@ def metric_stat(mid: str, g: Group, ds: Dataset, kind: str = "group") -> dict:
         ch = _change(ew, w, None if ep is None else 100 * ep, None if p is None else 100 * p, E.n_assessed, L.n_assessed, prop_change_p(E.band_a + E.band_b, E.n_assessed, k, L.n_assessed))
         counts = {b: int(getattr(L, f"band_{b.lower()}")) for b in BANDS}
         ce = L.band_c + L.band_d + L.band_e
-        extra = {"counts": counts, "pct_a": _pct(L.band_a, L.n_assessed), "pct_ab": _pct(k, L.n_assessed), "pct_ce": _pct(ce, L.n_assessed), "basis": "PDQI-assessed notes, raw band"}
+        extra = {"counts": counts, "pct_a": _pct(L.band_a, L.n_assessed), "pct_ab": _pct(k, L.n_assessed), "pct_ce": _pct(ce, L.n_assessed), "basis": "PDQI-assessed notes, raw band",
+                 "band_stats": {b: band_share_stat(mid, w, b, getattr(L, f"band_{b.lower()}"), L.n_assessed, cov, kind) for b in BANDS}}
         return stat(mid, w, value=None if p is None else 100 * p, num=k, den=L.n_assessed, n=L.n_assessed, ci=None if ci is None else (100 * ci[0], 100 * ci[1]), ci_method="wilson", kind=kind, coverage=cov, change=ch, plain=plain_in_ten(p), extra=extra)
     if mid == "M-OPD-03":
         m, _ = mean_sd(L.n_clin, L.sum_clin, L.ssq_clin)
@@ -884,6 +885,14 @@ def metric_stat(mid: str, g: Group, ds: Dataset, kind: str = "group") -> dict:
                     change=_change(ew, w, None if ep is None else 100 * ep, None if p is None else 100 * p, RE.n_urti, R.n_urti, prop_change_p(RE.n_urti_r5, RE.n_urti, R.n_urti_r5, R.n_urti)),
                     plain=plain_in_ten(p), note="Lower bound: only what the audit caught.")
     raise ToolError("Unknown metric.")
+
+
+def band_share_stat(mid: str, w: Window, b: str, k: float, n: float, cov: dict, kind: str) -> dict:
+    """One band's share of the PDQI-assessed notes (raw band), same gates as every Stat; for the stacked mix bar."""
+    p = _ratio(k, n)
+    ci = wilson(k, n)
+    return stat(mid, w, value=None if p is None else 100 * p, num=k, den=n, n=n, ci=None if ci is None else (100 * ci[0], 100 * ci[1]), ci_method="wilson", kind=kind, coverage=cov,
+                plain=plain_in_ten(p), band=b, label=f"Band {b} share of PDQI-assessed notes (raw band)")
 
 
 def _pct(k, n):
@@ -979,7 +988,7 @@ def evidence_row(r: dict, docs: dict) -> dict:
         "rule_ref": r.get("rule_ref"),
         "quote": quote_of(r.get("evidence")),
         "rationale": r.get("rationale"),
-        "case": {"family": "opd", "uid": r.get("uid"), "url": case_url(r.get("uid"))},
+        "case": {"family": "opd", "uid": r.get("uid"), "url": case_url(r.get("uid")), "url_verified": False},
     }
 
 
@@ -1170,12 +1179,16 @@ async def build_v2(run: Run, days: int, family: str, site_filter: Optional[str])
     by_site = groups_by(ds, site_of(ds))
     allg = ds.group()
     sites = ["ALL", *sorted(s for s in by_site if site_filter is None or s == site_filter)]
-    matrix, rows = [], []
+    site_list = [{"code": "ALL", "label": "All sites", "n": int(allg.late.n)}] + [{"code": k, "label": k, "n": int(by_site[k].late.n)} for k in sorted(by_site)]
+    matrix, rows, band_mix = [], [], []
     for s in sites:
         g = allg if s == "ALL" else by_site[s]
         kind = "all" if s == "ALL" else "site"
         cells = {m: metric_stat(m, g, ds, kind) for m in metrics}
         matrix.append({"site": s, "n_notes": int(g.late.n), "cells": cells})
+        if family == "opd":
+            mix = cells["M-OPD-02"]
+            band_mix.append({"site": s, "counts": mix["extra"]["counts"], "bands": mix["extra"]["band_stats"]})
         for m, st in cells.items():
             ci = st["ci95"] or [None, None]
             rows.append({"site": s, "metric_id": m, "label": st["label"], "value": st["value"], "unit": st["unit"], "n": st["n"], "status": st["status"], "ci_lo": ci[0], "ci_hi": ci[1]})
@@ -1203,7 +1216,7 @@ async def build_v2(run: Run, days: int, family: str, site_filter: Optional[str])
         caveats=(SITE_CAVEAT,),
         action=("Site medical heads: read your own row first; " + (f"{', '.join(below)} have too few audited notes for some measures." if below else "all listed sites have enough audited notes.")),
     )
-    view = {"envelope": env, "site_basis": "doctor_home_site", "sites": sites, "metrics": [{"metric_id": m, "label": METRICS[m]["label"], "unit": METRICS[m]["unit"]} for m in metrics], "matrix": matrix, "trend": trend}
+    view = {"envelope": env, "site_basis": "doctor_home_site", "sites": site_list, "matrix_sites": sites, "band_mix": band_mix, "metrics": [{"metric_id": m, "label": METRICS[m]["label"], "unit": METRICS[m]["unit"]} for m in metrics], "matrix": matrix, "trend": trend}
     return wrap(run, "cdmss_v2_scorecard", ["site", "metric_id", "label", "value", "unit", "n", "status", "ci_lo", "ci_hi"], rows, view)
 
 
@@ -1320,7 +1333,9 @@ async def build_v4(run: Run, days: int, site: str) -> str:
         action=(f"Site medical head for {site}: start with the largest contributor's notes; removing them moves the site rate to {100 * top['site_rate_without']:.0f}%." if top and top["site_rate_without"] is not None else f"Site medical head for {site}: no single contributor stands out."),
     )
     rows = [{"doctor_uid": c["doctor_uid"], "doctor_name": c["doctor_name"], "n": c["n"], "events": c["events"], "rate": c["rate"], "share_of_gap": c["share_of_gap"], "rate_without": c["site_rate_without"]} for c in contributors]
-    view = {"envelope": env, "site": site, "metric": "lv_rate", "site_rate": site_stat, "other_sites_rate": other_stat, "gap": gap, "contributors": contributors,
+    all_sites = groups_by(ds, site_of(ds))
+    site_list = [{"code": "ALL", "label": "All sites", "n": int(ds.group().late.n)}] + [{"code": k, "label": k, "n": int(all_sites[k].late.n)} for k in sorted(all_sites)]
+    view = {"envelope": env, "site": site, "sites": site_list, "metric": "lv_rate", "site_rate": site_stat, "other_sites_rate": other_stat, "gap": gap, "contributors": contributors,
             "top_contributor_removed": None if not top else {"doctor_uid": top["doctor_uid"], "site_rate_without": top["site_rate_without"]}}
     return wrap(run, "cdmss_v4_contributors", ["doctor_uid", "doctor_name", "n", "events", "rate", "share_of_gap", "rate_without"], rows, view)
 
@@ -1559,7 +1574,7 @@ async def build_finding_detail(run: Run, uid: str, finding_no: Optional[int]) ->
     env = build_envelope(run, window, head, head, [], caveats=("Finding text and quotes are the audit's own and may be wrong or contested.",), action="Open the CDMSS case to see the note in context.")
     cols = ["finding_no", "subject", "verdict", "signal_type", "rule_ref", "quote", "rationale", "case_url"]
     rows = [{**f, "case_url": f["case"]["url"]} for f in findings]
-    return wrap(run, "cdmss_finding_detail", cols, rows, {"envelope": env, "note": note, "findings": findings, "case": {"url": case_url(uid)}})
+    return wrap(run, "cdmss_finding_detail", cols, rows, {"envelope": env, "note": note, "findings": findings, "case": {"url": case_url(uid), "url_verified": False}})
 
 
 # --------------------------------------------------------------------------------------------------------------
