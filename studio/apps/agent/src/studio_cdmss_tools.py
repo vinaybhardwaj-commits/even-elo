@@ -26,7 +26,8 @@ import os
 import re
 import time
 import weakref
-from collections import OrderedDict
+import contextvars
+from collections import Counter, OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Literal, Optional
 
@@ -36,9 +37,9 @@ from pydantic import BaseModel, Field
 
 from src import studio_audit
 from src.clock import KOLKATA
-from src.studio_db import NotConfigured, connect_cdmss_read_only, connect_read_only
+from src.studio_db import NotConfigured, cdmss_configured, connect_cdmss_read_only, connect_read_only
 from src.studio_pins import PinError
-from src.studio_tools import MAX_OFFSET, ToolError, _json_safe, assert_read_only, live_reads_enabled, staff_id_from
+from src.studio_tools import STAFF_KEY, MAX_OFFSET, ToolError, _json_safe, assert_read_only, live_reads_enabled, staff_id_from
 
 logger = logging.getLogger("studio.cdmss")
 
@@ -67,7 +68,7 @@ C7_CAVEATS = (
 )
 NO_DB_SOURCE = "metric catalogue (module definitions; no database read)"
 DB13_LAG_CAVEAT = "Per-1,000-Rx figures count only notes already in the DB13 extract (with a medication line), in numerator and denominator alike: notes newer than 'DB13 as of' are excluded."
-SITE_CAVEAT = "OPD site is the doctor's home site (governance DB engagement), not where the note was written."
+SITE_CAVEAT = "OPD site is the doctor's home site (governance engagement, else KX hospital ids), not where the note was written."
 
 
 # --------------------------------------------------------------------------------------------------------------
@@ -471,6 +472,25 @@ ORDER BY p.cdmss_doctor_uid
 LIMIT 20000
 """
 
+# One read for the KX leg: every DB13 doctor that has hospital ids, with the governance sites of the same doctor (for the map evidence).
+KX_SQL = """
+SELECT d.uid AS doctor_uid,
+       ARRAY(SELECT k FROM jsonb_object_keys(CASE WHEN jsonb_typeof(d.karexpert_metadata__practitioner_id_by_hospital) = 'object'
+                                                  THEN d.karexpert_metadata__practitioner_id_by_hospital ELSE '{}'::jsonb END) AS k ORDER BY k) AS kx_keys,
+       COALESCE(g.sites, '{}'::text[]) AS gov_sites
+FROM studio_ro.dw_doctors d
+LEFT JOIN (
+  SELECT p.cdmss_doctor_uid AS uid, array_agg(DISTINCT h.code) FILTER (WHERE h.code IS NOT NULL) AS sites
+  FROM physicians p
+  LEFT JOIN physician_engagements e ON e.physician_id = p.id AND e.status <> 'terminated'
+  LEFT JOIN hospitals h ON h.id = e.hospital_id
+  WHERE p.cdmss_doctor_uid IS NOT NULL
+  GROUP BY p.cdmss_doctor_uid
+) g ON g.uid = d.uid
+WHERE jsonb_typeof(d.karexpert_metadata__practitioner_id_by_hospital) = 'object'
+LIMIT 50000
+"""
+
 DOCTOR_DIM_SQL = """
 SELECT d.doctor_uid, d.doctor_name, COALESCE(d.directory_speciality, d.roster_specialty) AS speciality
 FROM cdmss_ro.doctor_dim d
@@ -573,6 +593,7 @@ ALL_SQL_TEXTS = {
     "dw_rx": DW_RX_SQL,
     "dw_as_of": DW_AS_OF_SQL,
     "directory": DIRECTORY_SQL,
+    "kx": KX_SQL,
     "doctor_dim": DOCTOR_DIM_SQL,
     "signals": SIGNALS_SQL,
     "finding_detail": FINDING_DETAIL_SQL,
@@ -581,7 +602,7 @@ ALL_SQL_TEXTS = {
 }
 # The CDMSS views these tools touch (the role holds SELECT on exactly the cdmss_ro views).
 CDMSS_VIEWS = ("cdmss_ro.opd_note_audit", "cdmss_ro.opd_finding", "cdmss_ro.doctor_dim", "cdmss_ro.gov_signal")
-DW_VIEWS = ("studio_ro.dw_individuals_prescriptions", "studio_ro.dw_extract_status")
+DW_VIEWS = ("studio_ro.dw_individuals_prescriptions", "studio_ro.dw_extract_status", "studio_ro.dw_doctors")
 
 
 # --------------------------------------------------------------------------------------------------------------
@@ -643,9 +664,13 @@ class Doc:
     name: Optional[str] = None
     speciality: Optional[str] = None
     sites: list = field(default_factory=list)
+    basis: str = "none"  # where the site came from: "governance" (engagement) | "kx" (DB13 hospital ids) | "none"
+    resolved: Optional[str] = None  # a site set from KX ids (a code, or MULTI); governance sites live in `sites`
 
     @property
     def site(self) -> str:
+        if self.resolved:
+            return self.resolved
         return self.sites[0] if len(self.sites) == 1 else ("MULTI" if len(self.sites) > 1 else "UNMAPPED")
 
 
@@ -703,9 +728,82 @@ class Dataset:
         return g
 
 
+# KX hospital id -> site code, DERIVED from the data and never guessed: over doctors linked in governance with exactly one site AND exactly one KX key,
+# a key maps to a site only when >= 90% of those doctors agree and there are >= 3 of them. This constant is the last derived map; the same bar is
+# re-run on every directory load (derive_kx_map) and a WARNING is logged when the two differ. The builder had no live access, so it starts EMPTY:
+# the live evidence needed is the key x site table from KX_SQL (print it with the runtime evidence log line "kx map evidence"). Per gov-orch,
+# 23 Oct: keys seen on the 60 unlinked doctors are vZmEPseTKP3vS3DrZzrv (18 doctors) and F8jrPHlVTWsvNtB1Iz0k (8); their site evidence is not known here.
+KX_SITE_MAP: dict = {}
+KX_MAP_MIN_AGREE = 0.90
+KX_MAP_MIN_N = 3
+_kx_warned: set = set()
+
+
+def derive_kx_map(rows: list) -> tuple[dict, dict]:
+    """(map, evidence). evidence[key] = {n, site, agree, counts, enough, accepted} over governance-linked doctors with one site and one key."""
+    tab: dict = {}
+    for r in rows:
+        sites, keys = list(r.get("gov_sites") or []), list(r.get("kx_keys") or [])
+        if len(sites) == 1 and len(keys) == 1:
+            tab.setdefault(keys[0], Counter())[sites[0]] += 1
+    derived, evidence = {}, {}
+    for key, c in sorted(tab.items()):
+        n = sum(c.values())
+        site, k = c.most_common(1)[0]
+        enough = n >= KX_MAP_MIN_N
+        accepted = enough and k / n >= KX_MAP_MIN_AGREE
+        evidence[key] = {"n": n, "site": site, "agree": k, "counts": dict(c), "enough": enough, "accepted": accepted}
+        if accepted:
+            derived[key] = site
+    return derived, evidence
+
+
+def effective_kx_map(derived: dict, evidence: dict, constant: Optional[dict] = None) -> dict:
+    """The runtime map wins when it meets the bar. A key the runtime data cannot judge (fewer than 3 linked doctors) falls back to the constant; a key
+    the runtime data judged and rejected (<90% agreement) maps to nothing. A difference from the constant is logged once per distinct map."""
+    constant = KX_SITE_MAP if constant is None else constant
+    out = dict(derived)
+    for key, site in constant.items():
+        ev = evidence.get(key)
+        if key not in out and (ev is None or not ev["enough"]):
+            out[key] = site
+    if derived != constant:
+        sig = (tuple(sorted(derived.items())), tuple(sorted(constant.items())))
+        if sig not in _kx_warned:
+            _kx_warned.add(sig)
+            logger.warning("kx map drift: runtime-derived %s differs from the KX_SITE_MAP constant %s; evidence %s", derived, constant,
+                           {k: {f: v.get(f) for f in ("n", "site", "agree")} for k, v in evidence.items()})
+    return out
+
+
+def apply_kx_sites(docs: dict, kx_rows: list, kxmap: dict) -> None:
+    """Order (b) then (c): a doctor with no governance site gets one KX key -> its mapped site, several keys -> MULTI; otherwise stays UNMAPPED."""
+    for r in kx_rows:
+        uid, keys = r["doctor_uid"], list(r.get("kx_keys") or [])
+        doc = docs.get(uid)
+        if doc is not None and doc.sites:
+            continue  # (a) governance decides
+        if len(keys) >= 2:
+            site = "MULTI"
+        elif len(keys) == 1 and keys[0] in kxmap:
+            site = kxmap[keys[0]]
+        else:
+            continue
+        if doc is None:
+            doc = docs[uid] = Doc(uid)
+        doc.resolved, doc.basis = site, "kx"
+
+
 async def load_directory(run: Run) -> dict:
-    rows = await run.q("gov", DIRECTORY_SQL, {}, "governance DB: physicians, physician_engagements, hospitals")
-    return {r["doctor_uid"]: Doc(r["doctor_uid"], r.get("full_name"), r.get("primary_specialty"), sorted(r.get("sites") or [])) for r in rows}
+    rows, kx_rows = await gather_all(
+        run.q("gov", DIRECTORY_SQL, {}, "governance DB: physicians, physician_engagements, hospitals"),
+        run.q("gov", KX_SQL, {}, "studio_ro.dw_doctors (KX hospital ids) + governance engagements"),
+    )
+    docs = {r["doctor_uid"]: Doc(r["doctor_uid"], r.get("full_name"), r.get("primary_specialty"), sorted(r.get("sites") or []), "governance" if r.get("sites") else "none") for r in rows}
+    derived, evidence = derive_kx_map(kx_rows)
+    logger.info("kx map evidence %s", {k: {"n": v["n"], "site": v["site"], "agree": v["agree"], "accepted": v["accepted"]} for k, v in evidence.items()})
+    apply_kx_sites(docs, kx_rows, effective_kx_map(derived, evidence))
+    return docs
 
 
 async def fill_names(run: Run, docs: dict, uids) -> dict:
@@ -1247,17 +1345,25 @@ def site_comparison(ds: Dataset) -> dict:
     """Is the per-note site good enough to compare sites? OPD notes carry no site of their own: the site is the doctor's home site, and
     doctors with none (UNMAPPED) or several (MULTI) cannot be placed. Coverage = placed notes / notes in the window."""
     total = mapped = 0.0
+    basis = {"governance": [set(), 0.0], "kx": [set(), 0.0], "none": [set(), 0.0]}
     for r in ds.rows:
         if r.get("period") != "late":
             continue
         n = float(r.get("n") or 0)
         total += n
-        if ds.doc(r["doctor_uid"]).site not in ("UNMAPPED", "MULTI"):
+        d = ds.doc(r["doctor_uid"])
+        placed = d.site not in ("UNMAPPED", "MULTI")
+        if placed:
             mapped += n
+        b = basis[d.basis if placed and d.basis in basis else "none"]  # a doctor who could not be placed counts under "none"
+        b[0].add(r["doctor_uid"])
+        b[1] += n
     cov = mapped / total if total else 1.0
+    bd = {k: {"doctors": len(v[0]), "notes": int(v[1])} for k, v in basis.items()}
+    basis_caption = f"Site from governance for {bd['governance']['doctors']} doctors, from KX hospital ids for {bd['kx']['doctors']}, none for {bd['none']['doctors']}; {round(100 * cov)}% of notes have a site."
     withheld = total > 0 and cov < SITE_COMPARISON_MIN_COVERAGE
     caption = f"Site comparison withheld: {round(100 * (1 - cov))}% of notes have no site (doctor home-site mapping). Fix pending." if withheld else None
-    return {"withheld": withheld, "coverage": round(cov, 4), "min_coverage": SITE_COMPARISON_MIN_COVERAGE, "notes": int(total), "notes_with_site": int(mapped), "caption": caption}
+    return {"withheld": withheld, "coverage": round(cov, 4), "min_coverage": SITE_COMPARISON_MIN_COVERAGE, "notes": int(total), "notes_with_site": int(mapped), "caption": caption, "basis": bd, "basis_caption": basis_caption}
 
 
 async def refuse_site_filter_if_withheld(run: Run, days: int, site: Optional[str], ds: Optional["Dataset"] = None) -> None:
@@ -1313,7 +1419,7 @@ async def build_v1(run: Run, days: int) -> str:
         if movers
         else "Governance leads: nothing is moving clearly this week; use the scorecard to look at sites and the doctor view for outliers."
     )
-    env = build_envelope(run, ds.late, headline, first.get("plain") or headline, [*opd, *ams], caveats=(SITE_CAVEAT,), action=action)
+    env = build_envelope(run, ds.late, headline, first.get("plain") or headline, [*opd, *ams], caveats=(SITE_CAVEAT, site_comparison(ds)["basis_caption"]), action=action)
     rows = [{"family": "opd", "status": "live", "metric_id": s["metric_id"], "label": s["label"], "value": s["value"], "unit": s["unit"], "n": s["n"], "state": s["status"]} for s in opd]
     rows += [{"family": "ams", "status": "live", "metric_id": s["metric_id"], "label": s["label"], "value": s["value"], "unit": s["unit"], "n": s["n"], "state": s["status"]} for s in ams]
     view = {
@@ -1379,7 +1485,7 @@ async def build_v2(run: Run, days: int, family: str, site_filter: Optional[str])
     below = [m["site"] for m in matrix[1:] if any(c["status"] == "count_only" for c in m["cells"].values())]
     env = build_envelope(
         run, ds.late, sentence(head), head.get("plain") or sentence(head), [c for m in matrix for c in m["cells"].values()],
-        caveats=(SITE_CAVEAT, *((sc["caption"],) if sc["withheld"] else ())),
+        caveats=(SITE_CAVEAT, sc["basis_caption"], *((sc["caption"],) if sc["withheld"] else ())),
         action=("Governance leads: site comparison is paused until each note has a site; read the hospital-wide row." if sc["withheld"] else "Site medical heads: read your own row first; " + (f"{', '.join(below)} have too few audited notes for some measures." if below else "all listed sites have enough audited notes.")),
     )
     view = {"envelope": env, "site_basis": "doctor_home_site", "site_comparison": sc, "sites": site_list, "matrix_sites": sites, "band_mix": band_mix, "metrics": [{"metric_id": m, "label": METRICS[m]["label"], "unit": METRICS[m]["unit"]} for m in metrics], "matrix": matrix, "trend": trend}
@@ -1450,7 +1556,7 @@ async def build_v3(run: Run, days: int, metric: str, site: Optional[str], specia
     head = metric_stat("M-OPD-05b" if metric == "lv_rate" else "M-OPD-01", ds.group(ok_doc), ds, "all")
     env = build_envelope(
         run, ds.late, sentence(head), head.get("plain") or sentence(head), [head],
-        caveats=(SITE_CAVEAT, "Variation between doctors reflects case mix and documentation habits as well as quality; a position beyond a limit is a prompt to look, not a verdict.")
+        caveats=(SITE_CAVEAT, site_comparison(ds)["basis_caption"], "Variation between doctors reflects case mix and documentation habits as well as quality; a position beyond a limit is a prompt to look, not a verdict.")
         + (("Funnel limits are plain binomial around the pooled rate (no overdispersion adjustment).",) if metric == "lv_rate" else ()),
         action=(f"Site medical heads: review the {len(above)} doctor(s) above the 99.8% limit first, with their notes in the worklist." if above else "Site medical heads: no doctor is beyond the 99.8% limit; read the ranked list for the widest intervals."),
     )
@@ -1469,7 +1575,7 @@ async def build_v4(run: Run, days: int, site: str) -> str:
         all_stat = metric_stat("M-OPD-05b", ds.group(), ds, "all")
         other = {**withheld_stat(all_stat, sc["caption"]), "n": 0}
         site_list = [{"code": "ALL", "label": "All sites", "n": int(ds.group().late.n)}]  # no per-site counts while withheld
-        env = build_envelope(run, ds.late, f"{sc['caption']} {sentence(all_stat)}", all_stat.get("plain") or sentence(all_stat), [all_stat], caveats=(SITE_CAVEAT, sc["caption"]),
+        env = build_envelope(run, ds.late, f"{sc['caption']} {sentence(all_stat)}", all_stat.get("plain") or sentence(all_stat), [all_stat], caveats=(SITE_CAVEAT, sc["basis_caption"], sc["caption"]),
                              action="Governance leads: contributors by site are paused until each note has a site; use the hospital-wide figure and the doctor variation view.")
         view = {"envelope": env, "site": site, "sites": site_list, "site_comparison": sc, "metric": "lv_rate", "site_rate": all_stat, "other_sites_rate": other, "gap": None, "contributors": [], "top_contributor_removed": None}
         return wrap(run, "cdmss_v4_contributors", ["doctor_uid", "doctor_name", "n", "events", "rate", "share_of_gap", "rate_without"], [], view)
@@ -1515,7 +1621,7 @@ async def build_v4(run: Run, days: int, site: str) -> str:
         direction = "above" if gap["absolute"] > 0 else "below"
         sentence_ = f"At {site}, {100 * rate_site:.0f}% of notes carry a low-value finding, {abs(100 * gap['absolute']):.0f} points {direction} the other sites ({100 * rate_other:.0f}%), over {int(s_n)} notes."
     env = build_envelope(
-        run, ds.late, sentence_, site_stat.get("plain") or sentence_, [site_stat, other_stat], caveats=(SITE_CAVEAT, "A doctor's share of the gap is their excess over the other sites' rate; it describes the site's number, not individual quality."),
+        run, ds.late, sentence_, site_stat.get("plain") or sentence_, [site_stat, other_stat], caveats=(SITE_CAVEAT, sc["basis_caption"], "A doctor's share of the gap is their excess over the other sites' rate; it describes the site's number, not individual quality."),
         action=(f"Site medical head for {site}: start with the largest contributor's notes; removing them moves the site rate to {100 * top['site_rate_without']:.0f}%." if top and top["site_rate_without"] is not None else f"Site medical head for {site}: no single contributor stands out."),
     )
     rows = [{"doctor_uid": c["doctor_uid"], "doctor_name": c["doctor_name"], "n": c["n"], "events": c["events"], "rate": c["rate"], "share_of_gap": c["share_of_gap"], "rate_without": c["site_rate_without"]} for c in contributors]
@@ -1712,7 +1818,7 @@ async def build_metric(run: Run, mid: str, days: int, group_by: str, site: Optio
     groups.sort(key=lambda x: (x["stat"]["status"] not in ("ok", "greyed"), -(x["stat"]["value"] if x["stat"]["value"] is not None else -9e9), -x["stat"]["n"]))
     groups = groups[:limit]
     head = groups[0]["stat"] if group_by == "none" and groups else metric_stat(mid, ds.group(pred), ds, "all")
-    env = build_envelope(run, ds.late, sentence(head), head.get("plain") or sentence(head), [head] if group_by == "none" else [head, *[x["stat"] for x in groups]], caveats=((SITE_CAVEAT,) if group_by == "site" or site else ()) + ((sc["caption"],) if site_withheld else ()),
+    env = build_envelope(run, ds.late, sentence(head), head.get("plain") or sentence(head), [head] if group_by == "none" else [head, *[x["stat"] for x in groups]], caveats=((SITE_CAVEAT, sc["basis_caption"]) if group_by == "site" or site else ()) + ((sc["caption"],) if site_withheld else ()),
                          action="Governance leads: use the doctor view for outliers and the worklist for the notes behind the number.")
     rows = [{"key": x["key"], "label": x["label"], "value": x["stat"]["value"], "unit": x["stat"]["unit"], "n": x["stat"]["n"], "status": x["stat"]["status"]} for x in groups]
     return wrap(run, "cdmss_metric", ["key", "label", "value", "unit", "n", "status"], rows, {"envelope": env, "metric": meta, "groups": groups, "site_comparison": sc})
@@ -1898,8 +2004,9 @@ def _cached_copy(payload: dict, at_iso: str) -> str:
 
 async def cached(run: Run, build: Callable[[], Awaitable[str]]) -> str:
     key = (run.tool, run.today.isoformat(), json.dumps(run.params, sort_keys=True, default=str))
+    force = _FORCE_REFRESH.get()  # the pre-warmer rebuilds even when a fresh entry exists
     hit = _cache.get(key)
-    if hit and time.monotonic() - hit[0] < CACHE_TTL_S:
+    if not force and hit and time.monotonic() - hit[0] < CACHE_TTL_S:
         _cache.move_to_end(key)
         await run.audit_cache()
         return _cached_copy(hit[2], hit[1])
@@ -1919,7 +2026,7 @@ async def cached(run: Run, build: Callable[[], Awaitable[str]]) -> str:
         body = await build()
         payload = json.loads(body)
         at_iso = dt.datetime.now(KOLKATA).isoformat(timespec="seconds")
-        _cache_put(key, (time.monotonic(), at_iso, payload))
+        _cache_put(key, (time.monotonic() + (PREWARM_GRACE_S if force else 0), at_iso, payload))
         if not fut.done():
             fut.set_result((payload, at_iso))
         return body
@@ -1933,6 +2040,88 @@ async def cached(run: Run, build: Callable[[], Awaitable[str]]) -> str:
         raise
     finally:
         _inflight.pop(key, None)
+
+
+_FORCE_REFRESH: "contextvars.ContextVar[bool]" = contextvars.ContextVar("cdmss_force_refresh", default=False)
+PREWARM_ACTOR = "system:prewarm"
+PREWARM_INTERVAL_S = 300
+PREWARM_GRACE_S = 60  # a prewarmed entry outlives the 300 s TTL by this much, so the next cycle replaces it before it lapses
+PREWARM_MAX_FAILURES = 3  # consecutive failed cycles before the loop backs off
+PREWARM_BACKOFF_CYCLES = 3
+PREWARM_CALLS = (("cdmss_v1_this_week", {"window_days": 7}), ("cdmss_v2_scorecard", {"window_days": 28, "family": "opd"}))
+_prewarm_lock = asyncio.Lock()
+_prewarm_state = {"failures": 0, "skip": 0, "runs": 0}
+
+
+def prewarm_enabled() -> bool:
+    return os.environ.get("CDMSS_PREWARM") == "1"  # off unless the service config says so (tests never set it)
+
+
+def prewarm_healthy() -> bool:
+    """Skip a cycle when the agent cannot serve CDMSS reads (kill switch off, no CDMSS database configured) or has just failed repeatedly."""
+    if not live_reads_enabled() or not cdmss_configured():
+        return False
+    if _prewarm_state["failures"] >= PREWARM_MAX_FAILURES:
+        if _prewarm_state["skip"] < PREWARM_BACKOFF_CYCLES:
+            _prewarm_state["skip"] += 1
+            return False
+        _prewarm_state["skip"] = 0  # cooldown over: one probe cycle
+    return True
+
+
+async def prewarm_once() -> str:
+    """Build the default V1 and V2 payloads into the cache as the system actor. One build at a time; returns ok | busy | unhealthy | failed."""
+    if _prewarm_lock.locked():
+        return "busy"
+    if not prewarm_healthy():
+        return "unhealthy"
+    async with _prewarm_lock:
+        token = _FORCE_REFRESH.set(True)
+        try:
+            for name, args in PREWARM_CALLS:
+                await next(t for t in CDMSS_TOOLS if t.name == name).ainvoke(args, config={"configurable": {STAFF_KEY: PREWARM_ACTOR}})
+            _prewarm_state["failures"] = 0
+            _prewarm_state["runs"] += 1
+            return "ok"
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # fixed text only: tool errors are already safe, anything else is logged by type
+            _prewarm_state["failures"] += 1
+            logger.warning("cdmss prewarm failed type=%s failures=%d", type(exc).__name__, _prewarm_state["failures"])
+            return "failed"
+        finally:
+            _FORCE_REFRESH.reset(token)
+
+
+async def prewarm_loop(stop: asyncio.Event, interval: float = PREWARM_INTERVAL_S) -> None:
+    """Every `interval` seconds (the cache key carries the IST day, so the first cycle after midnight builds the new day's entries)."""
+    while not stop.is_set():
+        await prewarm_once()
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=interval)
+        except asyncio.TimeoutError:
+            pass
+
+
+def start_prewarm() -> Optional[tuple]:
+    """(task, stop_event) when CDMSS_PREWARM=1, else None. Call from the app lifespan inside a running loop."""
+    if not prewarm_enabled():
+        return None
+    stop = asyncio.Event()
+    return asyncio.get_running_loop().create_task(prewarm_loop(stop), name="cdmss-prewarm"), stop
+
+
+async def stop_prewarm(handle: Optional[tuple], timeout: float = 5.0) -> None:
+    """Clean shutdown: ask the loop to stop, give a running build `timeout` seconds, then cancel it."""
+    if handle is None:
+        return
+    task, stop = handle
+    stop.set()
+    try:
+        await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+    except (asyncio.TimeoutError, asyncio.CancelledError):
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 def _args(**kw) -> dict:

@@ -40,7 +40,7 @@
   }
  ],
  "source": {
-  "query_hash": "fb38d90e7159",
+  "query_hash": "c44eecdc971e",
   "tool": "cdmss_v4_contributors"
  },
  "synthetic": true,
@@ -92,7 +92,8 @@
   "envelope": {
    "action_line": "Site medical head for SITEA: start with the largest contributor's notes; removing them moves the site rate to 38%.",
    "caveats": [
-    "OPD site is the doctor's home site (governance DB engagement), not where the note was written.",
+    "OPD site is the doctor's home site (governance engagement, else KX hospital ids), not where the note was written.",
+    "Site from governance for 5 doctors, from KX hospital ids for 0, none for 0; 100% of notes have a site.",
     "A doctor's share of the gap is their excess over the other sites' rate; it describes the site's number, not individual quality."
    ],
    "headline": {
@@ -107,11 +108,13 @@
     "generated_at": "2026-10-23T12:00:00+05:30",
     "query_hashes": [
      "702bdfe8382b",
-     "c5158c604742"
+     "c5158c604742",
+     "922008a59fb3"
     ],
     "sources": [
      "cdmss_ro.opd_note_audit",
-     "governance DB: physicians, physician_engagements, hospitals"
+     "governance DB: physicians, physician_engagements, hospitals",
+     "studio_ro.dw_doctors (KX hospital ids) + governance engagements"
     ],
     "window": {
      "anchor": "today (IST calendar days, inclusive)",
@@ -234,6 +237,21 @@
   },
   "site": "SITEA",
   "site_comparison": {
+   "basis": {
+    "governance": {
+     "doctors": 5,
+     "notes": 135
+    },
+    "kx": {
+     "doctors": 0,
+     "notes": 0
+    },
+    "none": {
+     "doctors": 0,
+     "notes": 0
+    }
+   },
+   "basis_caption": "Site from governance for 5 doctors, from KX hospital ids for 0, none for 0; 100% of notes have a site.",
    "caption": null,
    "coverage": 1.0,
    "min_coverage": 0.9,
