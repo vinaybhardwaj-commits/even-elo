@@ -44,7 +44,7 @@ const num = z.number().nullable();
 const Window = z.object({ from: z.string(), to: z.string(), days: z.number().optional() });
 
 const Change = z.object({
-  direction: z.enum(["rising", "falling", "no clear change"]),
+  direction: z.enum(["rising", "falling", "no clear change", "not computed (truncated)"]), // last: a capped scan (CONTRACT A3)
   p_value: num,
   relative_change: num,
   early: z.object({ from: z.string(), to: z.string(), value: num, n: z.number() }),

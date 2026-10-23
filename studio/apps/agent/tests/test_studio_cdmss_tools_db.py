@@ -328,8 +328,8 @@ async def test_prescribing_rates_use_db13_denominators(world):
 @pytest.mark.anyio
 async def test_urti_antibiotic_flag_is_over_audited_urti_consults(world):
     s = groups(await call("cdmss_metric", {"metric_id": "M-AMS-03", "window_days": 7}))["ALL"]
-    assert (s["numerator"], s["denominator"]) == (1, 2) and "lower bound" in (s["note"] or "").lower() or s["status"] == "count_only"
-    assert s["status"] == "count_only" and s["value"] is None  # 2 consults is under the group floor: the counts are shown, the rate is not
+    # 2 consults is under the group floor: only n is shown. A 1-of-2 pair would give the rate back, so it is withheld too.
+    assert s["status"] == "count_only" and s["value"] is None and s["n"] == 2 and s["numerator"] is None and s["denominator"] is None
 
 
 @pytest.mark.anyio
@@ -455,7 +455,7 @@ async def test_catalogue_lists_every_phase1_metric(world):
     body = await call("cdmss_metric_catalogue", {})
     assert_envelope(body, "cdmss_metric_catalogue")
     ids = [m["id"] for m in body["view"]["metrics"]]
-    assert ids == ["M-OPD-01", "M-OPD-02", "M-OPD-03", "M-OPD-04", "M-OPD-05", "M-OPD-06", "M-OPD-08", "M-OPD-09", "M-OPD-10", "M-OPD-11", "M-OPD-12", "M-OPD-13", "M-OPD-14",
+    assert ids == ["M-OPD-01", "M-OPD-02", "M-OPD-03", "M-OPD-04", "M-OPD-05", "M-OPD-05b", "M-OPD-06", "M-OPD-08", "M-OPD-09", "M-OPD-10", "M-OPD-11", "M-OPD-12", "M-OPD-13", "M-OPD-14",
                    "M-AMS-01", "M-AMS-02", "M-AMS-03", "M-AMS-04", "M-AMS-05"]
     assert {m["id"] for m in body["view"]["metrics"] if m["status"] == "unavailable"} == {"M-OPD-09", "M-OPD-10", "M-OPD-11", "M-AMS-01", "M-AMS-02", "M-AMS-04", "M-AMS-05"}
 
@@ -515,3 +515,151 @@ async def test_fixtures_for_the_app_match_the_real_payload_shape(world):
         committed = json.loads(path.read_text())
         assert committed["mode"] == "fixture" and committed["synthetic"] is True
         assert shape(committed) == shape(body), f"{name}: run with CDMSS_WRITE_FIXTURES=1 to refresh tests/fixtures/cdmss/{name}.json"
+
+
+# --- A3: the refuter's FAILs and lows ---------------------------------------------------------------------------
+
+def add_note(c, uid, doctor, *, app="standalone", ver="0.81.21", findings=(), nqi=60, completeness=80, at=LATE_AT):
+    c.su_exec(
+        """INSERT INTO opd_note_audits (uid, engine_version, model, note_quality_index, band, audited_at, app_source, findings, scorecard, doctor_uid, note_date,
+               score_appropriateness, completeness_pct, complexity_band)
+           VALUES (%s,%s,'gemini-2.5-pro',%s,'C','2026-10-22T20:00:00Z',%s,%s,%s,%s,%s,40,%s,'LOW')""",
+        (uid, f"opd-note-audit/{ver}", nqi, app, json.dumps(list(findings)), json.dumps(sc()), doctor, at, completeness),
+    )
+
+
+def drop_notes(c, prefix):
+    c.su_exec("DELETE FROM opd_note_audits WHERE uid LIKE %s", (prefix + "%",))
+
+
+def stats_in(x):
+    """Every Stat-shaped dict anywhere in a payload."""
+    if isinstance(x, dict):
+        if {"metric_id", "status", "numerator", "denominator", "value"} <= set(x):
+            yield x
+        for v in x.values():
+            yield from stats_in(v)
+    elif isinstance(x, list):
+        for v in x:
+            yield from stats_in(v)
+
+
+def assert_nothing_hidden(st):
+    assert st["status"] == "count_only"
+    for k in ("value", "numerator", "denominator", "ci95", "change", "plain", "band"):
+        assert st[k] is None, (st["metric_id"], k)
+    assert st["n"] >= 0 and "counts" not in (st.get("extra") or {}) and not any(k.startswith(("pct", "notes_with", "raw_rate", "expected")) for k in (st.get("extra") or {}))
+
+
+@pytest.mark.anyio
+async def test_below_floor_entities_expose_no_derivable_pair_anywhere(world, cdmss):
+    c = cdmss
+    for i in range(1, 6):  # D6 has two engaged hospitals (site MULTI) and 5 notes: below the doctor floor 10 AND the site floor 15
+        add_note(c, f"D6-P-{i:02d}", "D6", findings=[f("lvx")])
+    try:
+        payloads = []
+        for mid in ct.CATALOGUE_IDS:
+            for gb in ("none", "site", "doctor"):
+                payloads.append(await call("cdmss_metric", {"metric_id": mid, "window_days": 7, "group_by": gb}))
+        payloads += [await call("cdmss_v1_this_week", {}), await call("cdmss_v2_scorecard", {"window_days": 7}), await call("cdmss_v2_scorecard", {"window_days": 7, "family": "ams"}),
+                     await call("cdmss_v3_doctor_variation", {"window_days": 7}), await call("cdmss_v3_doctor_variation", {"window_days": 7, "metric": "nqi"}),
+                     await call("cdmss_v4_contributors", {"site": "MULTI", "window_days": 7}), await call("cdmss_v4_contributors", {"site": "SITEA", "window_days": 7})]
+        seen = 0
+        for body in payloads:
+            for st in stats_in(body):
+                if st["status"] == "count_only":
+                    seen += 1
+                    assert_nothing_hidden(st)
+        assert seen > 20  # the walk really met below-floor stats (D3, D6, MULTI, the 2-consult URTI cell ...)
+        # V3: the small doctor's row
+        v3 = (await call("cdmss_v3_doctor_variation", {"window_days": 7}))["view"]
+        for r in v3["doctors"]:
+            if r["n"] < 10:
+                assert all(r[k] is None for k in ("value", "ci95", "numerator", "denominator", "expected_rate", "oe")), r["doctor_uid"]
+                assert r["n"] in (5,)
+        assert {r["doctor_uid"] for r in v3["doctors"] if r["n"] < 10} == {"D3", "D6"}
+        # V4: the site under 15 notes
+        v4 = (await call("cdmss_v4_contributors", {"site": "MULTI", "window_days": 7}))["view"]
+        assert v4["gap"] is None and v4["top_contributor_removed"] is None
+        for st in (v4["site_rate"], v4["other_sites_rate"]):
+            assert_nothing_hidden(st)
+        assert v4["site_rate"]["n"] == 5
+        for ctr in v4["contributors"]:
+            assert ctr["share_of_gap"] is None and ctr["site_rate_without"] is None and ctr["events"] is None and ctr["rate"] is None and ctr["ci95"] is None
+        # a site that is big enough still shows its numbers, but "without X" is withheld when what remains is under the doctor floor
+        a = (await call("cdmss_v4_contributors", {"site": "SITEB", "window_days": 7}))["view"]
+        by = {x["doctor_uid"]: x for x in a["contributors"]}
+        assert by["D3"]["events"] is None and by["D4"]["site_rate_without"] is None  # SITEB = D3 (5) + D4 (30): without D4 only D3's 5 notes remain
+    finally:
+        drop_notes(c, "D6-P-")
+
+
+@pytest.mark.anyio
+async def test_per_1000_rx_numerator_is_over_the_same_notes_as_the_denominator(world, cdmss):
+    c = cdmss
+    before = {m: groups(await call("cdmss_metric", {"metric_id": m, "window_days": 7}))["ALL"] for m in ("M-OPD-08", "M-OPD-12")}
+    assert before["M-OPD-08"]["value"] == 50.0 and before["M-OPD-12"]["value"] == 50.0
+    # the refuter's probe: a duplicate finding and an NSAID+warfarin finding on a note that is NOT in the DB13 extract (today's note)
+    add_note(c, "D1-PROBE-01", "D1", findings=[f("dup", "context", signal_type="duplicate_prescription"),
+                                              f("ddi", "context", signal_type="drug_interaction", rationale="NSAID with warfarin")])
+    try:
+        for m in ("M-OPD-08", "M-OPD-12"):
+            body = await call("cdmss_metric", {"metric_id": m, "window_days": 7})
+            s = groups(body)["ALL"]
+            assert (s["numerator"], s["denominator"], s["value"]) == (1, 20, 50.0), m  # unchanged
+            assert any("not in the extract" in x or "notes newer than 'DB13 as of'" in x.lower() for x in body["view"]["envelope"]["caveats"]), m
+        d1 = groups(await call("cdmss_metric", {"metric_id": "M-OPD-08", "window_days": 7, "group_by": "doctor"}))["D1"]
+        assert d1["denominator"] == 20 and d1["numerator"] == 1
+        caveats = " ".join((await call("cdmss_metric", {"metric_id": "M-OPD-13", "window_days": 7}))["view"]["envelope"]["caveats"])
+        assert "2026-10-22" in caveats and "excluded from the per-1,000-Rx" in caveats
+    finally:
+        drop_notes(c, "D1-PROBE-")
+
+
+@pytest.mark.anyio
+async def test_reads_are_pinned_to_one_app_source(world, cdmss):
+    c = cdmss
+    base = groups(await call("cdmss_metric", {"metric_id": "M-OPD-04", "window_days": 7, "group_by": "doctor"}))["D1"]
+    assert base["n"] == 20
+    add_note(c, "D1-AS-01", "D1", app="standalone")
+    add_note(c, "D1-AS-01", "D1", app="other", ver="0.81.20")  # the same uid under a second app_source
+    add_note(c, "D1-AS-02", "D1", app="other", ver="0.81.20")  # a uid that exists only under the other app_source
+    try:
+        d1 = groups(await call("cdmss_metric", {"metric_id": "M-OPD-04", "window_days": 7, "group_by": "doctor"}))["D1"]
+        assert d1["n"] == 21  # D1-AS-01 once, D1-AS-02 not at all
+        wl = await call("cdmss_v8_worklists", {"list": "missing_pdqi", "window_days": 7, "doctor_uid": "D1"})
+        assert "D1-AS-02" not in [r["uid"] for r in wl["rows"]]
+        assert (await call("cdmss_finding_detail", {"uid": "D1-AS-02"}))["view"]["note"] is None
+    finally:
+        drop_notes(c, "D1-AS-")
+    assert all(":app" not in q for q in ct.ALL_SQL_TEXTS.values())
+    for name, q in {**ct.ALL_SQL_TEXTS, "f": ct.findings_sql("lv", by_doctors=False, by_one_doctor=False), "n": ct.notes_list_sql(ct.NOTE_ORDERS["recent"], False, False, False, False)}.items():
+        if "cdmss_ro.opd_" in q or "cdmss_ro.gov_signal" in q:
+            assert "app_source = %(app)s" in q, name
+
+
+@pytest.mark.anyio
+async def test_v3_rate_has_its_own_metric_id_and_the_catalogue_says_what_it_is(world):
+    v = (await call("cdmss_v3_doctor_variation", {"window_days": 7}))["view"]
+    assert {r["stat"]["metric_id"] for r in v["doctors"]} == {"M-OPD-05b"} and v["envelope"]["stats"][0]["metric_id"] == "M-OPD-05b"
+    s = v["doctors"][0]["stat"]
+    assert s["unit"] == "percent" and s["label"] == "Notes with at least one low-value finding"
+    d5 = next(r for r in v["doctors"] if r["doctor_uid"] == "D5")["stat"]
+    assert (d5["numerator"], d5["denominator"]) == (30, 60) and approx(d5["value"], 50.0)  # notes, not findings
+    meta = next(m for m in (await call("cdmss_metric_catalogue", {}))["view"]["metrics"] if m["id"] == "M-OPD-05b")
+    assert "at least one" in meta["definition"] and "M-OPD-05 counts findings" in meta["definition"]
+    v4 = (await call("cdmss_v4_contributors", {"site": "SITEA", "window_days": 7}))["view"]
+    assert v4["site_rate"]["metric_id"] == "M-OPD-05b" and v4["other_sites_rate"]["metric_id"] == "M-OPD-05b"
+
+
+@pytest.mark.anyio
+async def test_completeness_change_is_computed_and_truncation_never_claims_a_change(world, monkeypatch):
+    g = groups(await call("cdmss_metric", {"metric_id": "M-OPD-04", "window_days": 7, "group_by": "doctor"}))
+    ch = g["D1"]["change"]  # early all 80, late 10x90 + 10x70 (mean 80): z = 0, p = 1
+    assert ch is not None and ch["p_value"] == 1.0 and ch["direction"] == "no clear change" and ch["early"]["value"] == 80.0
+    assert g["D1"]["ci95"] is not None and g["D1"]["ci_method"] == "mean_normal"
+    monkeypatch.setattr(ct, "SCAN_CAP", 150)  # 175 notes in the two windows: the newest 151 are read, early rows are cut first
+    body = await call("cdmss_metric", {"metric_id": "M-OPD-04", "window_days": 7, "group_by": "doctor"})
+    changes = [x["stat"]["change"] for x in body["view"]["groups"] if x["stat"]["change"]]
+    assert changes and all(c["direction"] == "not computed (truncated)" and c["p_value"] is None and c["relative_change"] is None for c in changes)
+    assert "incomplete" in body and "newest 150" in body["incomplete"]

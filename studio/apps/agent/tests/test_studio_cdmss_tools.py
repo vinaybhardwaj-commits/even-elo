@@ -93,7 +93,10 @@ def test_stat_min_n_per_kind():
     assert ct.stat("M-OPD-01", W, value=80, n=15, kind="site")["status"] == "ok"
     s = ct.stat("M-OPD-01", W, value=80, num=1, den=2, n=9, ci=(70, 90), kind="doctor", change={"direction": "rising"}, plain="x", band="B")
     assert s["value"] is None and s["ci95"] is None and s["change"] is None and s["plain"] is None and s["band"] is None and s["grey_reason"] == "min_n"
-    assert s["n"] == 9 and s["numerator"] == 1 and s["denominator"] == 2  # the count is kept
+    assert s["n"] == 9 and s["numerator"] is None and s["denominator"] is None  # only the count is kept: a pair would give the value back
+    assert ct.stat("M-OPD-05", W, value=None, num=3, den=0, n=40, kind="doctor")["numerator"] is None  # no_denominator hides it too
+    e = ct.stat("M-OPD-02", W, value=50, num=5, den=10, n=9, kind="doctor", extra={"counts": {"A": 5}, "pct_a": 50, "band_stats": {"A": 1}})
+    assert e["extra"] == {"band_stats": {"A": 1}}  # counts and shares in `extra` are dropped with the pair
     assert (ct.DOCTOR_MIN_N, ct.GROUP_MIN_N, ct.FUNNEL_MIN_N, ct.COVERAGE_GREY_PCT) == (10, 15, 50, 50.0)
 
 

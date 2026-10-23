@@ -70,7 +70,7 @@
   }
  ],
  "source": {
-  "query_hash": "87257ed73f49",
+  "query_hash": "fb38d90e7159",
   "tool": "cdmss_v3_doctor_variation"
  },
  "synthetic": true,
@@ -108,31 +108,25 @@
        "to": "2026-10-23",
        "value": 50.0
       },
-      "p_value": 0.0015654022580025018,
+      "p_value": 0.0002607296328553943,
       "relative_change": null
      },
-     "ci95": null,
-     "ci_method": "none",
+     "ci95": [
+      29.92949144298199,
+      70.070508557018
+     ],
+     "ci_method": "wilson",
      "coverage": null,
      "denominator": 20.0,
-     "extra": {
-      "ci_method": "wilson",
-      "notes_with_one_or_more": 10,
-      "pct_ci95": [
-       29.92949144298199,
-       70.070508557018
-      ],
-      "pct_notes_with_one_or_more": 50.0
-     },
      "grey_reason": null,
-     "label": "Low-value findings per 100 notes",
-     "metric_id": "M-OPD-05",
+     "label": "Notes with at least one low-value finding",
+     "metric_id": "M-OPD-05b",
      "n": 20,
      "note": null,
      "numerator": 10.0,
-     "plain": "about 0 low-value findings for every 100 notes",
+     "plain": "about 5 in 10",
      "status": "ok",
-     "unit": "per_100",
+     "unit": "percent",
      "value": 50.0,
      "window": {
       "anchor": "today (IST calendar days, inclusive)",
@@ -163,28 +157,22 @@
     "stat": {
      "band": null,
      "change": null,
-     "ci95": null,
-     "ci_method": "none",
+     "ci95": [
+      37.73481242724628,
+      62.265187572753725
+     ],
+     "ci_method": "wilson",
      "coverage": null,
      "denominator": 60.0,
-     "extra": {
-      "ci_method": "wilson",
-      "notes_with_one_or_more": 30,
-      "pct_ci95": [
-       37.73481242724628,
-       62.265187572753725
-      ],
-      "pct_notes_with_one_or_more": 50.0
-     },
      "grey_reason": null,
-     "label": "Low-value findings per 100 notes",
-     "metric_id": "M-OPD-05",
+     "label": "Notes with at least one low-value finding",
+     "metric_id": "M-OPD-05b",
      "n": 60,
      "note": null,
      "numerator": 30.0,
-     "plain": "about 0 low-value findings for every 100 notes",
+     "plain": "about 5 in 10",
      "status": "ok",
-     "unit": "per_100",
+     "unit": "percent",
      "value": 50.0,
      "window": {
       "anchor": "today (IST calendar days, inclusive)",
@@ -226,34 +214,28 @@
        "from": "2026-10-17",
        "n": 20,
        "to": "2026-10-23",
-       "value": 30.0
+       "value": 25.0
       },
-      "p_value": 0.01430587843542952,
+      "p_value": 0.01682740948275674,
       "relative_change": null
      },
-     "ci95": null,
-     "ci_method": "none",
+     "ci95": [
+      11.186005278940309,
+      46.87050099580636
+     ],
+     "ci_method": "wilson",
      "coverage": null,
      "denominator": 20.0,
-     "extra": {
-      "ci_method": "wilson",
-      "notes_with_one_or_more": 5,
-      "pct_ci95": [
-       11.186005278940309,
-       46.87050099580636
-      ],
-      "pct_notes_with_one_or_more": 25.0
-     },
      "grey_reason": null,
-     "label": "Low-value findings per 100 notes",
-     "metric_id": "M-OPD-05",
+     "label": "Notes with at least one low-value finding",
+     "metric_id": "M-OPD-05b",
      "n": 20,
      "note": null,
-     "numerator": 6.0,
-     "plain": "about 0 low-value findings for every 100 notes",
+     "numerator": 5.0,
+     "plain": "about 2 in 10",
      "status": "ok",
-     "unit": "per_100",
-     "value": 30.0,
+     "unit": "percent",
+     "value": 25.0,
      "window": {
       "anchor": "today (IST calendar days, inclusive)",
       "days": 7,
@@ -283,28 +265,22 @@
     "stat": {
      "band": null,
      "change": null,
-     "ci95": null,
-     "ci_method": "none",
+     "ci95": [
+      0.0,
+      11.3517091390478
+     ],
+     "ci_method": "wilson",
      "coverage": null,
      "denominator": 30.0,
-     "extra": {
-      "ci_method": "wilson",
-      "notes_with_one_or_more": 0,
-      "pct_ci95": [
-       0.0,
-       11.3517091390478
-      ],
-      "pct_notes_with_one_or_more": 0.0
-     },
      "grey_reason": null,
-     "label": "Low-value findings per 100 notes",
-     "metric_id": "M-OPD-05",
+     "label": "Notes with at least one low-value finding",
+     "metric_id": "M-OPD-05b",
      "n": 30,
      "note": null,
      "numerator": 0.0,
-     "plain": "about 0 low-value findings for every 100 notes",
+     "plain": "fewer than 1 in 20",
      "status": "ok",
-     "unit": "per_100",
+     "unit": "percent",
      "value": 0.0,
      "window": {
       "anchor": "today (IST calendar days, inclusive)",
@@ -318,12 +294,12 @@
    },
    {
     "ci95": null,
-    "denominator": 5.0,
+    "denominator": null,
     "doctor_name": "Dr Three",
     "doctor_uid": "D3",
     "expected_rate": null,
     "n": 5,
-    "numerator": 0.0,
+    "numerator": null,
     "oe": null,
     "position": "greyed",
     "rank": null,
@@ -335,25 +311,16 @@
      "ci95": null,
      "ci_method": "none",
      "coverage": null,
-     "denominator": 5.0,
-     "extra": {
-      "ci_method": "wilson",
-      "notes_with_one_or_more": 0,
-      "pct_ci95": [
-       0.0,
-       43.4491494752081
-      ],
-      "pct_notes_with_one_or_more": 0.0
-     },
+     "denominator": null,
      "grey_reason": "min_n",
-     "label": "Low-value findings per 100 notes",
-     "metric_id": "M-OPD-05",
+     "label": "Notes with at least one low-value finding",
+     "metric_id": "M-OPD-05b",
      "n": 5,
      "note": null,
-     "numerator": 0.0,
+     "numerator": null,
      "plain": null,
      "status": "count_only",
-     "unit": "per_100",
+     "unit": "percent",
      "value": null,
      "window": {
       "anchor": "today (IST calendar days, inclusive)",
@@ -374,8 +341,8 @@
     "Funnel limits are plain binomial around the pooled rate (no overdispersion adjustment)."
    ],
    "headline": {
-    "plain": "about 0 low-value findings for every 100 notes",
-    "sentence": "Low-value findings per 100 notes was 34 per 100 notes over 135 notes between 2026-10-17 to 2026-10-23. There is no clear change against the previous period."
+    "plain": "about 3 in 10",
+    "sentence": "Notes with at least one low-value finding was 33% over 135 notes between 2026-10-17 to 2026-10-23. There is no clear change against the previous period."
    },
    "precision_line": "About 1 in 5 findings are wrong or contested (engine precision; the catalogue has no family-specific figure).",
    "provenance": {
@@ -384,7 +351,7 @@
     "engine_family": "opd-note-audit/0.81.3+ (derived by shape in cdmss_ro.opd_note_audit); versions read: opd-note-audit/0.81.21",
     "generated_at": "2026-10-23T12:00:00+05:30",
     "query_hashes": [
-     "ec6f6c50cbdb",
+     "702bdfe8382b",
      "c5158c604742"
     ],
     "sources": [
@@ -414,34 +381,28 @@
        "from": "2026-10-17",
        "n": 135,
        "to": "2026-10-23",
-       "value": 34.074074074074076
+       "value": 33.33333333333333
       },
-      "p_value": 1.1825207479887467e-11,
+      "p_value": 2.2693722400157768e-05,
       "relative_change": null
      },
-     "ci95": null,
-     "ci_method": "none",
+     "ci95": [
+      25.93959893776753,
+      41.649365752930365
+     ],
+     "ci_method": "wilson",
      "coverage": null,
      "denominator": 135.0,
-     "extra": {
-      "ci_method": "wilson",
-      "notes_with_one_or_more": 45,
-      "pct_ci95": [
-       25.93959893776753,
-       41.649365752930365
-      ],
-      "pct_notes_with_one_or_more": 33.33333333333333
-     },
      "grey_reason": null,
-     "label": "Low-value findings per 100 notes",
-     "metric_id": "M-OPD-05",
+     "label": "Notes with at least one low-value finding",
+     "metric_id": "M-OPD-05b",
      "n": 135,
      "note": null,
-     "numerator": 46.0,
-     "plain": "about 0 low-value findings for every 100 notes",
+     "numerator": 45.0,
+     "plain": "about 3 in 10",
      "status": "ok",
-     "unit": "per_100",
-     "value": 34.074074074074076,
+     "unit": "percent",
+     "value": 33.33333333333333,
      "window": {
       "anchor": "today (IST calendar days, inclusive)",
       "days": 7,

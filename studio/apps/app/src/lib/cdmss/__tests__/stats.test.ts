@@ -73,3 +73,13 @@ describe("params and tools", () => {
     expect(Object.values(VIEW_TOOL).sort()).toEqual(["cdmss_v1_this_week", "cdmss_v2_scorecard", "cdmss_v3_doctor_variation", "cdmss_v4_contributors", "cdmss_v5_redflags", "cdmss_v8_worklists"]);
   });
 });
+
+describe("A3 shapes", () => {
+  it("accepts a truncated-scan change and a count_only Stat with null numerator/denominator", () => {
+    const v = JSON.parse(JSON.stringify(FIXTURES.this_week));
+    const st = v.view.families[0].tiles[0].stat;
+    st.change = { ...(st.change ?? { early: { from: "a", to: "b", value: null, n: 0 }, late: { from: "a", to: "b", value: null, n: 0 }, p_value: null, relative_change: null }), direction: "not computed (truncated)" };
+    Object.assign(st, { status: "count_only", value: null, numerator: null, denominator: null, ci95: null, extra: null });
+    expect(VIEW_SCHEMAS.this_week.safeParse(v).success).toBe(true);
+  });
+});

@@ -114,7 +114,7 @@
   }
  ],
  "source": {
-  "query_hash": "658afa187d7f",
+  "query_hash": "3f1f3f561daf",
   "tool": "cdmss_v1_this_week"
  },
  "synthetic": true,
@@ -126,6 +126,7 @@
     "Notes where PDQI-9 was not assessed score 0 on note quality, which raises the index, so full NQI is shown over assessed notes only.",
     "Underuse findings carry zero penalty.",
     "OPD site is the doctor's home site (governance DB engagement), not where the note was written.",
+    "Notes newer than DB13 as of 2026-10-22T22:30:00+05:30 are not in the extract and are excluded from the per-1,000-Rx metrics (and the other DB13-based figures).",
     "Domain scores are assumed to be on the same 0-100 scale as the NQI.",
     "A lower bound: only what the audit caught. ICD code set UNVERIFIED.",
     "Lower bound: only what the audit caught."
@@ -141,9 +142,9 @@
     "engine_family": "opd-note-audit/0.81.3+ (derived by shape in cdmss_ro.opd_note_audit); versions read: opd-note-audit/0.81.21",
     "generated_at": "2026-10-23T12:00:00+05:30",
     "query_hashes": [
-     "ec6f6c50cbdb",
+     "702bdfe8382b",
      "c5158c604742",
-     "5a2b202afa9d",
+     "3267c3a82a63",
      "d42709a40ade",
      "47b496568017"
     ],
@@ -543,11 +544,14 @@
        "to": "2026-10-23",
        "value": 80.0
       },
-      "p_value": null,
-      "relative_change": null
+      "p_value": 1.0,
+      "relative_change": 0.0
      },
-     "ci95": null,
-     "ci_method": "none",
+     "ci95": [
+      79.34829390040969,
+      80.65170609959031
+     ],
+     "ci_method": "mean_normal",
      "coverage": null,
      "denominator": 135.0,
      "grey_reason": null,
@@ -624,13 +628,13 @@
      "ci95": null,
      "ci_method": "none",
      "coverage": null,
-     "denominator": 2,
+     "denominator": null,
      "grey_reason": "min_n",
      "label": "Antibiotic flagged in viral URTI",
      "metric_id": "M-AMS-03",
      "n": 2,
      "note": "Lower bound: only what the audit caught.",
-     "numerator": 1,
+     "numerator": null,
      "plain": null,
      "status": "count_only",
      "unit": "percent",
@@ -1101,11 +1105,14 @@
          "to": "2026-10-23",
          "value": 80.0
         },
-        "p_value": null,
-        "relative_change": null
+        "p_value": 1.0,
+        "relative_change": 0.0
        },
-       "ci95": null,
-       "ci_method": "none",
+       "ci95": [
+        79.34829390040969,
+        80.65170609959031
+       ],
+       "ci_method": "mean_normal",
        "coverage": null,
        "denominator": 135.0,
        "grey_reason": null,
@@ -1201,13 +1208,13 @@
        "ci95": null,
        "ci_method": "none",
        "coverage": null,
-       "denominator": 2,
+       "denominator": null,
        "grey_reason": "min_n",
        "label": "Antibiotic flagged in viral URTI",
        "metric_id": "M-AMS-03",
        "n": 2,
        "note": "Lower bound: only what the audit caught.",
-       "numerator": 1,
+       "numerator": null,
        "plain": null,
        "status": "count_only",
        "unit": "percent",
