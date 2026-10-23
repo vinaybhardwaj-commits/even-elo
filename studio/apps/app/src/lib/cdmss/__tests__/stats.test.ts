@@ -53,6 +53,11 @@ describe("csv", () => {
     expect(toCsv(["a", "b"], [{ a: '=1+1', b: 'x,"y"' }])).toBe("a,b\r\n'=1+1,\"x,\"\"y\"\"\"\r\n");
   });
 });
+describe("csv negatives", () => {
+  it("leaves negative numbers alone, still neutralises formulas", () => {
+    expect(toCsv(["a"], [{ a: -5 }, { a: "-0.25" }, { a: "-cmd|calc" }, { a: "=1" }, { a: "+1" }, { a: "@x" }, { a: "\tx" }])).toBe("a\r\n-5\r\n-0.25\r\n'-cmd|calc\r\n'=1\r\n'+1\r\n'@x\r\n'\tx\r\n");
+  });
+});
 describe("fixtures satisfy the provisional contract", () => {
   for (const v of VIEW_IDS) it(v, () => expect(VIEW_SCHEMAS[v].safeParse(FIXTURES[v]).success).toBe(true));
 });

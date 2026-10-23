@@ -36,11 +36,13 @@ export function statValue(s: Stat): string {
 /** Rule 3: numerator / denominator / n / window / definition id beside the number. count_only and greyed are greyed. */
 export function Figure({ s, withWindow = false }: { s: Stat; withWindow?: boolean }) {
   if (s.status === "unavailable") return <span className="cd-grey" data-status="unavailable">unavailable{s.note ? `: ${s.note}` : ""} <span className="cd-def">{s.metric_id}</span></span>;
+  // Below the minimum n the number of events behind a rate is one division from the hidden rate: show n only.
+  if (s.status === "count_only") return <span className="cd-grey" data-status="count_only">n = {s.n}, below the minimum for a rate</span>;
   const grey = s.status !== "ok";
   return (
     <span className={grey ? "cd-grey" : undefined} data-status={s.status}>
-      {s.status === "count_only" ? `n = ${s.n}` : <strong>{statValue(s)}</strong>}
-      {s.status !== "count_only" && <span className="cd-ci">{ci(s.ci95, s.unit)}</span>}
+      <strong>{statValue(s)}</strong>
+      <span className="cd-ci">{ci(s.ci95, s.unit)}</span>
       {s.coverage && <span className="cd-cov">, {s.coverage.pct.toFixed(0)}% of notes assessed</span>}
       {s.band && <span className="cd-cov"> · band {s.band}</span>}
       <span className="cd-def"> {s.numerator ?? "–"}/{s.denominator ?? "–"} · n {s.n} · {s.metric_id}{withWindow ? ` · ${s.window.from} to ${s.window.to}` : ""}</span>
@@ -317,7 +319,7 @@ export function ContributorTable({ data }: { data: Contrib }) {
               <tr key={r.doctor_uid} className={grey ? "cd-grey" : undefined}>
                 <td>{r.doctor_name}</td>
                 <td>{r.n}</td>
-                <td>{r.events}</td>
+                <td>{grey ? "–" : r.events}</td>
                 <td>{grey ? "–" : `${pct1(r.rate)}${r.ci95 ? ` (${pct1(r.ci95[0])}–${pct1(r.ci95[1])})` : ""}`}</td>
                 <td>{grey || r.share_of_gap === null ? "–" : `${(r.share_of_gap * 100).toFixed(0)}%`}</td>
                 <td>{grey ? "–" : pct1(r.site_rate_without)}</td>

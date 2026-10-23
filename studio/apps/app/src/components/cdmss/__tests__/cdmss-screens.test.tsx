@@ -11,6 +11,8 @@ vi.mock("@/components/screens/screen-frame", () => ({
 import { ContributorsScreen, DoctorsScreen, RedFlagsScreen, ScorecardScreen, ThisWeekScreen, WorklistsScreen } from "../screens";
 import { clearCdmssCache } from "@/lib/cdmss/use-cdmss-view";
 import { FIXTURES } from "@/lib/cdmss/fixtures";
+import { Figure } from "../exhibits";
+import type { Stat } from "@/lib/cdmss/contract";
 import { NAV_ITEMS } from "@/components/screens/studio-nav";
 
 const fetchMock = vi.fn();
@@ -138,6 +140,21 @@ describe("behaviour", () => {
     render(<RedFlagsScreen />);
     await screen.findByTestId("provenance");
     expect(screen.getAllByRole("link", { name: "CDMSS page" })).toHaveLength(1);
+  });
+  it("a count_only figure shows n only: no value, numerator, denominator or interval", () => {
+    const s = { metric_id: "M-OPD-01", label: "x", value: null, unit: "score", numerator: 250, denominator: 5, n: 5, ci95: [1, 2], window: { from: "a", to: "b" }, coverage: null, status: "count_only", grey_reason: "min_n", change: null, plain: "about 5", note: null } as unknown as Stat;
+    const { container } = render(<Figure s={s} />);
+    expect(container).toHaveTextContent("n = 5, below the minimum for a rate");
+    expect(container.textContent).not.toMatch(/250|\/5|M-OPD-01|about 5/);
+  });
+  it("a count_only contributor row hides events and rate", async () => {
+    const v4 = JSON.parse(JSON.stringify(FIXTURES.contributors));
+    Object.assign(v4.view.contributors[0], { status: "count_only", events: 7, rate: 0.7, share_of_gap: 0.5, site_rate_without: 0.1, ci95: null });
+    fetchMock.mockImplementation(async (url: string) => new Response(JSON.stringify(String(url).endsWith("scorecard") ? FIXTURES.scorecard : v4), { status: 200 }));
+    render(<ContributorsScreen />);
+    const row = (await screen.findByText(v4.view.contributors[0].doctor_name)).closest("tr")!;
+    expect(row).toHaveClass("cd-grey");
+    expect(row.textContent).not.toMatch(/\b7\b|70\.0%|50%/);
   });
   it("nav has the CDMSS entry", () => {
     expect(NAV_ITEMS.some((i) => i.href === "/cdmss")).toBe(true);
