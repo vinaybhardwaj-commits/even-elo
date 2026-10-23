@@ -90,9 +90,10 @@ for alias, key, user_key in (("gov", "GOV_NEON_URL", "AGENT_GOV_PW"), ("studio",
     # endpoint=<id>$<pw> form when SNI is present (password authentication failed). Verified 15 Oct with psql:
     # prefixed+SNI fails, plain+SNI and prefixed+no-SNI both log in.
     password = unquote(u.password)
-    # gov pool capped at 2: studio_gov_ro CONNECTION LIMIT is 20 (was 5, fable O1-C3) and the even-studio app on Vercel
-    # reads live staff with the same role on every request; a full pool of 5 starved it (401 profile-unconfirmed, 21 Oct).
-    pool = 2 if alias in ("gov", "cdmss") else 5
+    # gov and cdmss pools are capped at 4 (was 2; 5 once starved the app, below). studio_gov_ro CONNECTION LIMIT is 20 (was 5, fable O1-C3) and the
+    # even-studio app on Vercel reads live staff with the same role on every request; a full pool of 5 of 5 starved it (401 profile-unconfirmed,
+    # 21 Oct). 4 of 20 leaves 16 for it. studio_cdmss_ro CONNECTION LIMIT is 5: 4 leaves 1 for the owner/verify logins. max_db_connections = 8.
+    pool = 4 if alias in ("gov", "cdmss") else 5
     # cdmss: read-only at the pool as well as at the role. connect_query runs on every NEW server connection (default_transaction_read_only on,
     # statement_timeout 30 s); the pool's server_reset_query (DISCARD ALL) undoes both after a client leaves, so the agent also sets them per
     # connection (studio_db.connect_cdmss_read_only) and the role's own grants (views only) are the fence that does not reset.
