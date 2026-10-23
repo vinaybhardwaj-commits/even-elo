@@ -38,6 +38,7 @@ const EXPECTED: Record<ScreenId, Persona[]> = {
   physicians: ANY,
   "audit-findings": ["super_admin", "sgc_member", "site_medical_head", "sgo_and_hr"],
   "document-audits": ANY,
+  cdmss: ["super_admin", "sgc_member", "site_medical_head", "sgo_and_hr"],
   "rmo-inbox": ANY,
   incidents: ["super_admin", "sgc_member", "sgo_and_hr"],
   feedback: ANY,
@@ -50,6 +51,7 @@ const PAGE: Record<ScreenId, string> = {
   physicians: "/physicians/abc",
   "audit-findings": "/audit-findings/EHRC-AUD-2026-0001",
   "document-audits": "/document-audits",
+  cdmss: "/cdmss/doctors",
   "rmo-inbox": "/rmo-inbox",
   incidents: "/incidents",
   feedback: "/feedback",
@@ -113,6 +115,8 @@ describe("role x screen: API families (zone authorize)", () => {
     ["incidents", "/api/screen/eiris_incidents"],
     ["audit-findings", "/api/screen/audit_findings"],
     ["overview", "/api/screen/overview_counts"],
+    ["cdmss", "/api/cdmss/doctors"],
+    ["cdmss", "/api/screen/cdmss_view_doctors"],
   ];
   it("each API path follows its screen's predicate", async () => {
     for (const [screen, path] of API) {

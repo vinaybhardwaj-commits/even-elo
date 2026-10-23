@@ -4,6 +4,7 @@
 //
 // Rule: access to a Studio screen = access to the even-elo SOURCE page it replaces (see the access matrix):
 //   overview, physicians, document-audits, rmo-inbox, feedback, onboarding  any active staff
+//   cdmss (module)      super_admin | site_medical_head | sgc_member
 //   audit-findings      super_admin | site_medical_head | sgc_member    (src/lib/staff-guard.ts "view")
 //   incidents (e-IRIS)  super_admin | sgc_member                        (src/app/safety/page.tsx)
 //   surgical, admin     super_admin                                     (src/middleware.ts)
@@ -12,6 +13,7 @@ const SCREEN_ROLES = {
   physicians: [],
   "audit-findings": ["is_super_admin", "is_site_medical_head", "is_sgc_member"],
   "document-audits": [],
+  cdmss: ["is_super_admin", "is_site_medical_head", "is_sgc_member"],
   "rmo-inbox": [],
   incidents: ["is_super_admin", "is_sgc_member"],
   feedback: [],

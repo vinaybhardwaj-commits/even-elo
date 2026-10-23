@@ -94,3 +94,15 @@
 .scr-row-link:hover { background: var(--surface-tertiary); }
 .scr-pager { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
 .scr-link { background: none; border: 0; padding: 0; color: inherit; text-decoration: underline; cursor: pointer; font: inherit; }
+
+/* CDMSS module */
+.cd-tabs { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; }
+.cd-tabs a[aria-current="page"] { font-weight: 600; text-decoration: underline; }
+.cd-grey { opacity: 0.55; }
+.cd-def, .cd-ci, .cd-cov { font-size: 0.8em; opacity: 0.75; }
+.cd-caveats { font-size: 0.85em; margin: 4px 0 12px; padding-left: 1.2em; }
+.cd-chart { width: 100%; max-width: 520px; height: auto; }
+.cd-mixrow { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+.cd-mixlabel { width: 110px; }
+.cd-mix { flex: 1; height: 16px; max-width: 420px; }
+.cd-action { margin-top: 6px; }

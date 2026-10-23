@@ -26,13 +26,13 @@ const ROLES = {
   hr: "staff,hr",
   plain_staff: "staff",
 };
-const ALL_LABELS = ["Overview", "Physicians", "Audit findings", "Document audits", "RMO inbox", "e-IRIS incidents", "Patient feedback", "Surgical", "Onboarding", "Admin", "Chat"];
+const ALL_LABELS = ["Overview", "Physicians", "Audit findings", "Document audits", "CDMSS", "RMO inbox", "e-IRIS incidents", "Patient feedback", "Surgical", "Onboarding", "Admin", "Chat"];
 const HIDDEN: Record<keyof typeof ROLES, string[]> = {
   super_admin: [],
   sgc_member: ["Surgical", "Admin"],
   site_medical_head: ["e-IRIS incidents", "Surgical", "Admin"],
-  hr: ["Audit findings", "e-IRIS incidents", "Surgical", "Admin"],
-  plain_staff: ["Audit findings", "e-IRIS incidents", "Surgical", "Admin"],
+  hr: ["Audit findings", "CDMSS", "e-IRIS incidents", "Surgical", "Admin"],
+  plain_staff: ["Audit findings", "CDMSS", "e-IRIS incidents", "Surgical", "Admin"],
 };
 
 function Probe() {
