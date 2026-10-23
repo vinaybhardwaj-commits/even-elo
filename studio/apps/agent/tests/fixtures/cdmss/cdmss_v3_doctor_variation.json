@@ -1,0 +1,646 @@
+{
+ "columns": [
+  "doctor_uid",
+  "doctor_name",
+  "site",
+  "speciality",
+  "n",
+  "value",
+  "ci_lo",
+  "ci_hi",
+  "position"
+ ],
+ "mode": "fixture",
+ "row_count": 5,
+ "rows": [
+  {
+   "ci_hi": 0.7007050855701801,
+   "ci_lo": 0.2992949144298199,
+   "doctor_name": "Dr Two",
+   "doctor_uid": "D2",
+   "n": 20,
+   "position": "greyed",
+   "site": "SITEA",
+   "speciality": "Medicine",
+   "value": 0.5
+  },
+  {
+   "ci_hi": 0.6226518757275372,
+   "ci_lo": 0.37734812427246284,
+   "doctor_name": "Dr Five",
+   "doctor_uid": "D5",
+   "n": 60,
+   "position": "within",
+   "site": "SITEA",
+   "speciality": "Medicine",
+   "value": 0.5
+  },
+  {
+   "ci_hi": 0.4687050099580636,
+   "ci_lo": 0.11186005278940309,
+   "doctor_name": "Dr One",
+   "doctor_uid": "D1",
+   "n": 20,
+   "position": "greyed",
+   "site": "SITEA",
+   "speciality": "Medicine",
+   "value": 0.25
+  },
+  {
+   "ci_hi": 0.113517091390478,
+   "ci_lo": 0.0,
+   "doctor_name": "Dr Four",
+   "doctor_uid": "D4",
+   "n": 30,
+   "position": "greyed",
+   "site": "SITEB",
+   "speciality": "Surgery",
+   "value": 0.0
+  },
+  {
+   "ci_hi": null,
+   "ci_lo": null,
+   "doctor_name": "Dr Three",
+   "doctor_uid": "D3",
+   "n": 5,
+   "position": "greyed",
+   "site": "SITEB",
+   "speciality": "Surgery",
+   "value": null
+  }
+ ],
+ "source": {
+  "query_hash": "87257ed73f49",
+  "tool": "cdmss_v3_doctor_variation"
+ },
+ "synthetic": true,
+ "view": {
+  "doctors": [
+   {
+    "ci95": [
+     0.2992949144298199,
+     0.7007050855701801
+    ],
+    "denominator": 20.0,
+    "doctor_name": "Dr Two",
+    "doctor_uid": "D2",
+    "expected_rate": 0.3333333333333333,
+    "n": 20,
+    "numerator": 10.0,
+    "oe": 1.5000000000000002,
+    "position": "greyed",
+    "rank": 1,
+    "site": "SITEA",
+    "speciality": "Medicine",
+    "stat": {
+     "band": null,
+     "change": {
+      "direction": "no clear change",
+      "early": {
+       "from": "2026-10-10",
+       "n": 20,
+       "to": "2026-10-16",
+       "value": 0.0
+      },
+      "late": {
+       "from": "2026-10-17",
+       "n": 20,
+       "to": "2026-10-23",
+       "value": 50.0
+      },
+      "p_value": 0.0015654022580025018,
+      "relative_change": null
+     },
+     "ci95": null,
+     "ci_method": "none",
+     "coverage": null,
+     "denominator": 20.0,
+     "extra": {
+      "ci_method": "wilson",
+      "notes_with_one_or_more": 10,
+      "pct_ci95": [
+       29.92949144298199,
+       70.070508557018
+      ],
+      "pct_notes_with_one_or_more": 50.0
+     },
+     "grey_reason": null,
+     "label": "Low-value findings per 100 notes",
+     "metric_id": "M-OPD-05",
+     "n": 20,
+     "note": null,
+     "numerator": 10.0,
+     "plain": "about 0 low-value findings for every 100 notes",
+     "status": "ok",
+     "unit": "per_100",
+     "value": 50.0,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 7,
+      "from": "2026-10-17",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    },
+    "value": 0.5
+   },
+   {
+    "ci95": [
+     0.37734812427246284,
+     0.6226518757275372
+    ],
+    "denominator": 60.0,
+    "doctor_name": "Dr Five",
+    "doctor_uid": "D5",
+    "expected_rate": 0.5,
+    "n": 60,
+    "numerator": 30.0,
+    "oe": 1.0,
+    "position": "within",
+    "rank": 2,
+    "site": "SITEA",
+    "speciality": "Medicine",
+    "stat": {
+     "band": null,
+     "change": null,
+     "ci95": null,
+     "ci_method": "none",
+     "coverage": null,
+     "denominator": 60.0,
+     "extra": {
+      "ci_method": "wilson",
+      "notes_with_one_or_more": 30,
+      "pct_ci95": [
+       37.73481242724628,
+       62.265187572753725
+      ],
+      "pct_notes_with_one_or_more": 50.0
+     },
+     "grey_reason": null,
+     "label": "Low-value findings per 100 notes",
+     "metric_id": "M-OPD-05",
+     "n": 60,
+     "note": null,
+     "numerator": 30.0,
+     "plain": "about 0 low-value findings for every 100 notes",
+     "status": "ok",
+     "unit": "per_100",
+     "value": 50.0,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 7,
+      "from": "2026-10-17",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    },
+    "value": 0.5
+   },
+   {
+    "ci95": [
+     0.11186005278940309,
+     0.4687050099580636
+    ],
+    "denominator": 20.0,
+    "doctor_name": "Dr One",
+    "doctor_uid": "D1",
+    "expected_rate": 0.22916666666666666,
+    "n": 20,
+    "numerator": 5.0,
+    "oe": 1.090909090909091,
+    "position": "greyed",
+    "rank": 3,
+    "site": "SITEA",
+    "speciality": "Medicine",
+    "stat": {
+     "band": null,
+     "change": {
+      "direction": "no clear change",
+      "early": {
+       "from": "2026-10-10",
+       "n": 20,
+       "to": "2026-10-16",
+       "value": 0.0
+      },
+      "late": {
+       "from": "2026-10-17",
+       "n": 20,
+       "to": "2026-10-23",
+       "value": 30.0
+      },
+      "p_value": 0.01430587843542952,
+      "relative_change": null
+     },
+     "ci95": null,
+     "ci_method": "none",
+     "coverage": null,
+     "denominator": 20.0,
+     "extra": {
+      "ci_method": "wilson",
+      "notes_with_one_or_more": 5,
+      "pct_ci95": [
+       11.186005278940309,
+       46.87050099580636
+      ],
+      "pct_notes_with_one_or_more": 25.0
+     },
+     "grey_reason": null,
+     "label": "Low-value findings per 100 notes",
+     "metric_id": "M-OPD-05",
+     "n": 20,
+     "note": null,
+     "numerator": 6.0,
+     "plain": "about 0 low-value findings for every 100 notes",
+     "status": "ok",
+     "unit": "per_100",
+     "value": 30.0,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 7,
+      "from": "2026-10-17",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    },
+    "value": 0.25
+   },
+   {
+    "ci95": [
+     0.0,
+     0.113517091390478
+    ],
+    "denominator": 30.0,
+    "doctor_name": "Dr Four",
+    "doctor_uid": "D4",
+    "expected_rate": 0.125,
+    "n": 30,
+    "numerator": 0.0,
+    "oe": 0.0,
+    "position": "greyed",
+    "rank": 4,
+    "site": "SITEB",
+    "speciality": "Surgery",
+    "stat": {
+     "band": null,
+     "change": null,
+     "ci95": null,
+     "ci_method": "none",
+     "coverage": null,
+     "denominator": 30.0,
+     "extra": {
+      "ci_method": "wilson",
+      "notes_with_one_or_more": 0,
+      "pct_ci95": [
+       0.0,
+       11.3517091390478
+      ],
+      "pct_notes_with_one_or_more": 0.0
+     },
+     "grey_reason": null,
+     "label": "Low-value findings per 100 notes",
+     "metric_id": "M-OPD-05",
+     "n": 30,
+     "note": null,
+     "numerator": 0.0,
+     "plain": "about 0 low-value findings for every 100 notes",
+     "status": "ok",
+     "unit": "per_100",
+     "value": 0.0,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 7,
+      "from": "2026-10-17",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    },
+    "value": 0.0
+   },
+   {
+    "ci95": null,
+    "denominator": 5.0,
+    "doctor_name": "Dr Three",
+    "doctor_uid": "D3",
+    "expected_rate": null,
+    "n": 5,
+    "numerator": 0.0,
+    "oe": null,
+    "position": "greyed",
+    "rank": null,
+    "site": "SITEB",
+    "speciality": "Surgery",
+    "stat": {
+     "band": null,
+     "change": null,
+     "ci95": null,
+     "ci_method": "none",
+     "coverage": null,
+     "denominator": 5.0,
+     "extra": {
+      "ci_method": "wilson",
+      "notes_with_one_or_more": 0,
+      "pct_ci95": [
+       0.0,
+       43.4491494752081
+      ],
+      "pct_notes_with_one_or_more": 0.0
+     },
+     "grey_reason": "min_n",
+     "label": "Low-value findings per 100 notes",
+     "metric_id": "M-OPD-05",
+     "n": 5,
+     "note": null,
+     "numerator": 0.0,
+     "plain": null,
+     "status": "count_only",
+     "unit": "per_100",
+     "value": null,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 7,
+      "from": "2026-10-17",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    },
+    "value": null
+   }
+  ],
+  "envelope": {
+   "action_line": "Site medical heads: no doctor is beyond the 99.8% limit; read the ranked list for the widest intervals.",
+   "caveats": [
+    "OPD site is the doctor's home site (governance DB engagement), not where the note was written.",
+    "Variation between doctors reflects case mix and documentation habits as well as quality; a position beyond a limit is a prompt to look, not a verdict.",
+    "Funnel limits are plain binomial around the pooled rate (no overdispersion adjustment)."
+   ],
+   "headline": {
+    "plain": "about 0 low-value findings for every 100 notes",
+    "sentence": "Low-value findings per 100 notes was 34 per 100 notes over 135 notes between 2026-10-17 to 2026-10-23. There is no clear change against the previous period."
+   },
+   "precision_line": "About 1 in 5 findings are wrong or contested (engine precision; the catalogue has no family-specific figure).",
+   "provenance": {
+    "data_cutoff": "2026-10-23T06:45:00+05:30",
+    "db13_as_of": null,
+    "engine_family": "opd-note-audit/0.81.3+ (derived by shape in cdmss_ro.opd_note_audit); versions read: opd-note-audit/0.81.21",
+    "generated_at": "2026-10-23T12:00:00+05:30",
+    "query_hashes": [
+     "ec6f6c50cbdb",
+     "c5158c604742"
+    ],
+    "sources": [
+     "cdmss_ro.opd_note_audit",
+     "governance DB: physicians, physician_engagements, hospitals"
+    ],
+    "window": {
+     "anchor": "today (IST calendar days, inclusive)",
+     "days": 7,
+     "from": "2026-10-17",
+     "to": "2026-10-23",
+     "tz": "Asia/Kolkata"
+    }
+   },
+   "stats": [
+    {
+     "band": null,
+     "change": {
+      "direction": "no clear change",
+      "early": {
+       "from": "2026-10-10",
+       "n": 40,
+       "to": "2026-10-16",
+       "value": 0.0
+      },
+      "late": {
+       "from": "2026-10-17",
+       "n": 135,
+       "to": "2026-10-23",
+       "value": 34.074074074074076
+      },
+      "p_value": 1.1825207479887467e-11,
+      "relative_change": null
+     },
+     "ci95": null,
+     "ci_method": "none",
+     "coverage": null,
+     "denominator": 135.0,
+     "extra": {
+      "ci_method": "wilson",
+      "notes_with_one_or_more": 45,
+      "pct_ci95": [
+       25.93959893776753,
+       41.649365752930365
+      ],
+      "pct_notes_with_one_or_more": 33.33333333333333
+     },
+     "grey_reason": null,
+     "label": "Low-value findings per 100 notes",
+     "metric_id": "M-OPD-05",
+     "n": 135,
+     "note": null,
+     "numerator": 46.0,
+     "plain": "about 0 low-value findings for every 100 notes",
+     "status": "ok",
+     "unit": "per_100",
+     "value": 34.074074074074076,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 7,
+      "from": "2026-10-17",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    }
+   ]
+  },
+  "excluded": {
+   "count": 1,
+   "reason": "fewer than 10 audited notes"
+  },
+  "funnel": {
+   "adjustment": "plain binomial limits (the catalogue's method): no overdispersion adjustment and no age adjustment",
+   "centre": 0.5,
+   "centre_basis": "pooled rate over doctors with at least 50 audited notes",
+   "limits": [
+    {
+     "hi95": 0.8099032106965012,
+     "hi998": 0.9885718984960146,
+     "lo95": 0.19009678930349883,
+     "lo998": 0.011428101503985377,
+     "n": 10
+    },
+    {
+     "hi95": 0.7829016319029166,
+     "hi998": 0.9460030829489858,
+     "lo95": 0.21709836809708338,
+     "lo998": 0.05399691705101417,
+     "n": 12
+    },
+    {
+     "hi95": 0.7619160170741759,
+     "hi998": 0.9129186187546956,
+     "lo95": 0.2380839829258241,
+     "lo998": 0.08708138124530435,
+     "n": 14
+    },
+    {
+     "hi95": 0.745,
+     "hi998": 0.88625,
+     "lo95": 0.255,
+     "lo998": 0.11375000000000002,
+     "n": 16
+    },
+    {
+     "hi95": 0.7309882151876055,
+     "hi998": 0.8641599923110719,
+     "lo95": 0.2690117848123945,
+     "lo998": 0.13584000768892807,
+     "n": 18
+    },
+    {
+     "hi95": 0.7191346617949794,
+     "hi998": 0.8454725025237175,
+     "lo95": 0.28086533820502063,
+     "lo998": 0.15452749747628253,
+     "n": 20
+    },
+    {
+     "hi95": 0.7089367020284982,
+     "hi998": 0.8293951067694181,
+     "lo95": 0.29106329797150177,
+     "lo998": 0.17060489323058187,
+     "n": 22
+    },
+    {
+     "hi95": 0.696,
+     "hi998": 0.8089999999999999,
+     "lo95": 0.304,
+     "lo998": 0.191,
+     "n": 25
+    },
+    {
+     "hi95": 0.6886010879352777,
+     "hi998": 0.7973353886326573,
+     "lo95": 0.31139891206472226,
+     "lo998": 0.2026646113673427,
+     "n": 27
+    },
+    {
+     "hi95": 0.6819814314135109,
+     "hi998": 0.7868992974835451,
+     "lo95": 0.3180185685864892,
+     "lo998": 0.2131007025164549,
+     "n": 29
+    },
+    {
+     "hi95": 0.6760131959862394,
+     "hi998": 0.7774901916313672,
+     "lo95": 0.32398680401376057,
+     "lo998": 0.22250980836863277,
+     "n": 31
+    },
+    {
+     "hi95": 0.6705961028365839,
+     "hi998": 0.7689499784515532,
+     "lo95": 0.3294038971634161,
+     "lo998": 0.23105002154844684,
+     "n": 33
+    },
+    {
+     "hi95": 0.6656502339267892,
+     "hi998": 0.7611526647111115,
+     "lo95": 0.33434976607321076,
+     "lo998": 0.2388473352888884,
+     "n": 35
+    },
+    {
+     "hi95": 0.6611110075592501,
+     "hi998": 0.753996435386777,
+     "lo95": 0.3388889924407499,
+     "lo998": 0.24600356461322298,
+     "n": 37
+    },
+    {
+     "hi95": 0.6569255907289854,
+     "hi998": 0.7473979976288596,
+     "lo95": 0.3430744092710146,
+     "lo998": 0.2526020023711404,
+     "n": 39
+    },
+    {
+     "hi95": 0.653050286650834,
+     "hi998": 0.7412884621178963,
+     "lo95": 0.346949713349166,
+     "lo998": 0.25871153788210366,
+     "n": 41
+    },
+    {
+     "hi95": 0.6494485989259526,
+     "hi998": 0.7356102911638742,
+     "lo95": 0.3505514010740474,
+     "lo998": 0.2643897088361258,
+     "n": 43
+    },
+    {
+     "hi95": 0.6460897745299863,
+     "hi998": 0.7303150016824783,
+     "lo95": 0.3539102254700137,
+     "lo998": 0.2696849983175217,
+     "n": 45
+    },
+    {
+     "hi95": 0.6414508159514583,
+     "hi998": 0.7230015414744929,
+     "lo95": 0.3585491840485417,
+     "lo998": 0.2769984585255071,
+     "n": 48
+    },
+    {
+     "hi95": 0.6385929291125634,
+     "hi998": 0.7184959953866432,
+     "lo95": 0.3614070708874367,
+     "lo998": 0.28150400461335684,
+     "n": 50
+    },
+    {
+     "hi95": 0.6359015480751812,
+     "hi998": 0.7142529507919948,
+     "lo95": 0.3640984519248188,
+     "lo998": 0.28574704920800525,
+     "n": 52
+    },
+    {
+     "hi95": 0.6333611082181952,
+     "hi998": 0.7102478695888894,
+     "lo95": 0.36663889178180475,
+     "lo998": 0.2897521304111106,
+     "n": 54
+    },
+    {
+     "hi95": 0.6309580085370879,
+     "hi998": 0.7064593093773478,
+     "lo95": 0.36904199146291206,
+     "lo998": 0.2935406906226522,
+     "n": 56
+    },
+    {
+     "hi95": 0.6286803042025281,
+     "hi998": 0.7028684387682713,
+     "lo95": 0.3713196957974719,
+     "lo998": 0.2971315612317287,
+     "n": 58
+    },
+    {
+     "hi95": 0.626517455976109,
+     "hi998": 0.6994586423296819,
+     "lo95": 0.373482544023891,
+     "lo998": 0.3005413576703181,
+     "n": 60
+    }
+   ],
+   "min_n_include": 50,
+   "z95": 1.96,
+   "z998": 3.09
+  },
+  "metric": "lv_rate"
+ }
+}

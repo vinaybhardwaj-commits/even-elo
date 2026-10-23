@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ScreenFrame } from "@/components/screens/screen-frame";
-import { DV_METRICS, FAMILIES, WORKLISTS, type DvMetric, type Family, type ViewId, type ViewParams, type WorklistId } from "@/lib/cdmss/contract";
+import { DV_METRICS, FAMILIES, WORKLISTS, type SiteOption, type DvMetric, type Family, type ViewId, type ViewParams, type WorklistId } from "@/lib/cdmss/contract";
 import { useCdmssContext } from "@/lib/cdmss/use-cdmss-context";
 import { useCdmssView } from "@/lib/cdmss/use-cdmss-view";
-import { ChangeLine, ContributorTable, DotWhisker, EnvelopeBlock, EvidenceList, Figure, FunnelPlot, ScorecardMatrix, SourceNote, TrendLines, ViewState, ViewTabs, WorklistTable, siteColour } from "./exhibits";
+import { BandMix, ChangeLine, ContributorTable, DotWhisker, EnvelopeBlock, EvidenceList, Figure, FunnelPlot, ScorecardMatrix, SourceNote, TrendLines, ViewState, ViewTabs, WorklistTable, siteColour } from "./exhibits";
 
 // One component per view. Each makes exactly ONE useCdmssView call (one POST per mount per distinct params), reports
 // the open view and filters to the side-panel agent, and renders the envelope above the exhibits.
@@ -31,6 +31,25 @@ const FamilyFilter = ({ p, set }: { p: ViewParams; set: (n: ViewParams) => void 
 const WindowFilter = ({ p, set }: { p: ViewParams; set: (n: ViewParams) => void }) => (
   <Select label="Window" value={p.window_days ?? 28} options={WINDOWS.map((d) => [d, `${d} days`] as [number, string])} onChange={(window_days) => set({ ...p, window_days })} />
 );
+
+/** Keeps the last site list the agent sent, so the picker does not empty while the next read loads. */
+function useSites(state: { status: string; data?: { view: { sites: SiteOption[] } } }): SiteOption[] {
+  const [sites, setSites] = useState<SiteOption[]>([]);
+  const fresh = state.status === "ok" ? state.data?.view.sites : undefined;
+  const key = fresh ? JSON.stringify(fresh) : "";
+  useEffect(() => {
+    if (fresh) setSites(fresh);
+  }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+  return sites;
+}
+
+const SitePicker = ({ sites, value, onChange, all }: { sites: SiteOption[]; value: string | undefined; onChange: (v: string | undefined) => void; all: boolean }) => {
+  const opts = sites.filter((x) => (all ? true : x.code !== "ALL"));
+  if (!opts.length) return null;
+  return (
+    <Select label="Site" value={value ?? "ALL"} options={opts.map((x) => [x.code, `${x.label} (${x.n} notes)`] as [string, string])} onChange={(v) => onChange(v === "ALL" ? undefined : v)} />
+  );
+};
 
 function useView<V extends ViewId>(view: V, initial: ViewParams) {
   const [params, setParams] = useState<ViewParams>(initial);
@@ -76,10 +95,11 @@ export function ThisWeekScreen() {
 
 export function ScorecardScreen() {
   const { params, setParams, state } = useView("scorecard", { family: "opd", window_days: 28 });
+  const sites = useSites(state);
   return (
     <ScreenFrame title="CDMSS · Family scorecard">
       <ViewTabs current="scorecard" />
-      <form className="scr-filters scr-form" onSubmit={(e) => e.preventDefault()}><FamilyFilter p={params} set={setParams} /><WindowFilter p={params} set={setParams} /></form>
+      <form className="scr-filters scr-form" onSubmit={(e) => e.preventDefault()}><FamilyFilter p={params} set={setParams} /><WindowFilter p={params} set={setParams} /><SitePicker sites={sites} value={params.site} all onChange={(site) => setParams({ ...params, site })} /></form>
       <ViewState state={state} retry={state.retry}>
         {(d) => {
           return (
@@ -97,6 +117,7 @@ export function ScorecardScreen() {
                   </ul>
                 </section>
               ))}
+              {d.view.band_mix.length > 0 && <section className="scr-card" aria-label="Band mix"><h3>Band mix (raw band, PDQI-assessed notes)</h3><BandMix data={d.view} /></section>}
               <SourceNote d={d} />
             </>
           );
@@ -132,24 +153,39 @@ export function DoctorsScreen() {
 }
 
 export function ContributorsScreen() {
-  // The contract requires a site; EHRC is the default until the site list comes from the agent (open question).
-  const { params, setParams, state } = useView("contributors", { family: "opd", site: "EHRC", metric: "lv_rate", window_days: 28 });
+  // The contract requires a site. The site list is data-driven: one V2 read supplies it (cached 30 s), the V4 read
+  // waits (idle) until a site is chosen, by default the site with the most notes. Two reads per mount, no loop.
+  const [window_days, setWindow] = useState(28);
+  const [picked, setPicked] = useState<string | undefined>();
+  const siteRead = useCdmssView("scorecard", { family: "opd", window_days });
+  const known = useSites(siteRead);
+  const site = picked ?? known.filter((x) => x.code !== "ALL").sort((a, b) => b.n - a.n)[0]?.code;
+  const params: ViewParams | null = site ? { family: "opd", site, metric: "lv_rate", window_days } : null;
+  const state = useCdmssView("contributors", params);
+  useCdmssContext("contributors", params ?? { window_days }, state.status, state.status === "ok" ? state.data.source.query_hash : null);
+  const own = useSites(state);
+  const sites = own.length ? own : known;
   return (
     <ScreenFrame title="CDMSS · Contributors">
       <ViewTabs current="contributors" />
       <form className="scr-filters scr-form" onSubmit={(e) => e.preventDefault()}>
-        <Select label="Site" value={params.site ?? "EHRC"} options={[["EHRC", "EHRC"], ["EHBR", "EHBR"]] as Array<[string, string]>} onChange={(site) => setParams({ ...params, site })} />
-        <WindowFilter p={params} set={setParams} />
+        <SitePicker sites={sites} value={site} all={false} onChange={setPicked} />
+        <Select label="Window" value={window_days} options={WINDOWS.map((d) => [d, `${d} days`] as [number, string])} onChange={setWindow} />
       </form>
-      <ViewState state={state} retry={state.retry}>
-        {(d) => (
-          <>
-            <EnvelopeBlock env={d.view.envelope} />
-            <section className="scr-card" aria-label="Contributors"><ContributorTable data={d.view} /></section>
-            <SourceNote d={d} />
-          </>
-        )}
-      </ViewState>
+      {params === null && siteRead.status === "error" && <ViewState state={siteRead} retry={siteRead.retry}>{() => null}</ViewState>}
+      {params === null && siteRead.status === "loading" && <p className="scr-muted" role="status">Loading…</p>}
+      {params === null && siteRead.status === "ok" && <p className="scr-muted">No site has notes in this window.</p>}
+      {params !== null && (
+        <ViewState state={state} retry={state.retry}>
+          {(d) => (
+            <>
+              <EnvelopeBlock env={d.view.envelope} />
+              <section className="scr-card" aria-label="Contributors"><ContributorTable data={d.view} /></section>
+              <SourceNote d={d} />
+            </>
+          )}
+        </ViewState>
+      )}
     </ScreenFrame>
   );
 }
@@ -166,7 +202,7 @@ export function RedFlagsScreen() {
             <EnvelopeBlock env={d.view.envelope} />
             {d.view.dossiers.map((x) => (
               <section key={x.doctor_uid} className="scr-card" aria-label={`Dossier ${x.doctor_name}`}>
-                <h3>{x.doctor_name} · {x.site ?? "unmapped"} <span className="cd-def">{x.n_notes} notes</span></h3>
+                <h3>{x.doctor_name} · {x.site ?? "unmapped"}</h3>
                 <ul aria-label="Signals">
                   {x.signals.map((s) => (
                     <li key={s.signal_id}>

@@ -177,7 +177,7 @@ export function TrendLines({ data, metricId }: { data: Scorecard; metricId: stri
 }
 
 /** Stacked mix bar from a list of {label, share} parts (e.g. raw band A-E). */
-export function StackedMixBar({ rows }: { rows: Array<{ key: string; label: string; n: number; parts: Array<{ name: string; share: number }>; colour?: string }> }) {
+export function StackedMixBar({ rows }: { rows: Array<{ key: string; label: string; n: number; parts: Array<{ name: string; share: number }>; colour?: string; grey?: string }> }) {
   return (
     <div>
       {rows.map((b) => {
@@ -185,18 +185,38 @@ export function StackedMixBar({ rows }: { rows: Array<{ key: string; label: stri
         return (
           <div key={b.key} className="cd-mixrow">
             <span className="cd-mixlabel" style={{ color: b.colour }}>{b.label} <span className="cd-def">n {b.n}</span></span>
-            <svg viewBox="0 0 100 8" preserveAspectRatio="none" className="cd-mix" role="img" aria-label={`${b.label}: ${b.parts.map((p) => `${p.name} ${(p.share * 100).toFixed(0)}%`).join(", ")}`}>
+            {b.grey ? <span className="cd-grey" data-testid="mix-grey">count only: {b.grey}</span> : <svg viewBox="0 0 100 8" preserveAspectRatio="none" className="cd-mix" role="img" aria-label={`${b.label}: ${b.parts.map((p) => `${p.name} ${(p.share * 100).toFixed(0)}%`).join(", ")}`}>
               {b.parts.map((p) => {
                 const r = <rect key={p.name} x={acc * 100} width={p.share * 100} height="8" fill={BAND_COLOURS[p.name] ?? "#999"}><title>{p.name} {(p.share * 100).toFixed(0)}%</title></rect>;
                 acc += p.share;
                 return r;
               })}
-            </svg>
+            </svg>}
           </div>
         );
       })}
     </div>
   );
+}
+
+/** V2 band mix: raw-band shares of PDQI-assessed notes per site (RULING Band); a site whose bands are under min-n
+ * shows its count only. */
+export function BandMix({ data }: { data: Scorecard }) {
+  const rows = data.band_mix.map((b) => {
+    const stats = (["A", "B", "C", "D", "E"] as const).map((k) => b.bands[k]);
+    const hidden = stats.some((s) => s.status === "count_only" || s.value === null);
+    const n = stats[0].n;
+    return {
+      key: b.site,
+      label: b.site,
+      n,
+      colour: siteColour(b.site),
+      grey: hidden ? `${n} assessed notes (${Object.entries(b.counts).map(([k, v]) => `${k} ${v}`).join(", ")})` : undefined,
+      parts: stats.map((s, i) => ({ name: "ABCDE"[i], share: (s.value ?? 0) / 100 })),
+    };
+  });
+  if (!rows.length) return <p className="scr-muted">No band mix for this family.</p>;
+  return <StackedMixBar rows={rows} />;
 }
 
 type DV = ViewPayload<"doctor_variation">["view"];
@@ -310,6 +330,13 @@ export function ContributorTable({ data }: { data: Contrib }) {
   );
 }
 
+/** A link to the CDMSS case page. Labelled unverified unless the agent says the URL pattern is verified (the worklist
+ * columns carry no flag, so they are always labelled). */
+export function CaseLink({ url, verified }: { url: string | null | undefined; verified?: boolean }) {
+  if (!url || !/^https?:\/\//.test(url)) return <span className="cd-grey">no case link</span>;
+  return <a href={url} target="_blank" rel="noreferrer noopener">{verified === true ? "CDMSS page" : "CDMSS page (link unverified)"}</a>;
+}
+
 export function EvidenceList({ items }: { items: Evidence[] }) {
   if (!items.length) return <p className="cd-grey">No evidence rows.</p>;
   return (
@@ -318,7 +345,7 @@ export function EvidenceList({ items }: { items: Evidence[] }) {
         <li key={`${e.uid ?? i}-${e.finding_no ?? i}`}>
           {e.note_day ? `${e.note_day}: ` : ""}{e.subject ?? "finding"}
           {e.quote ? <> — <q>{e.quote}</q></> : null}{" "}
-          {e.case?.url ? <a href={e.case.url} target="_blank" rel="noreferrer noopener">open case</a> : <span className="cd-grey">no case link</span>}
+          <CaseLink url={e.case?.url} verified={e.case?.url_verified} />
         </li>
       ))}
     </ul>
@@ -354,7 +381,7 @@ export function WorklistTable({ data }: { data: WL }) {
             <tr key={i}>
               {cols.map((c) => {
                 const v = r[c.key];
-                return <td key={c.key}>{c.kind === "url" || c.key === "case_url" ? (isHttp(v) ? <a href={v} target="_blank" rel="noreferrer noopener">open case</a> : "–") : v === null || v === undefined ? "–" : String(v)}</td>;
+                return <td key={c.key}>{c.kind === "url" || c.key === "case_url" ? (isHttp(v) ? <CaseLink url={v} /> : "–") : v === null || v === undefined ? "–" : String(v)}</td>;
               })}
             </tr>
           ))}

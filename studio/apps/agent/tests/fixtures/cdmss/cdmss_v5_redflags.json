@@ -1,0 +1,262 @@
+{
+ "columns": [
+  "doctor_uid",
+  "doctor_name",
+  "site",
+  "n_signals",
+  "n_open",
+  "top_importance",
+  "n_evidence"
+ ],
+ "mode": "fixture",
+ "row_count": 2,
+ "rows": [
+  {
+   "doctor_name": "Dr Five",
+   "doctor_uid": "D5",
+   "n_evidence": 5,
+   "n_open": 1,
+   "n_signals": 1,
+   "site": "SITEA",
+   "top_importance": "high"
+  },
+  {
+   "doctor_name": "Dr Four",
+   "doctor_uid": "D4",
+   "n_evidence": 0,
+   "n_open": 1,
+   "n_signals": 1,
+   "site": "SITEB",
+   "top_importance": "low"
+  }
+ ],
+ "source": {
+  "query_hash": "68114b33cbd7",
+  "tool": "cdmss_v5_redflags"
+ },
+ "synthetic": true,
+ "total": 2,
+ "view": {
+  "dossiers": [
+   {
+    "doctor_name": "Dr Five",
+    "doctor_uid": "D5",
+    "evidence": [
+     {
+      "audit_id": "579e31de-7fa5-4edf-a7c6-a339c72e6802",
+      "case": {
+       "family": "opd",
+       "uid": "D5-L-01",
+       "url": "https://even-cdmss.vercel.app/care/D5-L-01",
+       "url_verified": false
+      },
+      "doctor_name": "Dr Five",
+      "doctor_uid": "D5",
+      "domain": "appropriateness",
+      "finding_no": 1,
+      "lvc_category": null,
+      "note_day": "2026-10-20",
+      "quote": "quote for lv",
+      "rationale": "why lv",
+      "rule_ref": null,
+      "signal_type": null,
+      "subject": "lv",
+      "uid": "D5-L-01",
+      "verdict": "low-value"
+     },
+     {
+      "audit_id": "bc690f55-e525-47c5-b749-5d715813122d",
+      "case": {
+       "family": "opd",
+       "uid": "D5-L-02",
+       "url": "https://even-cdmss.vercel.app/care/D5-L-02",
+       "url_verified": false
+      },
+      "doctor_name": "Dr Five",
+      "doctor_uid": "D5",
+      "domain": "appropriateness",
+      "finding_no": 1,
+      "lvc_category": null,
+      "note_day": "2026-10-20",
+      "quote": "quote for lv",
+      "rationale": "why lv",
+      "rule_ref": null,
+      "signal_type": null,
+      "subject": "lv",
+      "uid": "D5-L-02",
+      "verdict": "low-value"
+     },
+     {
+      "audit_id": "9dce65bb-041d-4d37-8e3d-ac83539bdb36",
+      "case": {
+       "family": "opd",
+       "uid": "D5-L-03",
+       "url": "https://even-cdmss.vercel.app/care/D5-L-03",
+       "url_verified": false
+      },
+      "doctor_name": "Dr Five",
+      "doctor_uid": "D5",
+      "domain": "appropriateness",
+      "finding_no": 1,
+      "lvc_category": null,
+      "note_day": "2026-10-20",
+      "quote": "quote for lv",
+      "rationale": "why lv",
+      "rule_ref": null,
+      "signal_type": null,
+      "subject": "lv",
+      "uid": "D5-L-03",
+      "verdict": "low-value"
+     },
+     {
+      "audit_id": "6a5b5e43-3d34-41b2-ba29-855f94e1f1ce",
+      "case": {
+       "family": "opd",
+       "uid": "D5-L-04",
+       "url": "https://even-cdmss.vercel.app/care/D5-L-04",
+       "url_verified": false
+      },
+      "doctor_name": "Dr Five",
+      "doctor_uid": "D5",
+      "domain": "appropriateness",
+      "finding_no": 1,
+      "lvc_category": null,
+      "note_day": "2026-10-20",
+      "quote": "quote for lv",
+      "rationale": "why lv",
+      "rule_ref": null,
+      "signal_type": null,
+      "subject": "lv",
+      "uid": "D5-L-04",
+      "verdict": "low-value"
+     },
+     {
+      "audit_id": "32f71c15-a896-4072-aa2e-f7c1a01d12b5",
+      "case": {
+       "family": "opd",
+       "uid": "D5-L-05",
+       "url": "https://even-cdmss.vercel.app/care/D5-L-05",
+       "url_verified": false
+      },
+      "doctor_name": "Dr Five",
+      "doctor_uid": "D5",
+      "domain": "appropriateness",
+      "finding_no": 1,
+      "lvc_category": null,
+      "note_day": "2026-10-20",
+      "quote": "quote for lv",
+      "rationale": "why lv",
+      "rule_ref": null,
+      "signal_type": null,
+      "subject": "lv",
+      "uid": "D5-L-05",
+      "verdict": "low-value"
+     }
+    ],
+    "signals": [
+     {
+      "doctor_name": "Dr Five",
+      "doctor_uid": "D5",
+      "importance": "high",
+      "overdue": true,
+      "reference": "SITEA-AUD-2026-0001",
+      "response_required": true,
+      "signal_id": "481ab789-7c1e-4eaa-9107-2c8033f042d0",
+      "signal_type": "low_value_pattern",
+      "site": "SITEA",
+      "sla_due_at": "2026-10-15T05:30:00+05:30",
+      "status": "routed",
+      "window_from": null,
+      "window_to": null
+     }
+    ],
+    "site": "SITEA"
+   },
+   {
+    "doctor_name": "Dr Four",
+    "doctor_uid": "D4",
+    "evidence": [],
+    "signals": [
+     {
+      "doctor_name": "Dr Four",
+      "doctor_uid": "D4",
+      "importance": "low",
+      "overdue": false,
+      "reference": "SITEB-AUD-2026-0003",
+      "response_required": false,
+      "signal_id": "716efca8-ee1f-4dd9-b296-6eb455a267dd",
+      "signal_type": "documentation",
+      "site": "SITEB",
+      "sla_due_at": "2027-01-01T05:30:00+05:30",
+      "status": "routed",
+      "window_from": null,
+      "window_to": null
+     }
+    ],
+    "site": "SITEB"
+   }
+  ],
+  "envelope": {
+   "action_line": "Governance leads: work the overdue threads first, then the highest-importance dossiers; each evidence line opens the CDMSS case.",
+   "caveats": [
+    "Open signals are not limited to the window; the window bounds the evidence findings shown.",
+    "Red-flag basis: open governance signals, with each doctor's recent low-value and interaction findings as evidence. Importance and status vocabularies are shown as stored."
+   ],
+   "headline": {
+    "plain": "2 open governance signal thread(s) across 2 doctor(s); 1 are past their response deadline.",
+    "sentence": "2 open governance signal thread(s) across 2 doctor(s); 1 are past their response deadline."
+   },
+   "precision_line": "About 1 in 5 findings are wrong or contested (engine precision; the catalogue has no family-specific figure).",
+   "provenance": {
+    "data_cutoff": null,
+    "db13_as_of": null,
+    "engine_family": "opd-note-audit/0.81.3+ (derived by shape in cdmss_ro.opd_note_audit)",
+    "generated_at": "2026-10-23T12:00:00+05:30",
+    "query_hashes": [
+     "c5158c604742",
+     "aa9ca7849eaf",
+     "e5b01a6276da"
+    ],
+    "sources": [
+     "governance DB: physicians, physician_engagements, hospitals",
+     "cdmss_ro.gov_signal",
+     "cdmss_ro.opd_finding"
+    ],
+    "window": {
+     "anchor": "today (IST calendar days, inclusive)",
+     "days": 28,
+     "from": "2026-09-26",
+     "to": "2026-10-23",
+     "tz": "Asia/Kolkata"
+    }
+   },
+   "stats": [
+    {
+     "band": null,
+     "change": null,
+     "ci95": null,
+     "ci_method": "none",
+     "coverage": null,
+     "denominator": null,
+     "grey_reason": null,
+     "label": "Open governance signals",
+     "metric_id": "M-SIG-01",
+     "n": 2,
+     "note": null,
+     "numerator": 2.0,
+     "plain": null,
+     "status": "ok",
+     "unit": "count",
+     "value": 2.0,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 28,
+      "from": "2026-09-26",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    }
+   ]
+  }
+ }
+}

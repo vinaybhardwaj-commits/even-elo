@@ -1,0 +1,1306 @@
+{
+ "columns": [
+  "family",
+  "status",
+  "metric_id",
+  "label",
+  "value",
+  "unit",
+  "n",
+  "state"
+ ],
+ "mode": "fixture",
+ "row_count": 10,
+ "rows": [
+  {
+   "family": "opd",
+   "label": "Mean OPD NQI (PDQI-assessed notes only)",
+   "metric_id": "M-OPD-01",
+   "n": 109,
+   "state": "ok",
+   "status": "live",
+   "unit": "score",
+   "value": 76.05504587155963
+  },
+  {
+   "family": "opd",
+   "label": "Clinical NQI",
+   "metric_id": "M-OPD-03",
+   "n": 135,
+   "state": "ok",
+   "status": "live",
+   "unit": "score",
+   "value": 60.74074074074074
+  },
+  {
+   "family": "opd",
+   "label": "NQI band mix (raw band)",
+   "metric_id": "M-OPD-02",
+   "n": 109,
+   "state": "ok",
+   "status": "live",
+   "unit": "percent",
+   "value": 77.06422018348624
+  },
+  {
+   "family": "opd",
+   "label": "Low-value findings per 100 notes",
+   "metric_id": "M-OPD-05",
+   "n": 135,
+   "state": "ok",
+   "status": "live",
+   "unit": "per_100",
+   "value": 34.074074074074076
+  },
+  {
+   "family": "opd",
+   "label": "Documentation completeness",
+   "metric_id": "M-OPD-04",
+   "n": 135,
+   "state": "ok",
+   "status": "live",
+   "unit": "percent",
+   "value": 80.0
+  },
+  {
+   "family": "ams",
+   "label": "WHO Access share of antibiotics",
+   "metric_id": "M-AMS-01",
+   "n": 0,
+   "state": "unavailable",
+   "status": "live",
+   "unit": "percent",
+   "value": null
+  },
+  {
+   "family": "ams",
+   "label": "Prescriptions with a Watch agent",
+   "metric_id": "M-AMS-02",
+   "n": 0,
+   "state": "unavailable",
+   "status": "live",
+   "unit": "percent",
+   "value": null
+  },
+  {
+   "family": "ams",
+   "label": "Antibiotic flagged in viral URTI",
+   "metric_id": "M-AMS-03",
+   "n": 2,
+   "state": "count_only",
+   "status": "live",
+   "unit": "percent",
+   "value": null
+  },
+  {
+   "family": "ams",
+   "label": "Antibiotics in gastroenteritis",
+   "metric_id": "M-AMS-04",
+   "n": 0,
+   "state": "unavailable",
+   "status": "live",
+   "unit": "percent",
+   "value": null
+  },
+  {
+   "family": "ams",
+   "label": "Post-operative prophylaxis longer than 24 h",
+   "metric_id": "M-AMS-05",
+   "n": 0,
+   "state": "unavailable",
+   "status": "live",
+   "unit": "percent",
+   "value": null
+  }
+ ],
+ "source": {
+  "query_hash": "658afa187d7f",
+  "tool": "cdmss_v1_this_week"
+ },
+ "synthetic": true,
+ "view": {
+  "envelope": {
+   "action_line": "Governance leads: 2 measure(s) are moving (M-OPD-03, M-OPD-02); open the scorecard for those first.",
+   "caveats": [
+    "The score is an encounter proxy, not a clinician scorecard.",
+    "Notes where PDQI-9 was not assessed score 0 on note quality, which raises the index, so full NQI is shown over assessed notes only.",
+    "Underuse findings carry zero penalty.",
+    "OPD site is the doctor's home site (governance DB engagement), not where the note was written.",
+    "Domain scores are assumed to be on the same 0-100 scale as the NQI.",
+    "A lower bound: only what the audit caught. ICD code set UNVERIFIED.",
+    "Lower bound: only what the audit caught."
+   ],
+   "headline": {
+    "plain": "about 76 out of 100 on 81% of notes",
+    "sentence": "Mean OPD NQI (PDQI-assessed notes only) was 76 over 109 notes between 2026-10-17 to 2026-10-23, on 81% of notes. There is no clear change against the previous period."
+   },
+   "precision_line": "About 1 in 5 findings are wrong or contested (engine precision; the catalogue has no family-specific figure).",
+   "provenance": {
+    "data_cutoff": "2026-10-23T06:45:00+05:30",
+    "db13_as_of": "2026-10-22T22:30:00+05:30",
+    "engine_family": "opd-note-audit/0.81.3+ (derived by shape in cdmss_ro.opd_note_audit); versions read: opd-note-audit/0.81.21",
+    "generated_at": "2026-10-23T12:00:00+05:30",
+    "query_hashes": [
+     "ec6f6c50cbdb",
+     "c5158c604742",
+     "5a2b202afa9d",
+     "d42709a40ade",
+     "47b496568017"
+    ],
+    "sources": [
+     "cdmss_ro.opd_note_audit",
+     "governance DB: physicians, physician_engagements, hospitals",
+     "studio_ro.dw_individuals_prescriptions",
+     "studio_ro.dw_extract_status"
+    ],
+    "window": {
+     "anchor": "today (IST calendar days, inclusive)",
+     "days": 7,
+     "from": "2026-10-17",
+     "to": "2026-10-23",
+     "tz": "Asia/Kolkata"
+    }
+   },
+   "stats": [
+    {
+     "band": "B",
+     "change": {
+      "direction": "no clear change",
+      "early": {
+       "from": "2026-10-10",
+       "n": 40,
+       "to": "2026-10-16",
+       "value": 77.5
+      },
+      "late": {
+       "from": "2026-10-17",
+       "n": 109,
+       "to": "2026-10-23",
+       "value": 76.05504587155963
+      },
+      "p_value": 0.20187150377026253,
+      "relative_change": -0.01864456939923061
+     },
+     "ci95": [
+      73.97928046092602,
+      78.13081128219324
+     ],
+     "ci_method": "mean_normal",
+     "coverage": {
+      "assessed": 109,
+      "pct": 80.7,
+      "total": 135
+     },
+     "denominator": 109.0,
+     "grey_reason": null,
+     "label": "Mean OPD NQI (PDQI-assessed notes only)",
+     "metric_id": "M-OPD-01",
+     "n": 109,
+     "note": null,
+     "numerator": 8290.0,
+     "plain": "about 76 out of 100 on 81% of notes",
+     "status": "ok",
+     "unit": "score",
+     "value": 76.05504587155963,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 7,
+      "from": "2026-10-17",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    },
+    {
+     "band": "C",
+     "change": {
+      "direction": "falling",
+      "early": {
+       "from": "2026-10-10",
+       "n": 40,
+       "to": "2026-10-16",
+       "value": 70.0
+      },
+      "late": {
+       "from": "2026-10-17",
+       "n": 135,
+       "to": "2026-10-23",
+       "value": 60.74074074074074
+      },
+      "p_value": 1.2803722082566082e-08,
+      "relative_change": -0.13227513227513227
+     },
+     "ci95": [
+      57.55051037847112,
+      63.930971103010364
+     ],
+     "ci_method": "mean_normal",
+     "coverage": null,
+     "denominator": 135.0,
+     "grey_reason": null,
+     "label": "Clinical NQI",
+     "metric_id": "M-OPD-03",
+     "n": 135,
+     "note": null,
+     "numerator": 8200.0,
+     "plain": "about 61 out of 100",
+     "status": "ok",
+     "unit": "score",
+     "value": 60.74074074074074,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 7,
+      "from": "2026-10-17",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    },
+    {
+     "band": null,
+     "change": {
+      "direction": "falling",
+      "early": {
+       "from": "2026-10-10",
+       "n": 40,
+       "to": "2026-10-16",
+       "value": 100.0
+      },
+      "late": {
+       "from": "2026-10-17",
+       "n": 109,
+       "to": "2026-10-23",
+       "value": 77.06422018348624
+      },
+      "p_value": 0.0008994116276246356,
+      "relative_change": -0.22935779816513757
+     },
+     "ci95": [
+      68.3311199585335,
+      83.95456191765402
+     ],
+     "ci_method": "wilson",
+     "coverage": {
+      "assessed": 109,
+      "pct": 80.7,
+      "total": 135
+     },
+     "denominator": 109.0,
+     "extra": {
+      "band_stats": {
+       "A": {
+        "band": "A",
+        "change": null,
+        "ci95": [
+         10.70860342222884,
+         24.598942730962886
+        ],
+        "ci_method": "wilson",
+        "coverage": {
+         "assessed": 109,
+         "pct": 80.7,
+         "total": 135
+        },
+        "denominator": 109.0,
+        "grey_reason": null,
+        "label": "Band A share of PDQI-assessed notes (raw band)",
+        "metric_id": "M-OPD-02",
+        "n": 109,
+        "note": null,
+        "numerator": 18.0,
+        "plain": "about 2 in 10",
+        "status": "ok",
+        "unit": "percent",
+        "value": 16.51376146788991,
+        "window": {
+         "anchor": "today (IST calendar days, inclusive)",
+         "days": 7,
+         "from": "2026-10-17",
+         "to": "2026-10-23",
+         "tz": "Asia/Kolkata"
+        }
+       },
+       "B": {
+        "band": "B",
+        "change": null,
+        "ci95": [
+         51.166315196213716,
+         69.2162387555204
+        ],
+        "ci_method": "wilson",
+        "coverage": {
+         "assessed": 109,
+         "pct": 80.7,
+         "total": 135
+        },
+        "denominator": 109.0,
+        "grey_reason": null,
+        "label": "Band B share of PDQI-assessed notes (raw band)",
+        "metric_id": "M-OPD-02",
+        "n": 109,
+        "note": null,
+        "numerator": 66.0,
+        "plain": "about 6 in 10",
+        "status": "ok",
+        "unit": "percent",
+        "value": 60.550458715596335,
+        "window": {
+         "anchor": "today (IST calendar days, inclusive)",
+         "days": 7,
+         "from": "2026-10-17",
+         "to": "2026-10-23",
+         "tz": "Asia/Kolkata"
+        }
+       },
+       "C": {
+        "band": "C",
+        "change": null,
+        "ci95": [
+         12.203581560283453,
+         26.64875658451421
+        ],
+        "ci_method": "wilson",
+        "coverage": {
+         "assessed": 109,
+         "pct": 80.7,
+         "total": 135
+        },
+        "denominator": 109.0,
+        "grey_reason": null,
+        "label": "Band C share of PDQI-assessed notes (raw band)",
+        "metric_id": "M-OPD-02",
+        "n": 109,
+        "note": null,
+        "numerator": 20.0,
+        "plain": "about 2 in 10",
+        "status": "ok",
+        "unit": "percent",
+        "value": 18.34862385321101,
+        "window": {
+         "anchor": "today (IST calendar days, inclusive)",
+         "days": 7,
+         "from": "2026-10-17",
+         "to": "2026-10-23",
+         "tz": "Asia/Kolkata"
+        }
+       },
+       "D": {
+        "band": "D",
+        "change": null,
+        "ci95": [
+         1.9750157151731957,
+         10.291382492579974
+        ],
+        "ci_method": "wilson",
+        "coverage": {
+         "assessed": 109,
+         "pct": 80.7,
+         "total": 135
+        },
+        "denominator": 109.0,
+        "grey_reason": null,
+        "label": "Band D share of PDQI-assessed notes (raw band)",
+        "metric_id": "M-OPD-02",
+        "n": 109,
+        "note": null,
+        "numerator": 5.0,
+        "plain": "fewer than 1 in 20",
+        "status": "ok",
+        "unit": "percent",
+        "value": 4.587155963302752,
+        "window": {
+         "anchor": "today (IST calendar days, inclusive)",
+         "days": 7,
+         "from": "2026-10-17",
+         "to": "2026-10-23",
+         "tz": "Asia/Kolkata"
+        }
+       },
+       "E": {
+        "band": "E",
+        "change": null,
+        "ci95": [
+         0.0,
+         3.4044182287383373
+        ],
+        "ci_method": "wilson",
+        "coverage": {
+         "assessed": 109,
+         "pct": 80.7,
+         "total": 135
+        },
+        "denominator": 109.0,
+        "grey_reason": null,
+        "label": "Band E share of PDQI-assessed notes (raw band)",
+        "metric_id": "M-OPD-02",
+        "n": 109,
+        "note": null,
+        "numerator": 0.0,
+        "plain": "fewer than 1 in 20",
+        "status": "ok",
+        "unit": "percent",
+        "value": 0.0,
+        "window": {
+         "anchor": "today (IST calendar days, inclusive)",
+         "days": 7,
+         "from": "2026-10-17",
+         "to": "2026-10-23",
+         "tz": "Asia/Kolkata"
+        }
+       }
+      },
+      "basis": "PDQI-assessed notes, raw band",
+      "counts": {
+       "A": 18,
+       "B": 66,
+       "C": 20,
+       "D": 5,
+       "E": 0
+      },
+      "pct_a": 16.513761467889907,
+      "pct_ab": 77.06422018348624,
+      "pct_ce": 22.93577981651376
+     },
+     "grey_reason": null,
+     "label": "NQI band mix (raw band)",
+     "metric_id": "M-OPD-02",
+     "n": 109,
+     "note": null,
+     "numerator": 84.0,
+     "plain": "about 8 in 10",
+     "status": "ok",
+     "unit": "percent",
+     "value": 77.06422018348624,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 7,
+      "from": "2026-10-17",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    },
+    {
+     "band": null,
+     "change": {
+      "direction": "no clear change",
+      "early": {
+       "from": "2026-10-10",
+       "n": 40,
+       "to": "2026-10-16",
+       "value": 0.0
+      },
+      "late": {
+       "from": "2026-10-17",
+       "n": 135,
+       "to": "2026-10-23",
+       "value": 34.074074074074076
+      },
+      "p_value": 1.1825207479887467e-11,
+      "relative_change": null
+     },
+     "ci95": null,
+     "ci_method": "none",
+     "coverage": null,
+     "denominator": 135.0,
+     "extra": {
+      "ci_method": "wilson",
+      "notes_with_one_or_more": 45,
+      "pct_ci95": [
+       25.93959893776753,
+       41.649365752930365
+      ],
+      "pct_notes_with_one_or_more": 33.33333333333333
+     },
+     "grey_reason": null,
+     "label": "Low-value findings per 100 notes",
+     "metric_id": "M-OPD-05",
+     "n": 135,
+     "note": null,
+     "numerator": 46.0,
+     "plain": "about 0 low-value findings for every 100 notes",
+     "status": "ok",
+     "unit": "per_100",
+     "value": 34.074074074074076,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 7,
+      "from": "2026-10-17",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    },
+    {
+     "band": null,
+     "change": {
+      "direction": "no clear change",
+      "early": {
+       "from": "2026-10-10",
+       "n": 40,
+       "to": "2026-10-16",
+       "value": 80.0
+      },
+      "late": {
+       "from": "2026-10-17",
+       "n": 135,
+       "to": "2026-10-23",
+       "value": 80.0
+      },
+      "p_value": null,
+      "relative_change": null
+     },
+     "ci95": null,
+     "ci_method": "none",
+     "coverage": null,
+     "denominator": 135.0,
+     "grey_reason": null,
+     "label": "Documentation completeness",
+     "metric_id": "M-OPD-04",
+     "n": 135,
+     "note": null,
+     "numerator": 10800.0,
+     "plain": "about 80% of mandatory items present",
+     "status": "ok",
+     "unit": "percent",
+     "value": 80.0,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 7,
+      "from": "2026-10-17",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    },
+    {
+     "band": null,
+     "change": null,
+     "ci95": null,
+     "ci_method": "none",
+     "coverage": null,
+     "denominator": null,
+     "grey_reason": "not_available",
+     "label": "WHO Access share of antibiotics",
+     "metric_id": "M-AMS-01",
+     "n": 0,
+     "note": "No WHO AWaRe classification is available: the formulary marks Reserve (restricted) only, and no AWaRe list is in the repo or the DB13 extract.",
+     "numerator": null,
+     "plain": null,
+     "status": "unavailable",
+     "unit": "percent",
+     "value": null,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 7,
+      "from": "2026-10-17",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    },
+    {
+     "band": null,
+     "change": null,
+     "ci95": null,
+     "ci_method": "none",
+     "coverage": null,
+     "denominator": null,
+     "grey_reason": "not_available",
+     "label": "Prescriptions with a Watch agent",
+     "metric_id": "M-AMS-02",
+     "n": 0,
+     "note": "No WHO AWaRe classification is available: the formulary marks Reserve (restricted) only, and no AWaRe list is in the repo or the DB13 extract.",
+     "numerator": null,
+     "plain": null,
+     "status": "unavailable",
+     "unit": "percent",
+     "value": null,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 7,
+      "from": "2026-10-17",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    },
+    {
+     "band": null,
+     "change": null,
+     "ci95": null,
+     "ci_method": "none",
+     "coverage": null,
+     "denominator": 2,
+     "grey_reason": "min_n",
+     "label": "Antibiotic flagged in viral URTI",
+     "metric_id": "M-AMS-03",
+     "n": 2,
+     "note": "Lower bound: only what the audit caught.",
+     "numerator": 1,
+     "plain": null,
+     "status": "count_only",
+     "unit": "percent",
+     "value": null,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 7,
+      "from": "2026-10-17",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    },
+    {
+     "band": null,
+     "change": null,
+     "ci95": null,
+     "ci_method": "none",
+     "coverage": null,
+     "denominator": null,
+     "grey_reason": "not_available",
+     "label": "Antibiotics in gastroenteritis",
+     "metric_id": "M-AMS-04",
+     "n": 0,
+     "note": "No ratified gastroenteritis-antibiotic rule exists, so there is no numerator.",
+     "numerator": null,
+     "plain": null,
+     "status": "unavailable",
+     "unit": "percent",
+     "value": null,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 7,
+      "from": "2026-10-17",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    },
+    {
+     "band": null,
+     "change": null,
+     "ci95": null,
+     "ci_method": "none",
+     "coverage": null,
+     "denominator": null,
+     "grey_reason": "not_available",
+     "label": "Post-operative prophylaxis longer than 24 h",
+     "metric_id": "M-AMS-05",
+     "n": 0,
+     "note": "No order/MAR timestamps are in the DB13 extract and no rule exists.",
+     "numerator": null,
+     "plain": null,
+     "status": "unavailable",
+     "unit": "percent",
+     "value": null,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 7,
+      "from": "2026-10-17",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    }
+   ]
+  },
+  "families": [
+   {
+    "family": "opd",
+    "label": "OPD note audit",
+    "status": "live",
+    "tiles": [
+     {
+      "headline": "Mean OPD NQI (PDQI-assessed notes only) was 76 over 109 notes between 2026-10-17 to 2026-10-23, on 81% of notes. There is no clear change against the previous period.",
+      "plain": "about 76 out of 100 on 81% of notes",
+      "stat": {
+       "band": "B",
+       "change": {
+        "direction": "no clear change",
+        "early": {
+         "from": "2026-10-10",
+         "n": 40,
+         "to": "2026-10-16",
+         "value": 77.5
+        },
+        "late": {
+         "from": "2026-10-17",
+         "n": 109,
+         "to": "2026-10-23",
+         "value": 76.05504587155963
+        },
+        "p_value": 0.20187150377026253,
+        "relative_change": -0.01864456939923061
+       },
+       "ci95": [
+        73.97928046092602,
+        78.13081128219324
+       ],
+       "ci_method": "mean_normal",
+       "coverage": {
+        "assessed": 109,
+        "pct": 80.7,
+        "total": 135
+       },
+       "denominator": 109.0,
+       "grey_reason": null,
+       "label": "Mean OPD NQI (PDQI-assessed notes only)",
+       "metric_id": "M-OPD-01",
+       "n": 109,
+       "note": null,
+       "numerator": 8290.0,
+       "plain": "about 76 out of 100 on 81% of notes",
+       "status": "ok",
+       "unit": "score",
+       "value": 76.05504587155963,
+       "window": {
+        "anchor": "today (IST calendar days, inclusive)",
+        "days": 7,
+        "from": "2026-10-17",
+        "to": "2026-10-23",
+        "tz": "Asia/Kolkata"
+       }
+      }
+     },
+     {
+      "headline": "Clinical NQI was 61 over 135 notes between 2026-10-17 to 2026-10-23. It is falling against the previous 7 days.",
+      "plain": "about 61 out of 100",
+      "stat": {
+       "band": "C",
+       "change": {
+        "direction": "falling",
+        "early": {
+         "from": "2026-10-10",
+         "n": 40,
+         "to": "2026-10-16",
+         "value": 70.0
+        },
+        "late": {
+         "from": "2026-10-17",
+         "n": 135,
+         "to": "2026-10-23",
+         "value": 60.74074074074074
+        },
+        "p_value": 1.2803722082566082e-08,
+        "relative_change": -0.13227513227513227
+       },
+       "ci95": [
+        57.55051037847112,
+        63.930971103010364
+       ],
+       "ci_method": "mean_normal",
+       "coverage": null,
+       "denominator": 135.0,
+       "grey_reason": null,
+       "label": "Clinical NQI",
+       "metric_id": "M-OPD-03",
+       "n": 135,
+       "note": null,
+       "numerator": 8200.0,
+       "plain": "about 61 out of 100",
+       "status": "ok",
+       "unit": "score",
+       "value": 60.74074074074074,
+       "window": {
+        "anchor": "today (IST calendar days, inclusive)",
+        "days": 7,
+        "from": "2026-10-17",
+        "to": "2026-10-23",
+        "tz": "Asia/Kolkata"
+       }
+      }
+     },
+     {
+      "headline": "NQI band mix (raw band) was 77% over 109 notes between 2026-10-17 to 2026-10-23, on 81% of notes. It is falling against the previous 7 days.",
+      "plain": "about 8 in 10",
+      "stat": {
+       "band": null,
+       "change": {
+        "direction": "falling",
+        "early": {
+         "from": "2026-10-10",
+         "n": 40,
+         "to": "2026-10-16",
+         "value": 100.0
+        },
+        "late": {
+         "from": "2026-10-17",
+         "n": 109,
+         "to": "2026-10-23",
+         "value": 77.06422018348624
+        },
+        "p_value": 0.0008994116276246356,
+        "relative_change": -0.22935779816513757
+       },
+       "ci95": [
+        68.3311199585335,
+        83.95456191765402
+       ],
+       "ci_method": "wilson",
+       "coverage": {
+        "assessed": 109,
+        "pct": 80.7,
+        "total": 135
+       },
+       "denominator": 109.0,
+       "extra": {
+        "band_stats": {
+         "A": {
+          "band": "A",
+          "change": null,
+          "ci95": [
+           10.70860342222884,
+           24.598942730962886
+          ],
+          "ci_method": "wilson",
+          "coverage": {
+           "assessed": 109,
+           "pct": 80.7,
+           "total": 135
+          },
+          "denominator": 109.0,
+          "grey_reason": null,
+          "label": "Band A share of PDQI-assessed notes (raw band)",
+          "metric_id": "M-OPD-02",
+          "n": 109,
+          "note": null,
+          "numerator": 18.0,
+          "plain": "about 2 in 10",
+          "status": "ok",
+          "unit": "percent",
+          "value": 16.51376146788991,
+          "window": {
+           "anchor": "today (IST calendar days, inclusive)",
+           "days": 7,
+           "from": "2026-10-17",
+           "to": "2026-10-23",
+           "tz": "Asia/Kolkata"
+          }
+         },
+         "B": {
+          "band": "B",
+          "change": null,
+          "ci95": [
+           51.166315196213716,
+           69.2162387555204
+          ],
+          "ci_method": "wilson",
+          "coverage": {
+           "assessed": 109,
+           "pct": 80.7,
+           "total": 135
+          },
+          "denominator": 109.0,
+          "grey_reason": null,
+          "label": "Band B share of PDQI-assessed notes (raw band)",
+          "metric_id": "M-OPD-02",
+          "n": 109,
+          "note": null,
+          "numerator": 66.0,
+          "plain": "about 6 in 10",
+          "status": "ok",
+          "unit": "percent",
+          "value": 60.550458715596335,
+          "window": {
+           "anchor": "today (IST calendar days, inclusive)",
+           "days": 7,
+           "from": "2026-10-17",
+           "to": "2026-10-23",
+           "tz": "Asia/Kolkata"
+          }
+         },
+         "C": {
+          "band": "C",
+          "change": null,
+          "ci95": [
+           12.203581560283453,
+           26.64875658451421
+          ],
+          "ci_method": "wilson",
+          "coverage": {
+           "assessed": 109,
+           "pct": 80.7,
+           "total": 135
+          },
+          "denominator": 109.0,
+          "grey_reason": null,
+          "label": "Band C share of PDQI-assessed notes (raw band)",
+          "metric_id": "M-OPD-02",
+          "n": 109,
+          "note": null,
+          "numerator": 20.0,
+          "plain": "about 2 in 10",
+          "status": "ok",
+          "unit": "percent",
+          "value": 18.34862385321101,
+          "window": {
+           "anchor": "today (IST calendar days, inclusive)",
+           "days": 7,
+           "from": "2026-10-17",
+           "to": "2026-10-23",
+           "tz": "Asia/Kolkata"
+          }
+         },
+         "D": {
+          "band": "D",
+          "change": null,
+          "ci95": [
+           1.9750157151731957,
+           10.291382492579974
+          ],
+          "ci_method": "wilson",
+          "coverage": {
+           "assessed": 109,
+           "pct": 80.7,
+           "total": 135
+          },
+          "denominator": 109.0,
+          "grey_reason": null,
+          "label": "Band D share of PDQI-assessed notes (raw band)",
+          "metric_id": "M-OPD-02",
+          "n": 109,
+          "note": null,
+          "numerator": 5.0,
+          "plain": "fewer than 1 in 20",
+          "status": "ok",
+          "unit": "percent",
+          "value": 4.587155963302752,
+          "window": {
+           "anchor": "today (IST calendar days, inclusive)",
+           "days": 7,
+           "from": "2026-10-17",
+           "to": "2026-10-23",
+           "tz": "Asia/Kolkata"
+          }
+         },
+         "E": {
+          "band": "E",
+          "change": null,
+          "ci95": [
+           0.0,
+           3.4044182287383373
+          ],
+          "ci_method": "wilson",
+          "coverage": {
+           "assessed": 109,
+           "pct": 80.7,
+           "total": 135
+          },
+          "denominator": 109.0,
+          "grey_reason": null,
+          "label": "Band E share of PDQI-assessed notes (raw band)",
+          "metric_id": "M-OPD-02",
+          "n": 109,
+          "note": null,
+          "numerator": 0.0,
+          "plain": "fewer than 1 in 20",
+          "status": "ok",
+          "unit": "percent",
+          "value": 0.0,
+          "window": {
+           "anchor": "today (IST calendar days, inclusive)",
+           "days": 7,
+           "from": "2026-10-17",
+           "to": "2026-10-23",
+           "tz": "Asia/Kolkata"
+          }
+         }
+        },
+        "basis": "PDQI-assessed notes, raw band",
+        "counts": {
+         "A": 18,
+         "B": 66,
+         "C": 20,
+         "D": 5,
+         "E": 0
+        },
+        "pct_a": 16.513761467889907,
+        "pct_ab": 77.06422018348624,
+        "pct_ce": 22.93577981651376
+       },
+       "grey_reason": null,
+       "label": "NQI band mix (raw band)",
+       "metric_id": "M-OPD-02",
+       "n": 109,
+       "note": null,
+       "numerator": 84.0,
+       "plain": "about 8 in 10",
+       "status": "ok",
+       "unit": "percent",
+       "value": 77.06422018348624,
+       "window": {
+        "anchor": "today (IST calendar days, inclusive)",
+        "days": 7,
+        "from": "2026-10-17",
+        "to": "2026-10-23",
+        "tz": "Asia/Kolkata"
+       }
+      }
+     },
+     {
+      "headline": "Low-value findings per 100 notes was 34 per 100 notes over 135 notes between 2026-10-17 to 2026-10-23. There is no clear change against the previous period.",
+      "plain": "about 0 low-value findings for every 100 notes",
+      "stat": {
+       "band": null,
+       "change": {
+        "direction": "no clear change",
+        "early": {
+         "from": "2026-10-10",
+         "n": 40,
+         "to": "2026-10-16",
+         "value": 0.0
+        },
+        "late": {
+         "from": "2026-10-17",
+         "n": 135,
+         "to": "2026-10-23",
+         "value": 34.074074074074076
+        },
+        "p_value": 1.1825207479887467e-11,
+        "relative_change": null
+       },
+       "ci95": null,
+       "ci_method": "none",
+       "coverage": null,
+       "denominator": 135.0,
+       "extra": {
+        "ci_method": "wilson",
+        "notes_with_one_or_more": 45,
+        "pct_ci95": [
+         25.93959893776753,
+         41.649365752930365
+        ],
+        "pct_notes_with_one_or_more": 33.33333333333333
+       },
+       "grey_reason": null,
+       "label": "Low-value findings per 100 notes",
+       "metric_id": "M-OPD-05",
+       "n": 135,
+       "note": null,
+       "numerator": 46.0,
+       "plain": "about 0 low-value findings for every 100 notes",
+       "status": "ok",
+       "unit": "per_100",
+       "value": 34.074074074074076,
+       "window": {
+        "anchor": "today (IST calendar days, inclusive)",
+        "days": 7,
+        "from": "2026-10-17",
+        "to": "2026-10-23",
+        "tz": "Asia/Kolkata"
+       }
+      }
+     },
+     {
+      "headline": "Documentation completeness was 80% over 135 notes between 2026-10-17 to 2026-10-23. There is no clear change against the previous period.",
+      "plain": "about 80% of mandatory items present",
+      "stat": {
+       "band": null,
+       "change": {
+        "direction": "no clear change",
+        "early": {
+         "from": "2026-10-10",
+         "n": 40,
+         "to": "2026-10-16",
+         "value": 80.0
+        },
+        "late": {
+         "from": "2026-10-17",
+         "n": 135,
+         "to": "2026-10-23",
+         "value": 80.0
+        },
+        "p_value": null,
+        "relative_change": null
+       },
+       "ci95": null,
+       "ci_method": "none",
+       "coverage": null,
+       "denominator": 135.0,
+       "grey_reason": null,
+       "label": "Documentation completeness",
+       "metric_id": "M-OPD-04",
+       "n": 135,
+       "note": null,
+       "numerator": 10800.0,
+       "plain": "about 80% of mandatory items present",
+       "status": "ok",
+       "unit": "percent",
+       "value": 80.0,
+       "window": {
+        "anchor": "today (IST calendar days, inclusive)",
+        "days": 7,
+        "from": "2026-10-17",
+        "to": "2026-10-23",
+        "tz": "Asia/Kolkata"
+       }
+      }
+     }
+    ]
+   },
+   {
+    "family": "ams",
+    "label": "Antimicrobial stewardship",
+    "status": "live",
+    "tiles": [
+     {
+      "headline": "WHO Access share of antibiotics cannot be reported: No WHO AWaRe classification is available: the formulary marks Reserve (restricted) only, and no AWaRe list is in the repo or the DB13 extract.",
+      "plain": null,
+      "stat": {
+       "band": null,
+       "change": null,
+       "ci95": null,
+       "ci_method": "none",
+       "coverage": null,
+       "denominator": null,
+       "grey_reason": "not_available",
+       "label": "WHO Access share of antibiotics",
+       "metric_id": "M-AMS-01",
+       "n": 0,
+       "note": "No WHO AWaRe classification is available: the formulary marks Reserve (restricted) only, and no AWaRe list is in the repo or the DB13 extract.",
+       "numerator": null,
+       "plain": null,
+       "status": "unavailable",
+       "unit": "percent",
+       "value": null,
+       "window": {
+        "anchor": "today (IST calendar days, inclusive)",
+        "days": 7,
+        "from": "2026-10-17",
+        "to": "2026-10-23",
+        "tz": "Asia/Kolkata"
+       }
+      }
+     },
+     {
+      "headline": "Prescriptions with a Watch agent cannot be reported: No WHO AWaRe classification is available: the formulary marks Reserve (restricted) only, and no AWaRe list is in the repo or the DB13 extract.",
+      "plain": null,
+      "stat": {
+       "band": null,
+       "change": null,
+       "ci95": null,
+       "ci_method": "none",
+       "coverage": null,
+       "denominator": null,
+       "grey_reason": "not_available",
+       "label": "Prescriptions with a Watch agent",
+       "metric_id": "M-AMS-02",
+       "n": 0,
+       "note": "No WHO AWaRe classification is available: the formulary marks Reserve (restricted) only, and no AWaRe list is in the repo or the DB13 extract.",
+       "numerator": null,
+       "plain": null,
+       "status": "unavailable",
+       "unit": "percent",
+       "value": null,
+       "window": {
+        "anchor": "today (IST calendar days, inclusive)",
+        "days": 7,
+        "from": "2026-10-17",
+        "to": "2026-10-23",
+        "tz": "Asia/Kolkata"
+       }
+      }
+     },
+     {
+      "headline": "Antibiotic flagged in viral URTI: only 2 notes in 2026-10-17 to 2026-10-23, too few to show a figure.",
+      "plain": null,
+      "stat": {
+       "band": null,
+       "change": null,
+       "ci95": null,
+       "ci_method": "none",
+       "coverage": null,
+       "denominator": 2,
+       "grey_reason": "min_n",
+       "label": "Antibiotic flagged in viral URTI",
+       "metric_id": "M-AMS-03",
+       "n": 2,
+       "note": "Lower bound: only what the audit caught.",
+       "numerator": 1,
+       "plain": null,
+       "status": "count_only",
+       "unit": "percent",
+       "value": null,
+       "window": {
+        "anchor": "today (IST calendar days, inclusive)",
+        "days": 7,
+        "from": "2026-10-17",
+        "to": "2026-10-23",
+        "tz": "Asia/Kolkata"
+       }
+      }
+     },
+     {
+      "headline": "Antibiotics in gastroenteritis cannot be reported: No ratified gastroenteritis-antibiotic rule exists, so there is no numerator.",
+      "plain": null,
+      "stat": {
+       "band": null,
+       "change": null,
+       "ci95": null,
+       "ci_method": "none",
+       "coverage": null,
+       "denominator": null,
+       "grey_reason": "not_available",
+       "label": "Antibiotics in gastroenteritis",
+       "metric_id": "M-AMS-04",
+       "n": 0,
+       "note": "No ratified gastroenteritis-antibiotic rule exists, so there is no numerator.",
+       "numerator": null,
+       "plain": null,
+       "status": "unavailable",
+       "unit": "percent",
+       "value": null,
+       "window": {
+        "anchor": "today (IST calendar days, inclusive)",
+        "days": 7,
+        "from": "2026-10-17",
+        "to": "2026-10-23",
+        "tz": "Asia/Kolkata"
+       }
+      }
+     },
+     {
+      "headline": "Post-operative prophylaxis longer than 24 h cannot be reported: No order/MAR timestamps are in the DB13 extract and no rule exists.",
+      "plain": null,
+      "stat": {
+       "band": null,
+       "change": null,
+       "ci95": null,
+       "ci_method": "none",
+       "coverage": null,
+       "denominator": null,
+       "grey_reason": "not_available",
+       "label": "Post-operative prophylaxis longer than 24 h",
+       "metric_id": "M-AMS-05",
+       "n": 0,
+       "note": "No order/MAR timestamps are in the DB13 extract and no rule exists.",
+       "numerator": null,
+       "plain": null,
+       "status": "unavailable",
+       "unit": "percent",
+       "value": null,
+       "window": {
+        "anchor": "today (IST calendar days, inclusive)",
+        "days": 7,
+        "from": "2026-10-17",
+        "to": "2026-10-23",
+        "tz": "Asia/Kolkata"
+       }
+      }
+     }
+    ]
+   },
+   {
+    "family": "ipd",
+    "label": "IPD discharge and episode audits",
+    "status": "coming"
+   },
+   {
+    "family": "ot",
+    "label": "OT notes",
+    "status": "coming"
+   },
+   {
+    "family": "preop",
+    "label": "Pre-op risk",
+    "status": "coming"
+   },
+   {
+    "family": "readmission",
+    "label": "Readmissions",
+    "status": "coming"
+   }
+  ]
+ }
+}

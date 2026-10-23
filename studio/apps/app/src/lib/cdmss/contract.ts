@@ -71,6 +71,7 @@ export const Stat = z.object({
   plain: z.string().nullable(),
   note: z.string().nullable(),
   band: z.string().nullable().optional(),
+  extra: z.record(z.string(), z.unknown()).nullable().optional(),
 });
 export type Stat = z.infer<typeof Stat>;
 
@@ -99,7 +100,7 @@ const Evidence = z.object({
   subject: z.string().nullable().optional(),
   quote: z.string().nullable().optional(),
   rationale: z.string().nullable().optional(),
-  case: z.object({ url: z.string().nullable() }).nullable().optional(),
+  case: z.object({ url: z.string().nullable(), url_verified: z.boolean() }).nullable().optional(),
 });
 export type Evidence = z.infer<typeof Evidence>;
 
@@ -126,13 +127,17 @@ export const ThisWeekView = z.object({
     }),
   ),
 });
+const SiteOption = z.object({ code: z.string(), label: z.string(), n: z.number() });
+export type SiteOption = z.infer<typeof SiteOption>;
 // 3.2
 export const ScorecardView = z.object({
   envelope: Envelope,
   site_basis: z.string(),
-  sites: z.array(z.string()),
+  sites: z.array(SiteOption), // every site with notes in the window (CONTRACT-CHANGES B1)
+  matrix_sites: z.array(z.string()), // the rows present in `matrix`
   metrics: z.array(z.object({ metric_id: z.string(), label: z.string(), unit: z.string() })),
   matrix: z.array(z.object({ site: z.string(), n_notes: z.number(), cells: z.record(z.string(), Stat) })),
+  band_mix: z.array(z.object({ site: z.string(), counts: z.record(z.string(), z.number()), bands: z.object({ A: Stat, B: Stat, C: Stat, D: Stat, E: Stat }) })), // opd only; [] for ams
   trend: z.array(
     z.object({
       site: z.string(),
@@ -178,6 +183,7 @@ export const DoctorVariationView = z.object({
 export const ContributorsView = z.object({
   envelope: Envelope,
   site: z.string(),
+  sites: z.array(SiteOption),
   metric: z.string(),
   site_rate: Stat,
   other_sites_rate: Stat,
@@ -205,10 +211,12 @@ export const RedflagsView = z.object({
       doctor_uid: z.string(),
       doctor_name: z.string(),
       site: z.string().nullable(),
-      n_notes: z.number(),
       signals: z.array(
         z.object({
           signal_id: z.union([z.string(), z.number()]),
+          doctor_uid: z.string().nullable().optional(),
+          doctor_name: z.string().nullable().optional(),
+          site: z.string().nullable().optional(),
           reference: z.string().nullable().optional(),
           signal_type: z.string().nullable().optional(),
           importance: z.string().nullable().optional(),

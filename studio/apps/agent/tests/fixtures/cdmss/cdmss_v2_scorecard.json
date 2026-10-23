@@ -1,0 +1,3080 @@
+{
+ "columns": [
+  "site",
+  "metric_id",
+  "label",
+  "value",
+  "unit",
+  "n",
+  "status",
+  "ci_lo",
+  "ci_hi"
+ ],
+ "mode": "fixture",
+ "row_count": 15,
+ "rows": [
+  {
+   "ci_hi": 77.9773450369804,
+   "ci_lo": 74.90856100328806,
+   "label": "Mean OPD NQI (PDQI-assessed notes only)",
+   "metric_id": "M-OPD-01",
+   "n": 149,
+   "site": "ALL",
+   "status": "ok",
+   "unit": "score",
+   "value": 76.44295302013423
+  },
+  {
+   "ci_hi": 65.38303634876804,
+   "ci_lo": 60.331249365517664,
+   "label": "Clinical NQI",
+   "metric_id": "M-OPD-03",
+   "n": 175,
+   "site": "ALL",
+   "status": "ok",
+   "unit": "score",
+   "value": 62.857142857142854
+  },
+  {
+   "ci_hi": 88.36922964845465,
+   "ci_lo": 76.40371174969874,
+   "label": "NQI band mix (raw band)",
+   "metric_id": "M-OPD-02",
+   "n": 149,
+   "site": "ALL",
+   "status": "ok",
+   "unit": "percent",
+   "value": 83.22147651006712
+  },
+  {
+   "ci_hi": null,
+   "ci_lo": null,
+   "label": "Documentation completeness",
+   "metric_id": "M-OPD-04",
+   "n": 175,
+   "site": "ALL",
+   "status": "ok",
+   "unit": "percent",
+   "value": 80.0
+  },
+  {
+   "ci_hi": null,
+   "ci_lo": null,
+   "label": "Low-value findings per 100 notes",
+   "metric_id": "M-OPD-05",
+   "n": 175,
+   "site": "ALL",
+   "status": "ok",
+   "unit": "per_100",
+   "value": 26.285714285714285
+  },
+  {
+   "ci_hi": 77.52901096205356,
+   "ci_lo": 74.89523146218887,
+   "label": "Mean OPD NQI (PDQI-assessed notes only)",
+   "metric_id": "M-OPD-01",
+   "n": 132,
+   "site": "SITEA",
+   "status": "ok",
+   "unit": "score",
+   "value": 76.21212121212122
+  },
+  {
+   "ci_hi": 70.91046237552176,
+   "ci_lo": 66.23239476733538,
+   "label": "Clinical NQI",
+   "metric_id": "M-OPD-03",
+   "n": 140,
+   "site": "SITEA",
+   "status": "ok",
+   "unit": "score",
+   "value": 68.57142857142857
+  },
+  {
+   "ci_hi": 89.97259548144734,
+   "ci_lo": 77.75334414234976,
+   "label": "NQI band mix (raw band)",
+   "metric_id": "M-OPD-02",
+   "n": 132,
+   "site": "SITEA",
+   "status": "ok",
+   "unit": "percent",
+   "value": 84.84848484848484
+  },
+  {
+   "ci_hi": null,
+   "ci_lo": null,
+   "label": "Documentation completeness",
+   "metric_id": "M-OPD-04",
+   "n": 140,
+   "site": "SITEA",
+   "status": "ok",
+   "unit": "percent",
+   "value": 80.0
+  },
+  {
+   "ci_hi": null,
+   "ci_lo": null,
+   "label": "Low-value findings per 100 notes",
+   "metric_id": "M-OPD-05",
+   "n": 140,
+   "site": "SITEA",
+   "status": "ok",
+   "unit": "per_100",
+   "value": 32.857142857142854
+  },
+  {
+   "ci_hi": 87.16593806890181,
+   "ci_lo": 69.3046501663923,
+   "label": "Mean OPD NQI (PDQI-assessed notes only)",
+   "metric_id": "M-OPD-01",
+   "n": 17,
+   "site": "SITEB",
+   "status": "greyed",
+   "unit": "score",
+   "value": 78.23529411764706
+  },
+  {
+   "ci_hi": 40.0,
+   "ci_lo": 40.0,
+   "label": "Clinical NQI",
+   "metric_id": "M-OPD-03",
+   "n": 35,
+   "site": "SITEB",
+   "status": "ok",
+   "unit": "score",
+   "value": 40.0
+  },
+  {
+   "ci_hi": 86.72020613444361,
+   "ci_lo": 46.8664666737861,
+   "label": "NQI band mix (raw band)",
+   "metric_id": "M-OPD-02",
+   "n": 17,
+   "site": "SITEB",
+   "status": "greyed",
+   "unit": "percent",
+   "value": 70.58823529411765
+  },
+  {
+   "ci_hi": null,
+   "ci_lo": null,
+   "label": "Documentation completeness",
+   "metric_id": "M-OPD-04",
+   "n": 35,
+   "site": "SITEB",
+   "status": "ok",
+   "unit": "percent",
+   "value": 80.0
+  },
+  {
+   "ci_hi": null,
+   "ci_lo": null,
+   "label": "Low-value findings per 100 notes",
+   "metric_id": "M-OPD-05",
+   "n": 35,
+   "site": "SITEB",
+   "status": "ok",
+   "unit": "per_100",
+   "value": 0.0
+  }
+ ],
+ "source": {
+  "query_hash": "de3a4f372f05",
+  "tool": "cdmss_v2_scorecard"
+ },
+ "synthetic": true,
+ "view": {
+  "band_mix": [
+   {
+    "bands": {
+     "A": {
+      "band": "A",
+      "change": null,
+      "ci95": [
+       7.779663227338414,
+       18.287585479819846
+      ],
+      "ci_method": "wilson",
+      "coverage": {
+       "assessed": 149,
+       "pct": 85.1,
+       "total": 175
+      },
+      "denominator": 149.0,
+      "grey_reason": null,
+      "label": "Band A share of PDQI-assessed notes (raw band)",
+      "metric_id": "M-OPD-02",
+      "n": 149,
+      "note": null,
+      "numerator": 18.0,
+      "plain": "about 1 in 10",
+      "status": "ok",
+      "unit": "percent",
+      "value": 12.080536912751679,
+      "window": {
+       "anchor": "today (IST calendar days, inclusive)",
+       "days": 28,
+       "from": "2026-09-26",
+       "to": "2026-10-23",
+       "tz": "Asia/Kolkata"
+      }
+     },
+     "B": {
+      "band": "B",
+      "change": null,
+      "ci95": [
+       63.4064449974946,
+       77.812699528603
+      ],
+      "ci_method": "wilson",
+      "coverage": {
+       "assessed": 149,
+       "pct": 85.1,
+       "total": 175
+      },
+      "denominator": 149.0,
+      "grey_reason": null,
+      "label": "Band B share of PDQI-assessed notes (raw band)",
+      "metric_id": "M-OPD-02",
+      "n": 149,
+      "note": null,
+      "numerator": 106.0,
+      "plain": "about 7 in 10",
+      "status": "ok",
+      "unit": "percent",
+      "value": 71.14093959731544,
+      "window": {
+       "anchor": "today (IST calendar days, inclusive)",
+       "days": 28,
+       "from": "2026-09-26",
+       "to": "2026-10-23",
+       "tz": "Asia/Kolkata"
+      }
+     },
+     "C": {
+      "band": "C",
+      "change": null,
+      "ci95": [
+       8.85999071925608,
+       19.824346529241712
+      ],
+      "ci_method": "wilson",
+      "coverage": {
+       "assessed": 149,
+       "pct": 85.1,
+       "total": 175
+      },
+      "denominator": 149.0,
+      "grey_reason": null,
+      "label": "Band C share of PDQI-assessed notes (raw band)",
+      "metric_id": "M-OPD-02",
+      "n": 149,
+      "note": null,
+      "numerator": 20.0,
+      "plain": "about 1 in 10",
+      "status": "ok",
+      "unit": "percent",
+      "value": 13.422818791946309,
+      "window": {
+       "anchor": "today (IST calendar days, inclusive)",
+       "days": 28,
+       "from": "2026-09-26",
+       "to": "2026-10-23",
+       "tz": "Asia/Kolkata"
+      }
+     },
+     "D": {
+      "band": "D",
+      "change": null,
+      "ci95": [
+       1.4416893720131245,
+       7.614483816438186
+      ],
+      "ci_method": "wilson",
+      "coverage": {
+       "assessed": 149,
+       "pct": 85.1,
+       "total": 175
+      },
+      "denominator": 149.0,
+      "grey_reason": null,
+      "label": "Band D share of PDQI-assessed notes (raw band)",
+      "metric_id": "M-OPD-02",
+      "n": 149,
+      "note": null,
+      "numerator": 5.0,
+      "plain": "fewer than 1 in 20",
+      "status": "ok",
+      "unit": "percent",
+      "value": 3.3557046979865772,
+      "window": {
+       "anchor": "today (IST calendar days, inclusive)",
+       "days": 28,
+       "from": "2026-09-26",
+       "to": "2026-10-23",
+       "tz": "Asia/Kolkata"
+      }
+     },
+     "E": {
+      "band": "E",
+      "change": null,
+      "ci95": [
+       0.0,
+       2.5134518351024853
+      ],
+      "ci_method": "wilson",
+      "coverage": {
+       "assessed": 149,
+       "pct": 85.1,
+       "total": 175
+      },
+      "denominator": 149.0,
+      "grey_reason": null,
+      "label": "Band E share of PDQI-assessed notes (raw band)",
+      "metric_id": "M-OPD-02",
+      "n": 149,
+      "note": null,
+      "numerator": 0.0,
+      "plain": "fewer than 1 in 20",
+      "status": "ok",
+      "unit": "percent",
+      "value": 0.0,
+      "window": {
+       "anchor": "today (IST calendar days, inclusive)",
+       "days": 28,
+       "from": "2026-09-26",
+       "to": "2026-10-23",
+       "tz": "Asia/Kolkata"
+      }
+     }
+    },
+    "counts": {
+     "A": 18,
+     "B": 106,
+     "C": 20,
+     "D": 5,
+     "E": 0
+    },
+    "site": "ALL"
+   },
+   {
+    "bands": {
+     "A": {
+      "band": "A",
+      "change": null,
+      "ci95": [
+       2.0996036056019793,
+       9.562214276401765
+      ],
+      "ci_method": "wilson",
+      "coverage": {
+       "assessed": 132,
+       "pct": 94.3,
+       "total": 140
+      },
+      "denominator": 132.0,
+      "grey_reason": null,
+      "label": "Band A share of PDQI-assessed notes (raw band)",
+      "metric_id": "M-OPD-02",
+      "n": 132,
+      "note": null,
+      "numerator": 6.0,
+      "plain": "fewer than 1 in 20",
+      "status": "ok",
+      "unit": "percent",
+      "value": 4.545454545454546,
+      "window": {
+       "anchor": "today (IST calendar days, inclusive)",
+       "days": 28,
+       "from": "2026-09-26",
+       "to": "2026-10-23",
+       "tz": "Asia/Kolkata"
+      }
+     },
+     "B": {
+      "band": "B",
+      "change": null,
+      "ci95": [
+       72.70324134183684,
+       86.18888007016065
+      ],
+      "ci_method": "wilson",
+      "coverage": {
+       "assessed": 132,
+       "pct": 94.3,
+       "total": 140
+      },
+      "denominator": 132.0,
+      "grey_reason": null,
+      "label": "Band B share of PDQI-assessed notes (raw band)",
+      "metric_id": "M-OPD-02",
+      "n": 132,
+      "note": null,
+      "numerator": 106.0,
+      "plain": "about 8 in 10",
+      "status": "ok",
+      "unit": "percent",
+      "value": 80.3030303030303,
+      "window": {
+       "anchor": "today (IST calendar days, inclusive)",
+       "days": 28,
+       "from": "2026-09-26",
+       "to": "2026-10-23",
+       "tz": "Asia/Kolkata"
+      }
+     },
+     "C": {
+      "band": "C",
+      "change": null,
+      "ci95": [
+       10.02740451855264,
+       22.24665585765023
+      ],
+      "ci_method": "wilson",
+      "coverage": {
+       "assessed": 132,
+       "pct": 94.3,
+       "total": 140
+      },
+      "denominator": 132.0,
+      "grey_reason": null,
+      "label": "Band C share of PDQI-assessed notes (raw band)",
+      "metric_id": "M-OPD-02",
+      "n": 132,
+      "note": null,
+      "numerator": 20.0,
+      "plain": "about 2 in 10",
+      "status": "ok",
+      "unit": "percent",
+      "value": 15.151515151515152,
+      "window": {
+       "anchor": "today (IST calendar days, inclusive)",
+       "days": 28,
+       "from": "2026-09-26",
+       "to": "2026-10-23",
+       "tz": "Asia/Kolkata"
+      }
+     },
+     "D": {
+      "band": "D",
+      "change": null,
+      "ci95": [
+       0.0,
+       2.8279996702041195
+      ],
+      "ci_method": "wilson",
+      "coverage": {
+       "assessed": 132,
+       "pct": 94.3,
+       "total": 140
+      },
+      "denominator": 132.0,
+      "grey_reason": null,
+      "label": "Band D share of PDQI-assessed notes (raw band)",
+      "metric_id": "M-OPD-02",
+      "n": 132,
+      "note": null,
+      "numerator": 0.0,
+      "plain": "fewer than 1 in 20",
+      "status": "ok",
+      "unit": "percent",
+      "value": 0.0,
+      "window": {
+       "anchor": "today (IST calendar days, inclusive)",
+       "days": 28,
+       "from": "2026-09-26",
+       "to": "2026-10-23",
+       "tz": "Asia/Kolkata"
+      }
+     },
+     "E": {
+      "band": "E",
+      "change": null,
+      "ci95": [
+       0.0,
+       2.8279996702041195
+      ],
+      "ci_method": "wilson",
+      "coverage": {
+       "assessed": 132,
+       "pct": 94.3,
+       "total": 140
+      },
+      "denominator": 132.0,
+      "grey_reason": null,
+      "label": "Band E share of PDQI-assessed notes (raw band)",
+      "metric_id": "M-OPD-02",
+      "n": 132,
+      "note": null,
+      "numerator": 0.0,
+      "plain": "fewer than 1 in 20",
+      "status": "ok",
+      "unit": "percent",
+      "value": 0.0,
+      "window": {
+       "anchor": "today (IST calendar days, inclusive)",
+       "days": 28,
+       "from": "2026-09-26",
+       "to": "2026-10-23",
+       "tz": "Asia/Kolkata"
+      }
+     }
+    },
+    "counts": {
+     "A": 6,
+     "B": 106,
+     "C": 20,
+     "D": 0,
+     "E": 0
+    },
+    "site": "SITEA"
+   },
+   {
+    "bands": {
+     "A": {
+      "band": "A",
+      "change": null,
+      "ci95": [
+       46.8664666737861,
+       86.72020613444361
+      ],
+      "ci_method": "wilson",
+      "coverage": {
+       "assessed": 17,
+       "pct": 48.6,
+       "total": 35
+      },
+      "denominator": 17.0,
+      "grey_reason": "coverage_lt_50",
+      "label": "Band A share of PDQI-assessed notes (raw band)",
+      "metric_id": "M-OPD-02",
+      "n": 17,
+      "note": null,
+      "numerator": 12.0,
+      "plain": "about 7 in 10",
+      "status": "greyed",
+      "unit": "percent",
+      "value": 70.58823529411765,
+      "window": {
+       "anchor": "today (IST calendar days, inclusive)",
+       "days": 28,
+       "from": "2026-09-26",
+       "to": "2026-10-23",
+       "tz": "Asia/Kolkata"
+      }
+     },
+     "B": {
+      "band": "B",
+      "change": null,
+      "ci95": [
+       0.0,
+       18.432366037156456
+      ],
+      "ci_method": "wilson",
+      "coverage": {
+       "assessed": 17,
+       "pct": 48.6,
+       "total": 35
+      },
+      "denominator": 17.0,
+      "grey_reason": "coverage_lt_50",
+      "label": "Band B share of PDQI-assessed notes (raw band)",
+      "metric_id": "M-OPD-02",
+      "n": 17,
+      "note": null,
+      "numerator": 0.0,
+      "plain": "fewer than 1 in 20",
+      "status": "greyed",
+      "unit": "percent",
+      "value": 0.0,
+      "window": {
+       "anchor": "today (IST calendar days, inclusive)",
+       "days": 28,
+       "from": "2026-09-26",
+       "to": "2026-10-23",
+       "tz": "Asia/Kolkata"
+      }
+     },
+     "C": {
+      "band": "C",
+      "change": null,
+      "ci95": [
+       0.0,
+       18.432366037156456
+      ],
+      "ci_method": "wilson",
+      "coverage": {
+       "assessed": 17,
+       "pct": 48.6,
+       "total": 35
+      },
+      "denominator": 17.0,
+      "grey_reason": "coverage_lt_50",
+      "label": "Band C share of PDQI-assessed notes (raw band)",
+      "metric_id": "M-OPD-02",
+      "n": 17,
+      "note": null,
+      "numerator": 0.0,
+      "plain": "fewer than 1 in 20",
+      "status": "greyed",
+      "unit": "percent",
+      "value": 0.0,
+      "window": {
+       "anchor": "today (IST calendar days, inclusive)",
+       "days": 28,
+       "from": "2026-09-26",
+       "to": "2026-10-23",
+       "tz": "Asia/Kolkata"
+      }
+     },
+     "D": {
+      "band": "D",
+      "change": null,
+      "ci95": [
+       13.279793865556403,
+       53.13353332621391
+      ],
+      "ci_method": "wilson",
+      "coverage": {
+       "assessed": 17,
+       "pct": 48.6,
+       "total": 35
+      },
+      "denominator": 17.0,
+      "grey_reason": "coverage_lt_50",
+      "label": "Band D share of PDQI-assessed notes (raw band)",
+      "metric_id": "M-OPD-02",
+      "n": 17,
+      "note": null,
+      "numerator": 5.0,
+      "plain": "about 3 in 10",
+      "status": "greyed",
+      "unit": "percent",
+      "value": 29.411764705882355,
+      "window": {
+       "anchor": "today (IST calendar days, inclusive)",
+       "days": 28,
+       "from": "2026-09-26",
+       "to": "2026-10-23",
+       "tz": "Asia/Kolkata"
+      }
+     },
+     "E": {
+      "band": "E",
+      "change": null,
+      "ci95": [
+       0.0,
+       18.432366037156456
+      ],
+      "ci_method": "wilson",
+      "coverage": {
+       "assessed": 17,
+       "pct": 48.6,
+       "total": 35
+      },
+      "denominator": 17.0,
+      "grey_reason": "coverage_lt_50",
+      "label": "Band E share of PDQI-assessed notes (raw band)",
+      "metric_id": "M-OPD-02",
+      "n": 17,
+      "note": null,
+      "numerator": 0.0,
+      "plain": "fewer than 1 in 20",
+      "status": "greyed",
+      "unit": "percent",
+      "value": 0.0,
+      "window": {
+       "anchor": "today (IST calendar days, inclusive)",
+       "days": 28,
+       "from": "2026-09-26",
+       "to": "2026-10-23",
+       "tz": "Asia/Kolkata"
+      }
+     }
+    },
+    "counts": {
+     "A": 12,
+     "B": 0,
+     "C": 0,
+     "D": 5,
+     "E": 0
+    },
+    "site": "SITEB"
+   }
+  ],
+  "envelope": {
+   "action_line": "Site medical heads: read your own row first; all listed sites have enough audited notes.",
+   "caveats": [
+    "The score is an encounter proxy, not a clinician scorecard.",
+    "Notes where PDQI-9 was not assessed score 0 on note quality, which raises the index, so full NQI is shown over assessed notes only.",
+    "Underuse findings carry zero penalty.",
+    "OPD site is the doctor's home site (governance DB engagement), not where the note was written.",
+    "Domain scores are assumed to be on the same 0-100 scale as the NQI."
+   ],
+   "headline": {
+    "plain": "about 76 out of 100 on 85% of notes",
+    "sentence": "Mean OPD NQI (PDQI-assessed notes only) was 76 over 149 notes between 2026-09-26 to 2026-10-23, on 85% of notes."
+   },
+   "precision_line": "About 1 in 5 findings are wrong or contested (engine precision; the catalogue has no family-specific figure).",
+   "provenance": {
+    "data_cutoff": "2026-10-23T06:45:00+05:30",
+    "db13_as_of": null,
+    "engine_family": "opd-note-audit/0.81.3+ (derived by shape in cdmss_ro.opd_note_audit); versions read: opd-note-audit/0.81.21",
+    "generated_at": "2026-10-23T12:00:00+05:30",
+    "query_hashes": [
+     "ec6f6c50cbdb",
+     "c5158c604742",
+     "20a1c1a5a643"
+    ],
+    "sources": [
+     "cdmss_ro.opd_note_audit",
+     "governance DB: physicians, physician_engagements, hospitals"
+    ],
+    "window": {
+     "anchor": "today (IST calendar days, inclusive)",
+     "days": 28,
+     "from": "2026-09-26",
+     "to": "2026-10-23",
+     "tz": "Asia/Kolkata"
+    }
+   },
+   "stats": [
+    {
+     "band": "B",
+     "change": null,
+     "ci95": [
+      74.90856100328806,
+      77.9773450369804
+     ],
+     "ci_method": "mean_normal",
+     "coverage": {
+      "assessed": 149,
+      "pct": 85.1,
+      "total": 175
+     },
+     "denominator": 149.0,
+     "grey_reason": null,
+     "label": "Mean OPD NQI (PDQI-assessed notes only)",
+     "metric_id": "M-OPD-01",
+     "n": 149,
+     "note": null,
+     "numerator": 11390.0,
+     "plain": "about 76 out of 100 on 85% of notes",
+     "status": "ok",
+     "unit": "score",
+     "value": 76.44295302013423,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 28,
+      "from": "2026-09-26",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    },
+    {
+     "band": "C",
+     "change": null,
+     "ci95": [
+      60.331249365517664,
+      65.38303634876804
+     ],
+     "ci_method": "mean_normal",
+     "coverage": null,
+     "denominator": 175.0,
+     "grey_reason": null,
+     "label": "Clinical NQI",
+     "metric_id": "M-OPD-03",
+     "n": 175,
+     "note": null,
+     "numerator": 11000.0,
+     "plain": "about 63 out of 100",
+     "status": "ok",
+     "unit": "score",
+     "value": 62.857142857142854,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 28,
+      "from": "2026-09-26",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    },
+    {
+     "band": null,
+     "change": null,
+     "ci95": [
+      76.40371174969874,
+      88.36922964845465
+     ],
+     "ci_method": "wilson",
+     "coverage": {
+      "assessed": 149,
+      "pct": 85.1,
+      "total": 175
+     },
+     "denominator": 149.0,
+     "extra": {
+      "band_stats": {
+       "A": {
+        "band": "A",
+        "change": null,
+        "ci95": [
+         7.779663227338414,
+         18.287585479819846
+        ],
+        "ci_method": "wilson",
+        "coverage": {
+         "assessed": 149,
+         "pct": 85.1,
+         "total": 175
+        },
+        "denominator": 149.0,
+        "grey_reason": null,
+        "label": "Band A share of PDQI-assessed notes (raw band)",
+        "metric_id": "M-OPD-02",
+        "n": 149,
+        "note": null,
+        "numerator": 18.0,
+        "plain": "about 1 in 10",
+        "status": "ok",
+        "unit": "percent",
+        "value": 12.080536912751679,
+        "window": {
+         "anchor": "today (IST calendar days, inclusive)",
+         "days": 28,
+         "from": "2026-09-26",
+         "to": "2026-10-23",
+         "tz": "Asia/Kolkata"
+        }
+       },
+       "B": {
+        "band": "B",
+        "change": null,
+        "ci95": [
+         63.4064449974946,
+         77.812699528603
+        ],
+        "ci_method": "wilson",
+        "coverage": {
+         "assessed": 149,
+         "pct": 85.1,
+         "total": 175
+        },
+        "denominator": 149.0,
+        "grey_reason": null,
+        "label": "Band B share of PDQI-assessed notes (raw band)",
+        "metric_id": "M-OPD-02",
+        "n": 149,
+        "note": null,
+        "numerator": 106.0,
+        "plain": "about 7 in 10",
+        "status": "ok",
+        "unit": "percent",
+        "value": 71.14093959731544,
+        "window": {
+         "anchor": "today (IST calendar days, inclusive)",
+         "days": 28,
+         "from": "2026-09-26",
+         "to": "2026-10-23",
+         "tz": "Asia/Kolkata"
+        }
+       },
+       "C": {
+        "band": "C",
+        "change": null,
+        "ci95": [
+         8.85999071925608,
+         19.824346529241712
+        ],
+        "ci_method": "wilson",
+        "coverage": {
+         "assessed": 149,
+         "pct": 85.1,
+         "total": 175
+        },
+        "denominator": 149.0,
+        "grey_reason": null,
+        "label": "Band C share of PDQI-assessed notes (raw band)",
+        "metric_id": "M-OPD-02",
+        "n": 149,
+        "note": null,
+        "numerator": 20.0,
+        "plain": "about 1 in 10",
+        "status": "ok",
+        "unit": "percent",
+        "value": 13.422818791946309,
+        "window": {
+         "anchor": "today (IST calendar days, inclusive)",
+         "days": 28,
+         "from": "2026-09-26",
+         "to": "2026-10-23",
+         "tz": "Asia/Kolkata"
+        }
+       },
+       "D": {
+        "band": "D",
+        "change": null,
+        "ci95": [
+         1.4416893720131245,
+         7.614483816438186
+        ],
+        "ci_method": "wilson",
+        "coverage": {
+         "assessed": 149,
+         "pct": 85.1,
+         "total": 175
+        },
+        "denominator": 149.0,
+        "grey_reason": null,
+        "label": "Band D share of PDQI-assessed notes (raw band)",
+        "metric_id": "M-OPD-02",
+        "n": 149,
+        "note": null,
+        "numerator": 5.0,
+        "plain": "fewer than 1 in 20",
+        "status": "ok",
+        "unit": "percent",
+        "value": 3.3557046979865772,
+        "window": {
+         "anchor": "today (IST calendar days, inclusive)",
+         "days": 28,
+         "from": "2026-09-26",
+         "to": "2026-10-23",
+         "tz": "Asia/Kolkata"
+        }
+       },
+       "E": {
+        "band": "E",
+        "change": null,
+        "ci95": [
+         0.0,
+         2.5134518351024853
+        ],
+        "ci_method": "wilson",
+        "coverage": {
+         "assessed": 149,
+         "pct": 85.1,
+         "total": 175
+        },
+        "denominator": 149.0,
+        "grey_reason": null,
+        "label": "Band E share of PDQI-assessed notes (raw band)",
+        "metric_id": "M-OPD-02",
+        "n": 149,
+        "note": null,
+        "numerator": 0.0,
+        "plain": "fewer than 1 in 20",
+        "status": "ok",
+        "unit": "percent",
+        "value": 0.0,
+        "window": {
+         "anchor": "today (IST calendar days, inclusive)",
+         "days": 28,
+         "from": "2026-09-26",
+         "to": "2026-10-23",
+         "tz": "Asia/Kolkata"
+        }
+       }
+      },
+      "basis": "PDQI-assessed notes, raw band",
+      "counts": {
+       "A": 18,
+       "B": 106,
+       "C": 20,
+       "D": 5,
+       "E": 0
+      },
+      "pct_a": 12.080536912751677,
+      "pct_ab": 83.22147651006712,
+      "pct_ce": 16.778523489932887
+     },
+     "grey_reason": null,
+     "label": "NQI band mix (raw band)",
+     "metric_id": "M-OPD-02",
+     "n": 149,
+     "note": null,
+     "numerator": 124.0,
+     "plain": "about 8 in 10",
+     "status": "ok",
+     "unit": "percent",
+     "value": 83.22147651006712,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 28,
+      "from": "2026-09-26",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    },
+    {
+     "band": null,
+     "change": null,
+     "ci95": null,
+     "ci_method": "none",
+     "coverage": null,
+     "denominator": 175.0,
+     "grey_reason": null,
+     "label": "Documentation completeness",
+     "metric_id": "M-OPD-04",
+     "n": 175,
+     "note": null,
+     "numerator": 14000.0,
+     "plain": "about 80% of mandatory items present",
+     "status": "ok",
+     "unit": "percent",
+     "value": 80.0,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 28,
+      "from": "2026-09-26",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    },
+    {
+     "band": null,
+     "change": null,
+     "ci95": null,
+     "ci_method": "none",
+     "coverage": null,
+     "denominator": 175.0,
+     "extra": {
+      "ci_method": "wilson",
+      "notes_with_one_or_more": 45,
+      "pct_ci95": [
+       19.809119528292086,
+       32.66278857362603
+      ],
+      "pct_notes_with_one_or_more": 25.71428571428571
+     },
+     "grey_reason": null,
+     "label": "Low-value findings per 100 notes",
+     "metric_id": "M-OPD-05",
+     "n": 175,
+     "note": null,
+     "numerator": 46.0,
+     "plain": "about 0 low-value findings for every 100 notes",
+     "status": "ok",
+     "unit": "per_100",
+     "value": 26.285714285714285,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 28,
+      "from": "2026-09-26",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    },
+    {
+     "band": "B",
+     "change": null,
+     "ci95": [
+      74.89523146218887,
+      77.52901096205356
+     ],
+     "ci_method": "mean_normal",
+     "coverage": {
+      "assessed": 132,
+      "pct": 94.3,
+      "total": 140
+     },
+     "denominator": 132.0,
+     "grey_reason": null,
+     "label": "Mean OPD NQI (PDQI-assessed notes only)",
+     "metric_id": "M-OPD-01",
+     "n": 132,
+     "note": null,
+     "numerator": 10060.0,
+     "plain": "about 76 out of 100 on 94% of notes",
+     "status": "ok",
+     "unit": "score",
+     "value": 76.21212121212122,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 28,
+      "from": "2026-09-26",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    },
+    {
+     "band": "C",
+     "change": null,
+     "ci95": [
+      66.23239476733538,
+      70.91046237552176
+     ],
+     "ci_method": "mean_normal",
+     "coverage": null,
+     "denominator": 140.0,
+     "grey_reason": null,
+     "label": "Clinical NQI",
+     "metric_id": "M-OPD-03",
+     "n": 140,
+     "note": null,
+     "numerator": 9600.0,
+     "plain": "about 69 out of 100",
+     "status": "ok",
+     "unit": "score",
+     "value": 68.57142857142857,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 28,
+      "from": "2026-09-26",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    },
+    {
+     "band": null,
+     "change": null,
+     "ci95": [
+      77.75334414234976,
+      89.97259548144734
+     ],
+     "ci_method": "wilson",
+     "coverage": {
+      "assessed": 132,
+      "pct": 94.3,
+      "total": 140
+     },
+     "denominator": 132.0,
+     "extra": {
+      "band_stats": {
+       "A": {
+        "band": "A",
+        "change": null,
+        "ci95": [
+         2.0996036056019793,
+         9.562214276401765
+        ],
+        "ci_method": "wilson",
+        "coverage": {
+         "assessed": 132,
+         "pct": 94.3,
+         "total": 140
+        },
+        "denominator": 132.0,
+        "grey_reason": null,
+        "label": "Band A share of PDQI-assessed notes (raw band)",
+        "metric_id": "M-OPD-02",
+        "n": 132,
+        "note": null,
+        "numerator": 6.0,
+        "plain": "fewer than 1 in 20",
+        "status": "ok",
+        "unit": "percent",
+        "value": 4.545454545454546,
+        "window": {
+         "anchor": "today (IST calendar days, inclusive)",
+         "days": 28,
+         "from": "2026-09-26",
+         "to": "2026-10-23",
+         "tz": "Asia/Kolkata"
+        }
+       },
+       "B": {
+        "band": "B",
+        "change": null,
+        "ci95": [
+         72.70324134183684,
+         86.18888007016065
+        ],
+        "ci_method": "wilson",
+        "coverage": {
+         "assessed": 132,
+         "pct": 94.3,
+         "total": 140
+        },
+        "denominator": 132.0,
+        "grey_reason": null,
+        "label": "Band B share of PDQI-assessed notes (raw band)",
+        "metric_id": "M-OPD-02",
+        "n": 132,
+        "note": null,
+        "numerator": 106.0,
+        "plain": "about 8 in 10",
+        "status": "ok",
+        "unit": "percent",
+        "value": 80.3030303030303,
+        "window": {
+         "anchor": "today (IST calendar days, inclusive)",
+         "days": 28,
+         "from": "2026-09-26",
+         "to": "2026-10-23",
+         "tz": "Asia/Kolkata"
+        }
+       },
+       "C": {
+        "band": "C",
+        "change": null,
+        "ci95": [
+         10.02740451855264,
+         22.24665585765023
+        ],
+        "ci_method": "wilson",
+        "coverage": {
+         "assessed": 132,
+         "pct": 94.3,
+         "total": 140
+        },
+        "denominator": 132.0,
+        "grey_reason": null,
+        "label": "Band C share of PDQI-assessed notes (raw band)",
+        "metric_id": "M-OPD-02",
+        "n": 132,
+        "note": null,
+        "numerator": 20.0,
+        "plain": "about 2 in 10",
+        "status": "ok",
+        "unit": "percent",
+        "value": 15.151515151515152,
+        "window": {
+         "anchor": "today (IST calendar days, inclusive)",
+         "days": 28,
+         "from": "2026-09-26",
+         "to": "2026-10-23",
+         "tz": "Asia/Kolkata"
+        }
+       },
+       "D": {
+        "band": "D",
+        "change": null,
+        "ci95": [
+         0.0,
+         2.8279996702041195
+        ],
+        "ci_method": "wilson",
+        "coverage": {
+         "assessed": 132,
+         "pct": 94.3,
+         "total": 140
+        },
+        "denominator": 132.0,
+        "grey_reason": null,
+        "label": "Band D share of PDQI-assessed notes (raw band)",
+        "metric_id": "M-OPD-02",
+        "n": 132,
+        "note": null,
+        "numerator": 0.0,
+        "plain": "fewer than 1 in 20",
+        "status": "ok",
+        "unit": "percent",
+        "value": 0.0,
+        "window": {
+         "anchor": "today (IST calendar days, inclusive)",
+         "days": 28,
+         "from": "2026-09-26",
+         "to": "2026-10-23",
+         "tz": "Asia/Kolkata"
+        }
+       },
+       "E": {
+        "band": "E",
+        "change": null,
+        "ci95": [
+         0.0,
+         2.8279996702041195
+        ],
+        "ci_method": "wilson",
+        "coverage": {
+         "assessed": 132,
+         "pct": 94.3,
+         "total": 140
+        },
+        "denominator": 132.0,
+        "grey_reason": null,
+        "label": "Band E share of PDQI-assessed notes (raw band)",
+        "metric_id": "M-OPD-02",
+        "n": 132,
+        "note": null,
+        "numerator": 0.0,
+        "plain": "fewer than 1 in 20",
+        "status": "ok",
+        "unit": "percent",
+        "value": 0.0,
+        "window": {
+         "anchor": "today (IST calendar days, inclusive)",
+         "days": 28,
+         "from": "2026-09-26",
+         "to": "2026-10-23",
+         "tz": "Asia/Kolkata"
+        }
+       }
+      },
+      "basis": "PDQI-assessed notes, raw band",
+      "counts": {
+       "A": 6,
+       "B": 106,
+       "C": 20,
+       "D": 0,
+       "E": 0
+      },
+      "pct_a": 4.545454545454546,
+      "pct_ab": 84.84848484848484,
+      "pct_ce": 15.151515151515152
+     },
+     "grey_reason": null,
+     "label": "NQI band mix (raw band)",
+     "metric_id": "M-OPD-02",
+     "n": 132,
+     "note": null,
+     "numerator": 112.0,
+     "plain": "about 8 in 10",
+     "status": "ok",
+     "unit": "percent",
+     "value": 84.84848484848484,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 28,
+      "from": "2026-09-26",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    },
+    {
+     "band": null,
+     "change": null,
+     "ci95": null,
+     "ci_method": "none",
+     "coverage": null,
+     "denominator": 140.0,
+     "grey_reason": null,
+     "label": "Documentation completeness",
+     "metric_id": "M-OPD-04",
+     "n": 140,
+     "note": null,
+     "numerator": 11200.0,
+     "plain": "about 80% of mandatory items present",
+     "status": "ok",
+     "unit": "percent",
+     "value": 80.0,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 28,
+      "from": "2026-09-26",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    },
+    {
+     "band": null,
+     "change": null,
+     "ci95": null,
+     "ci_method": "none",
+     "coverage": null,
+     "denominator": 140.0,
+     "extra": {
+      "ci_method": "wilson",
+      "notes_with_one_or_more": 45,
+      "pct_ci95": [
+       24.972612784490657,
+       40.266928488687626
+      ],
+      "pct_notes_with_one_or_more": 32.142857142857146
+     },
+     "grey_reason": null,
+     "label": "Low-value findings per 100 notes",
+     "metric_id": "M-OPD-05",
+     "n": 140,
+     "note": null,
+     "numerator": 46.0,
+     "plain": "about 0 low-value findings for every 100 notes",
+     "status": "ok",
+     "unit": "per_100",
+     "value": 32.857142857142854,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 28,
+      "from": "2026-09-26",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    },
+    {
+     "band": "B",
+     "change": null,
+     "ci95": [
+      69.3046501663923,
+      87.16593806890181
+     ],
+     "ci_method": "mean_normal",
+     "coverage": {
+      "assessed": 17,
+      "pct": 48.6,
+      "total": 35
+     },
+     "denominator": 17.0,
+     "grey_reason": "coverage_lt_50",
+     "label": "Mean OPD NQI (PDQI-assessed notes only)",
+     "metric_id": "M-OPD-01",
+     "n": 17,
+     "note": null,
+     "numerator": 1330.0,
+     "plain": "about 78 out of 100 on 49% of notes",
+     "status": "greyed",
+     "unit": "score",
+     "value": 78.23529411764706,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 28,
+      "from": "2026-09-26",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    },
+    {
+     "band": "D",
+     "change": null,
+     "ci95": [
+      40.0,
+      40.0
+     ],
+     "ci_method": "mean_normal",
+     "coverage": null,
+     "denominator": 35.0,
+     "grey_reason": null,
+     "label": "Clinical NQI",
+     "metric_id": "M-OPD-03",
+     "n": 35,
+     "note": null,
+     "numerator": 1400.0,
+     "plain": "about 40 out of 100",
+     "status": "ok",
+     "unit": "score",
+     "value": 40.0,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 28,
+      "from": "2026-09-26",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    },
+    {
+     "band": null,
+     "change": null,
+     "ci95": [
+      46.8664666737861,
+      86.72020613444361
+     ],
+     "ci_method": "wilson",
+     "coverage": {
+      "assessed": 17,
+      "pct": 48.6,
+      "total": 35
+     },
+     "denominator": 17.0,
+     "extra": {
+      "band_stats": {
+       "A": {
+        "band": "A",
+        "change": null,
+        "ci95": [
+         46.8664666737861,
+         86.72020613444361
+        ],
+        "ci_method": "wilson",
+        "coverage": {
+         "assessed": 17,
+         "pct": 48.6,
+         "total": 35
+        },
+        "denominator": 17.0,
+        "grey_reason": "coverage_lt_50",
+        "label": "Band A share of PDQI-assessed notes (raw band)",
+        "metric_id": "M-OPD-02",
+        "n": 17,
+        "note": null,
+        "numerator": 12.0,
+        "plain": "about 7 in 10",
+        "status": "greyed",
+        "unit": "percent",
+        "value": 70.58823529411765,
+        "window": {
+         "anchor": "today (IST calendar days, inclusive)",
+         "days": 28,
+         "from": "2026-09-26",
+         "to": "2026-10-23",
+         "tz": "Asia/Kolkata"
+        }
+       },
+       "B": {
+        "band": "B",
+        "change": null,
+        "ci95": [
+         0.0,
+         18.432366037156456
+        ],
+        "ci_method": "wilson",
+        "coverage": {
+         "assessed": 17,
+         "pct": 48.6,
+         "total": 35
+        },
+        "denominator": 17.0,
+        "grey_reason": "coverage_lt_50",
+        "label": "Band B share of PDQI-assessed notes (raw band)",
+        "metric_id": "M-OPD-02",
+        "n": 17,
+        "note": null,
+        "numerator": 0.0,
+        "plain": "fewer than 1 in 20",
+        "status": "greyed",
+        "unit": "percent",
+        "value": 0.0,
+        "window": {
+         "anchor": "today (IST calendar days, inclusive)",
+         "days": 28,
+         "from": "2026-09-26",
+         "to": "2026-10-23",
+         "tz": "Asia/Kolkata"
+        }
+       },
+       "C": {
+        "band": "C",
+        "change": null,
+        "ci95": [
+         0.0,
+         18.432366037156456
+        ],
+        "ci_method": "wilson",
+        "coverage": {
+         "assessed": 17,
+         "pct": 48.6,
+         "total": 35
+        },
+        "denominator": 17.0,
+        "grey_reason": "coverage_lt_50",
+        "label": "Band C share of PDQI-assessed notes (raw band)",
+        "metric_id": "M-OPD-02",
+        "n": 17,
+        "note": null,
+        "numerator": 0.0,
+        "plain": "fewer than 1 in 20",
+        "status": "greyed",
+        "unit": "percent",
+        "value": 0.0,
+        "window": {
+         "anchor": "today (IST calendar days, inclusive)",
+         "days": 28,
+         "from": "2026-09-26",
+         "to": "2026-10-23",
+         "tz": "Asia/Kolkata"
+        }
+       },
+       "D": {
+        "band": "D",
+        "change": null,
+        "ci95": [
+         13.279793865556403,
+         53.13353332621391
+        ],
+        "ci_method": "wilson",
+        "coverage": {
+         "assessed": 17,
+         "pct": 48.6,
+         "total": 35
+        },
+        "denominator": 17.0,
+        "grey_reason": "coverage_lt_50",
+        "label": "Band D share of PDQI-assessed notes (raw band)",
+        "metric_id": "M-OPD-02",
+        "n": 17,
+        "note": null,
+        "numerator": 5.0,
+        "plain": "about 3 in 10",
+        "status": "greyed",
+        "unit": "percent",
+        "value": 29.411764705882355,
+        "window": {
+         "anchor": "today (IST calendar days, inclusive)",
+         "days": 28,
+         "from": "2026-09-26",
+         "to": "2026-10-23",
+         "tz": "Asia/Kolkata"
+        }
+       },
+       "E": {
+        "band": "E",
+        "change": null,
+        "ci95": [
+         0.0,
+         18.432366037156456
+        ],
+        "ci_method": "wilson",
+        "coverage": {
+         "assessed": 17,
+         "pct": 48.6,
+         "total": 35
+        },
+        "denominator": 17.0,
+        "grey_reason": "coverage_lt_50",
+        "label": "Band E share of PDQI-assessed notes (raw band)",
+        "metric_id": "M-OPD-02",
+        "n": 17,
+        "note": null,
+        "numerator": 0.0,
+        "plain": "fewer than 1 in 20",
+        "status": "greyed",
+        "unit": "percent",
+        "value": 0.0,
+        "window": {
+         "anchor": "today (IST calendar days, inclusive)",
+         "days": 28,
+         "from": "2026-09-26",
+         "to": "2026-10-23",
+         "tz": "Asia/Kolkata"
+        }
+       }
+      },
+      "basis": "PDQI-assessed notes, raw band",
+      "counts": {
+       "A": 12,
+       "B": 0,
+       "C": 0,
+       "D": 5,
+       "E": 0
+      },
+      "pct_a": 70.58823529411765,
+      "pct_ab": 70.58823529411765,
+      "pct_ce": 29.41176470588235
+     },
+     "grey_reason": "coverage_lt_50",
+     "label": "NQI band mix (raw band)",
+     "metric_id": "M-OPD-02",
+     "n": 17,
+     "note": null,
+     "numerator": 12.0,
+     "plain": "about 7 in 10",
+     "status": "greyed",
+     "unit": "percent",
+     "value": 70.58823529411765,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 28,
+      "from": "2026-09-26",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    },
+    {
+     "band": null,
+     "change": null,
+     "ci95": null,
+     "ci_method": "none",
+     "coverage": null,
+     "denominator": 35.0,
+     "grey_reason": null,
+     "label": "Documentation completeness",
+     "metric_id": "M-OPD-04",
+     "n": 35,
+     "note": null,
+     "numerator": 2800.0,
+     "plain": "about 80% of mandatory items present",
+     "status": "ok",
+     "unit": "percent",
+     "value": 80.0,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 28,
+      "from": "2026-09-26",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    },
+    {
+     "band": null,
+     "change": null,
+     "ci95": null,
+     "ci_method": "none",
+     "coverage": null,
+     "denominator": 35.0,
+     "extra": {
+      "ci_method": "wilson",
+      "notes_with_one_or_more": 0,
+      "pct_ci95": [
+       0.0,
+       9.890426758938869
+      ],
+      "pct_notes_with_one_or_more": 0.0
+     },
+     "grey_reason": null,
+     "label": "Low-value findings per 100 notes",
+     "metric_id": "M-OPD-05",
+     "n": 35,
+     "note": null,
+     "numerator": 0.0,
+     "plain": "about 0 low-value findings for every 100 notes",
+     "status": "ok",
+     "unit": "per_100",
+     "value": 0.0,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 28,
+      "from": "2026-09-26",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    }
+   ]
+  },
+  "matrix": [
+   {
+    "cells": {
+     "M-OPD-01": {
+      "band": "B",
+      "change": null,
+      "ci95": [
+       74.90856100328806,
+       77.9773450369804
+      ],
+      "ci_method": "mean_normal",
+      "coverage": {
+       "assessed": 149,
+       "pct": 85.1,
+       "total": 175
+      },
+      "denominator": 149.0,
+      "grey_reason": null,
+      "label": "Mean OPD NQI (PDQI-assessed notes only)",
+      "metric_id": "M-OPD-01",
+      "n": 149,
+      "note": null,
+      "numerator": 11390.0,
+      "plain": "about 76 out of 100 on 85% of notes",
+      "status": "ok",
+      "unit": "score",
+      "value": 76.44295302013423,
+      "window": {
+       "anchor": "today (IST calendar days, inclusive)",
+       "days": 28,
+       "from": "2026-09-26",
+       "to": "2026-10-23",
+       "tz": "Asia/Kolkata"
+      }
+     },
+     "M-OPD-02": {
+      "band": null,
+      "change": null,
+      "ci95": [
+       76.40371174969874,
+       88.36922964845465
+      ],
+      "ci_method": "wilson",
+      "coverage": {
+       "assessed": 149,
+       "pct": 85.1,
+       "total": 175
+      },
+      "denominator": 149.0,
+      "extra": {
+       "band_stats": {
+        "A": {
+         "band": "A",
+         "change": null,
+         "ci95": [
+          7.779663227338414,
+          18.287585479819846
+         ],
+         "ci_method": "wilson",
+         "coverage": {
+          "assessed": 149,
+          "pct": 85.1,
+          "total": 175
+         },
+         "denominator": 149.0,
+         "grey_reason": null,
+         "label": "Band A share of PDQI-assessed notes (raw band)",
+         "metric_id": "M-OPD-02",
+         "n": 149,
+         "note": null,
+         "numerator": 18.0,
+         "plain": "about 1 in 10",
+         "status": "ok",
+         "unit": "percent",
+         "value": 12.080536912751679,
+         "window": {
+          "anchor": "today (IST calendar days, inclusive)",
+          "days": 28,
+          "from": "2026-09-26",
+          "to": "2026-10-23",
+          "tz": "Asia/Kolkata"
+         }
+        },
+        "B": {
+         "band": "B",
+         "change": null,
+         "ci95": [
+          63.4064449974946,
+          77.812699528603
+         ],
+         "ci_method": "wilson",
+         "coverage": {
+          "assessed": 149,
+          "pct": 85.1,
+          "total": 175
+         },
+         "denominator": 149.0,
+         "grey_reason": null,
+         "label": "Band B share of PDQI-assessed notes (raw band)",
+         "metric_id": "M-OPD-02",
+         "n": 149,
+         "note": null,
+         "numerator": 106.0,
+         "plain": "about 7 in 10",
+         "status": "ok",
+         "unit": "percent",
+         "value": 71.14093959731544,
+         "window": {
+          "anchor": "today (IST calendar days, inclusive)",
+          "days": 28,
+          "from": "2026-09-26",
+          "to": "2026-10-23",
+          "tz": "Asia/Kolkata"
+         }
+        },
+        "C": {
+         "band": "C",
+         "change": null,
+         "ci95": [
+          8.85999071925608,
+          19.824346529241712
+         ],
+         "ci_method": "wilson",
+         "coverage": {
+          "assessed": 149,
+          "pct": 85.1,
+          "total": 175
+         },
+         "denominator": 149.0,
+         "grey_reason": null,
+         "label": "Band C share of PDQI-assessed notes (raw band)",
+         "metric_id": "M-OPD-02",
+         "n": 149,
+         "note": null,
+         "numerator": 20.0,
+         "plain": "about 1 in 10",
+         "status": "ok",
+         "unit": "percent",
+         "value": 13.422818791946309,
+         "window": {
+          "anchor": "today (IST calendar days, inclusive)",
+          "days": 28,
+          "from": "2026-09-26",
+          "to": "2026-10-23",
+          "tz": "Asia/Kolkata"
+         }
+        },
+        "D": {
+         "band": "D",
+         "change": null,
+         "ci95": [
+          1.4416893720131245,
+          7.614483816438186
+         ],
+         "ci_method": "wilson",
+         "coverage": {
+          "assessed": 149,
+          "pct": 85.1,
+          "total": 175
+         },
+         "denominator": 149.0,
+         "grey_reason": null,
+         "label": "Band D share of PDQI-assessed notes (raw band)",
+         "metric_id": "M-OPD-02",
+         "n": 149,
+         "note": null,
+         "numerator": 5.0,
+         "plain": "fewer than 1 in 20",
+         "status": "ok",
+         "unit": "percent",
+         "value": 3.3557046979865772,
+         "window": {
+          "anchor": "today (IST calendar days, inclusive)",
+          "days": 28,
+          "from": "2026-09-26",
+          "to": "2026-10-23",
+          "tz": "Asia/Kolkata"
+         }
+        },
+        "E": {
+         "band": "E",
+         "change": null,
+         "ci95": [
+          0.0,
+          2.5134518351024853
+         ],
+         "ci_method": "wilson",
+         "coverage": {
+          "assessed": 149,
+          "pct": 85.1,
+          "total": 175
+         },
+         "denominator": 149.0,
+         "grey_reason": null,
+         "label": "Band E share of PDQI-assessed notes (raw band)",
+         "metric_id": "M-OPD-02",
+         "n": 149,
+         "note": null,
+         "numerator": 0.0,
+         "plain": "fewer than 1 in 20",
+         "status": "ok",
+         "unit": "percent",
+         "value": 0.0,
+         "window": {
+          "anchor": "today (IST calendar days, inclusive)",
+          "days": 28,
+          "from": "2026-09-26",
+          "to": "2026-10-23",
+          "tz": "Asia/Kolkata"
+         }
+        }
+       },
+       "basis": "PDQI-assessed notes, raw band",
+       "counts": {
+        "A": 18,
+        "B": 106,
+        "C": 20,
+        "D": 5,
+        "E": 0
+       },
+       "pct_a": 12.080536912751677,
+       "pct_ab": 83.22147651006712,
+       "pct_ce": 16.778523489932887
+      },
+      "grey_reason": null,
+      "label": "NQI band mix (raw band)",
+      "metric_id": "M-OPD-02",
+      "n": 149,
+      "note": null,
+      "numerator": 124.0,
+      "plain": "about 8 in 10",
+      "status": "ok",
+      "unit": "percent",
+      "value": 83.22147651006712,
+      "window": {
+       "anchor": "today (IST calendar days, inclusive)",
+       "days": 28,
+       "from": "2026-09-26",
+       "to": "2026-10-23",
+       "tz": "Asia/Kolkata"
+      }
+     },
+     "M-OPD-03": {
+      "band": "C",
+      "change": null,
+      "ci95": [
+       60.331249365517664,
+       65.38303634876804
+      ],
+      "ci_method": "mean_normal",
+      "coverage": null,
+      "denominator": 175.0,
+      "grey_reason": null,
+      "label": "Clinical NQI",
+      "metric_id": "M-OPD-03",
+      "n": 175,
+      "note": null,
+      "numerator": 11000.0,
+      "plain": "about 63 out of 100",
+      "status": "ok",
+      "unit": "score",
+      "value": 62.857142857142854,
+      "window": {
+       "anchor": "today (IST calendar days, inclusive)",
+       "days": 28,
+       "from": "2026-09-26",
+       "to": "2026-10-23",
+       "tz": "Asia/Kolkata"
+      }
+     },
+     "M-OPD-04": {
+      "band": null,
+      "change": null,
+      "ci95": null,
+      "ci_method": "none",
+      "coverage": null,
+      "denominator": 175.0,
+      "grey_reason": null,
+      "label": "Documentation completeness",
+      "metric_id": "M-OPD-04",
+      "n": 175,
+      "note": null,
+      "numerator": 14000.0,
+      "plain": "about 80% of mandatory items present",
+      "status": "ok",
+      "unit": "percent",
+      "value": 80.0,
+      "window": {
+       "anchor": "today (IST calendar days, inclusive)",
+       "days": 28,
+       "from": "2026-09-26",
+       "to": "2026-10-23",
+       "tz": "Asia/Kolkata"
+      }
+     },
+     "M-OPD-05": {
+      "band": null,
+      "change": null,
+      "ci95": null,
+      "ci_method": "none",
+      "coverage": null,
+      "denominator": 175.0,
+      "extra": {
+       "ci_method": "wilson",
+       "notes_with_one_or_more": 45,
+       "pct_ci95": [
+        19.809119528292086,
+        32.66278857362603
+       ],
+       "pct_notes_with_one_or_more": 25.71428571428571
+      },
+      "grey_reason": null,
+      "label": "Low-value findings per 100 notes",
+      "metric_id": "M-OPD-05",
+      "n": 175,
+      "note": null,
+      "numerator": 46.0,
+      "plain": "about 0 low-value findings for every 100 notes",
+      "status": "ok",
+      "unit": "per_100",
+      "value": 26.285714285714285,
+      "window": {
+       "anchor": "today (IST calendar days, inclusive)",
+       "days": 28,
+       "from": "2026-09-26",
+       "to": "2026-10-23",
+       "tz": "Asia/Kolkata"
+      }
+     }
+    },
+    "n_notes": 175,
+    "site": "ALL"
+   },
+   {
+    "cells": {
+     "M-OPD-01": {
+      "band": "B",
+      "change": null,
+      "ci95": [
+       74.89523146218887,
+       77.52901096205356
+      ],
+      "ci_method": "mean_normal",
+      "coverage": {
+       "assessed": 132,
+       "pct": 94.3,
+       "total": 140
+      },
+      "denominator": 132.0,
+      "grey_reason": null,
+      "label": "Mean OPD NQI (PDQI-assessed notes only)",
+      "metric_id": "M-OPD-01",
+      "n": 132,
+      "note": null,
+      "numerator": 10060.0,
+      "plain": "about 76 out of 100 on 94% of notes",
+      "status": "ok",
+      "unit": "score",
+      "value": 76.21212121212122,
+      "window": {
+       "anchor": "today (IST calendar days, inclusive)",
+       "days": 28,
+       "from": "2026-09-26",
+       "to": "2026-10-23",
+       "tz": "Asia/Kolkata"
+      }
+     },
+     "M-OPD-02": {
+      "band": null,
+      "change": null,
+      "ci95": [
+       77.75334414234976,
+       89.97259548144734
+      ],
+      "ci_method": "wilson",
+      "coverage": {
+       "assessed": 132,
+       "pct": 94.3,
+       "total": 140
+      },
+      "denominator": 132.0,
+      "extra": {
+       "band_stats": {
+        "A": {
+         "band": "A",
+         "change": null,
+         "ci95": [
+          2.0996036056019793,
+          9.562214276401765
+         ],
+         "ci_method": "wilson",
+         "coverage": {
+          "assessed": 132,
+          "pct": 94.3,
+          "total": 140
+         },
+         "denominator": 132.0,
+         "grey_reason": null,
+         "label": "Band A share of PDQI-assessed notes (raw band)",
+         "metric_id": "M-OPD-02",
+         "n": 132,
+         "note": null,
+         "numerator": 6.0,
+         "plain": "fewer than 1 in 20",
+         "status": "ok",
+         "unit": "percent",
+         "value": 4.545454545454546,
+         "window": {
+          "anchor": "today (IST calendar days, inclusive)",
+          "days": 28,
+          "from": "2026-09-26",
+          "to": "2026-10-23",
+          "tz": "Asia/Kolkata"
+         }
+        },
+        "B": {
+         "band": "B",
+         "change": null,
+         "ci95": [
+          72.70324134183684,
+          86.18888007016065
+         ],
+         "ci_method": "wilson",
+         "coverage": {
+          "assessed": 132,
+          "pct": 94.3,
+          "total": 140
+         },
+         "denominator": 132.0,
+         "grey_reason": null,
+         "label": "Band B share of PDQI-assessed notes (raw band)",
+         "metric_id": "M-OPD-02",
+         "n": 132,
+         "note": null,
+         "numerator": 106.0,
+         "plain": "about 8 in 10",
+         "status": "ok",
+         "unit": "percent",
+         "value": 80.3030303030303,
+         "window": {
+          "anchor": "today (IST calendar days, inclusive)",
+          "days": 28,
+          "from": "2026-09-26",
+          "to": "2026-10-23",
+          "tz": "Asia/Kolkata"
+         }
+        },
+        "C": {
+         "band": "C",
+         "change": null,
+         "ci95": [
+          10.02740451855264,
+          22.24665585765023
+         ],
+         "ci_method": "wilson",
+         "coverage": {
+          "assessed": 132,
+          "pct": 94.3,
+          "total": 140
+         },
+         "denominator": 132.0,
+         "grey_reason": null,
+         "label": "Band C share of PDQI-assessed notes (raw band)",
+         "metric_id": "M-OPD-02",
+         "n": 132,
+         "note": null,
+         "numerator": 20.0,
+         "plain": "about 2 in 10",
+         "status": "ok",
+         "unit": "percent",
+         "value": 15.151515151515152,
+         "window": {
+          "anchor": "today (IST calendar days, inclusive)",
+          "days": 28,
+          "from": "2026-09-26",
+          "to": "2026-10-23",
+          "tz": "Asia/Kolkata"
+         }
+        },
+        "D": {
+         "band": "D",
+         "change": null,
+         "ci95": [
+          0.0,
+          2.8279996702041195
+         ],
+         "ci_method": "wilson",
+         "coverage": {
+          "assessed": 132,
+          "pct": 94.3,
+          "total": 140
+         },
+         "denominator": 132.0,
+         "grey_reason": null,
+         "label": "Band D share of PDQI-assessed notes (raw band)",
+         "metric_id": "M-OPD-02",
+         "n": 132,
+         "note": null,
+         "numerator": 0.0,
+         "plain": "fewer than 1 in 20",
+         "status": "ok",
+         "unit": "percent",
+         "value": 0.0,
+         "window": {
+          "anchor": "today (IST calendar days, inclusive)",
+          "days": 28,
+          "from": "2026-09-26",
+          "to": "2026-10-23",
+          "tz": "Asia/Kolkata"
+         }
+        },
+        "E": {
+         "band": "E",
+         "change": null,
+         "ci95": [
+          0.0,
+          2.8279996702041195
+         ],
+         "ci_method": "wilson",
+         "coverage": {
+          "assessed": 132,
+          "pct": 94.3,
+          "total": 140
+         },
+         "denominator": 132.0,
+         "grey_reason": null,
+         "label": "Band E share of PDQI-assessed notes (raw band)",
+         "metric_id": "M-OPD-02",
+         "n": 132,
+         "note": null,
+         "numerator": 0.0,
+         "plain": "fewer than 1 in 20",
+         "status": "ok",
+         "unit": "percent",
+         "value": 0.0,
+         "window": {
+          "anchor": "today (IST calendar days, inclusive)",
+          "days": 28,
+          "from": "2026-09-26",
+          "to": "2026-10-23",
+          "tz": "Asia/Kolkata"
+         }
+        }
+       },
+       "basis": "PDQI-assessed notes, raw band",
+       "counts": {
+        "A": 6,
+        "B": 106,
+        "C": 20,
+        "D": 0,
+        "E": 0
+       },
+       "pct_a": 4.545454545454546,
+       "pct_ab": 84.84848484848484,
+       "pct_ce": 15.151515151515152
+      },
+      "grey_reason": null,
+      "label": "NQI band mix (raw band)",
+      "metric_id": "M-OPD-02",
+      "n": 132,
+      "note": null,
+      "numerator": 112.0,
+      "plain": "about 8 in 10",
+      "status": "ok",
+      "unit": "percent",
+      "value": 84.84848484848484,
+      "window": {
+       "anchor": "today (IST calendar days, inclusive)",
+       "days": 28,
+       "from": "2026-09-26",
+       "to": "2026-10-23",
+       "tz": "Asia/Kolkata"
+      }
+     },
+     "M-OPD-03": {
+      "band": "C",
+      "change": null,
+      "ci95": [
+       66.23239476733538,
+       70.91046237552176
+      ],
+      "ci_method": "mean_normal",
+      "coverage": null,
+      "denominator": 140.0,
+      "grey_reason": null,
+      "label": "Clinical NQI",
+      "metric_id": "M-OPD-03",
+      "n": 140,
+      "note": null,
+      "numerator": 9600.0,
+      "plain": "about 69 out of 100",
+      "status": "ok",
+      "unit": "score",
+      "value": 68.57142857142857,
+      "window": {
+       "anchor": "today (IST calendar days, inclusive)",
+       "days": 28,
+       "from": "2026-09-26",
+       "to": "2026-10-23",
+       "tz": "Asia/Kolkata"
+      }
+     },
+     "M-OPD-04": {
+      "band": null,
+      "change": null,
+      "ci95": null,
+      "ci_method": "none",
+      "coverage": null,
+      "denominator": 140.0,
+      "grey_reason": null,
+      "label": "Documentation completeness",
+      "metric_id": "M-OPD-04",
+      "n": 140,
+      "note": null,
+      "numerator": 11200.0,
+      "plain": "about 80% of mandatory items present",
+      "status": "ok",
+      "unit": "percent",
+      "value": 80.0,
+      "window": {
+       "anchor": "today (IST calendar days, inclusive)",
+       "days": 28,
+       "from": "2026-09-26",
+       "to": "2026-10-23",
+       "tz": "Asia/Kolkata"
+      }
+     },
+     "M-OPD-05": {
+      "band": null,
+      "change": null,
+      "ci95": null,
+      "ci_method": "none",
+      "coverage": null,
+      "denominator": 140.0,
+      "extra": {
+       "ci_method": "wilson",
+       "notes_with_one_or_more": 45,
+       "pct_ci95": [
+        24.972612784490657,
+        40.266928488687626
+       ],
+       "pct_notes_with_one_or_more": 32.142857142857146
+      },
+      "grey_reason": null,
+      "label": "Low-value findings per 100 notes",
+      "metric_id": "M-OPD-05",
+      "n": 140,
+      "note": null,
+      "numerator": 46.0,
+      "plain": "about 0 low-value findings for every 100 notes",
+      "status": "ok",
+      "unit": "per_100",
+      "value": 32.857142857142854,
+      "window": {
+       "anchor": "today (IST calendar days, inclusive)",
+       "days": 28,
+       "from": "2026-09-26",
+       "to": "2026-10-23",
+       "tz": "Asia/Kolkata"
+      }
+     }
+    },
+    "n_notes": 140,
+    "site": "SITEA"
+   },
+   {
+    "cells": {
+     "M-OPD-01": {
+      "band": "B",
+      "change": null,
+      "ci95": [
+       69.3046501663923,
+       87.16593806890181
+      ],
+      "ci_method": "mean_normal",
+      "coverage": {
+       "assessed": 17,
+       "pct": 48.6,
+       "total": 35
+      },
+      "denominator": 17.0,
+      "grey_reason": "coverage_lt_50",
+      "label": "Mean OPD NQI (PDQI-assessed notes only)",
+      "metric_id": "M-OPD-01",
+      "n": 17,
+      "note": null,
+      "numerator": 1330.0,
+      "plain": "about 78 out of 100 on 49% of notes",
+      "status": "greyed",
+      "unit": "score",
+      "value": 78.23529411764706,
+      "window": {
+       "anchor": "today (IST calendar days, inclusive)",
+       "days": 28,
+       "from": "2026-09-26",
+       "to": "2026-10-23",
+       "tz": "Asia/Kolkata"
+      }
+     },
+     "M-OPD-02": {
+      "band": null,
+      "change": null,
+      "ci95": [
+       46.8664666737861,
+       86.72020613444361
+      ],
+      "ci_method": "wilson",
+      "coverage": {
+       "assessed": 17,
+       "pct": 48.6,
+       "total": 35
+      },
+      "denominator": 17.0,
+      "extra": {
+       "band_stats": {
+        "A": {
+         "band": "A",
+         "change": null,
+         "ci95": [
+          46.8664666737861,
+          86.72020613444361
+         ],
+         "ci_method": "wilson",
+         "coverage": {
+          "assessed": 17,
+          "pct": 48.6,
+          "total": 35
+         },
+         "denominator": 17.0,
+         "grey_reason": "coverage_lt_50",
+         "label": "Band A share of PDQI-assessed notes (raw band)",
+         "metric_id": "M-OPD-02",
+         "n": 17,
+         "note": null,
+         "numerator": 12.0,
+         "plain": "about 7 in 10",
+         "status": "greyed",
+         "unit": "percent",
+         "value": 70.58823529411765,
+         "window": {
+          "anchor": "today (IST calendar days, inclusive)",
+          "days": 28,
+          "from": "2026-09-26",
+          "to": "2026-10-23",
+          "tz": "Asia/Kolkata"
+         }
+        },
+        "B": {
+         "band": "B",
+         "change": null,
+         "ci95": [
+          0.0,
+          18.432366037156456
+         ],
+         "ci_method": "wilson",
+         "coverage": {
+          "assessed": 17,
+          "pct": 48.6,
+          "total": 35
+         },
+         "denominator": 17.0,
+         "grey_reason": "coverage_lt_50",
+         "label": "Band B share of PDQI-assessed notes (raw band)",
+         "metric_id": "M-OPD-02",
+         "n": 17,
+         "note": null,
+         "numerator": 0.0,
+         "plain": "fewer than 1 in 20",
+         "status": "greyed",
+         "unit": "percent",
+         "value": 0.0,
+         "window": {
+          "anchor": "today (IST calendar days, inclusive)",
+          "days": 28,
+          "from": "2026-09-26",
+          "to": "2026-10-23",
+          "tz": "Asia/Kolkata"
+         }
+        },
+        "C": {
+         "band": "C",
+         "change": null,
+         "ci95": [
+          0.0,
+          18.432366037156456
+         ],
+         "ci_method": "wilson",
+         "coverage": {
+          "assessed": 17,
+          "pct": 48.6,
+          "total": 35
+         },
+         "denominator": 17.0,
+         "grey_reason": "coverage_lt_50",
+         "label": "Band C share of PDQI-assessed notes (raw band)",
+         "metric_id": "M-OPD-02",
+         "n": 17,
+         "note": null,
+         "numerator": 0.0,
+         "plain": "fewer than 1 in 20",
+         "status": "greyed",
+         "unit": "percent",
+         "value": 0.0,
+         "window": {
+          "anchor": "today (IST calendar days, inclusive)",
+          "days": 28,
+          "from": "2026-09-26",
+          "to": "2026-10-23",
+          "tz": "Asia/Kolkata"
+         }
+        },
+        "D": {
+         "band": "D",
+         "change": null,
+         "ci95": [
+          13.279793865556403,
+          53.13353332621391
+         ],
+         "ci_method": "wilson",
+         "coverage": {
+          "assessed": 17,
+          "pct": 48.6,
+          "total": 35
+         },
+         "denominator": 17.0,
+         "grey_reason": "coverage_lt_50",
+         "label": "Band D share of PDQI-assessed notes (raw band)",
+         "metric_id": "M-OPD-02",
+         "n": 17,
+         "note": null,
+         "numerator": 5.0,
+         "plain": "about 3 in 10",
+         "status": "greyed",
+         "unit": "percent",
+         "value": 29.411764705882355,
+         "window": {
+          "anchor": "today (IST calendar days, inclusive)",
+          "days": 28,
+          "from": "2026-09-26",
+          "to": "2026-10-23",
+          "tz": "Asia/Kolkata"
+         }
+        },
+        "E": {
+         "band": "E",
+         "change": null,
+         "ci95": [
+          0.0,
+          18.432366037156456
+         ],
+         "ci_method": "wilson",
+         "coverage": {
+          "assessed": 17,
+          "pct": 48.6,
+          "total": 35
+         },
+         "denominator": 17.0,
+         "grey_reason": "coverage_lt_50",
+         "label": "Band E share of PDQI-assessed notes (raw band)",
+         "metric_id": "M-OPD-02",
+         "n": 17,
+         "note": null,
+         "numerator": 0.0,
+         "plain": "fewer than 1 in 20",
+         "status": "greyed",
+         "unit": "percent",
+         "value": 0.0,
+         "window": {
+          "anchor": "today (IST calendar days, inclusive)",
+          "days": 28,
+          "from": "2026-09-26",
+          "to": "2026-10-23",
+          "tz": "Asia/Kolkata"
+         }
+        }
+       },
+       "basis": "PDQI-assessed notes, raw band",
+       "counts": {
+        "A": 12,
+        "B": 0,
+        "C": 0,
+        "D": 5,
+        "E": 0
+       },
+       "pct_a": 70.58823529411765,
+       "pct_ab": 70.58823529411765,
+       "pct_ce": 29.41176470588235
+      },
+      "grey_reason": "coverage_lt_50",
+      "label": "NQI band mix (raw band)",
+      "metric_id": "M-OPD-02",
+      "n": 17,
+      "note": null,
+      "numerator": 12.0,
+      "plain": "about 7 in 10",
+      "status": "greyed",
+      "unit": "percent",
+      "value": 70.58823529411765,
+      "window": {
+       "anchor": "today (IST calendar days, inclusive)",
+       "days": 28,
+       "from": "2026-09-26",
+       "to": "2026-10-23",
+       "tz": "Asia/Kolkata"
+      }
+     },
+     "M-OPD-03": {
+      "band": "D",
+      "change": null,
+      "ci95": [
+       40.0,
+       40.0
+      ],
+      "ci_method": "mean_normal",
+      "coverage": null,
+      "denominator": 35.0,
+      "grey_reason": null,
+      "label": "Clinical NQI",
+      "metric_id": "M-OPD-03",
+      "n": 35,
+      "note": null,
+      "numerator": 1400.0,
+      "plain": "about 40 out of 100",
+      "status": "ok",
+      "unit": "score",
+      "value": 40.0,
+      "window": {
+       "anchor": "today (IST calendar days, inclusive)",
+       "days": 28,
+       "from": "2026-09-26",
+       "to": "2026-10-23",
+       "tz": "Asia/Kolkata"
+      }
+     },
+     "M-OPD-04": {
+      "band": null,
+      "change": null,
+      "ci95": null,
+      "ci_method": "none",
+      "coverage": null,
+      "denominator": 35.0,
+      "grey_reason": null,
+      "label": "Documentation completeness",
+      "metric_id": "M-OPD-04",
+      "n": 35,
+      "note": null,
+      "numerator": 2800.0,
+      "plain": "about 80% of mandatory items present",
+      "status": "ok",
+      "unit": "percent",
+      "value": 80.0,
+      "window": {
+       "anchor": "today (IST calendar days, inclusive)",
+       "days": 28,
+       "from": "2026-09-26",
+       "to": "2026-10-23",
+       "tz": "Asia/Kolkata"
+      }
+     },
+     "M-OPD-05": {
+      "band": null,
+      "change": null,
+      "ci95": null,
+      "ci_method": "none",
+      "coverage": null,
+      "denominator": 35.0,
+      "extra": {
+       "ci_method": "wilson",
+       "notes_with_one_or_more": 0,
+       "pct_ci95": [
+        0.0,
+        9.890426758938869
+       ],
+       "pct_notes_with_one_or_more": 0.0
+      },
+      "grey_reason": null,
+      "label": "Low-value findings per 100 notes",
+      "metric_id": "M-OPD-05",
+      "n": 35,
+      "note": null,
+      "numerator": 0.0,
+      "plain": "about 0 low-value findings for every 100 notes",
+      "status": "ok",
+      "unit": "per_100",
+      "value": 0.0,
+      "window": {
+       "anchor": "today (IST calendar days, inclusive)",
+       "days": 28,
+       "from": "2026-09-26",
+       "to": "2026-10-23",
+       "tz": "Asia/Kolkata"
+      }
+     }
+    },
+    "n_notes": 35,
+    "site": "SITEB"
+   }
+  ],
+  "matrix_sites": [
+   "ALL",
+   "SITEA",
+   "SITEB"
+  ],
+  "metrics": [
+   {
+    "label": "Mean OPD NQI (PDQI-assessed notes only)",
+    "metric_id": "M-OPD-01",
+    "unit": "score"
+   },
+   {
+    "label": "Clinical NQI",
+    "metric_id": "M-OPD-03",
+    "unit": "score"
+   },
+   {
+    "label": "NQI band mix (raw band)",
+    "metric_id": "M-OPD-02",
+    "unit": "percent"
+   },
+   {
+    "label": "Documentation completeness",
+    "metric_id": "M-OPD-04",
+    "unit": "percent"
+   },
+   {
+    "label": "Low-value findings per 100 notes",
+    "metric_id": "M-OPD-05",
+    "unit": "per_100"
+   }
+  ],
+  "site_basis": "doctor_home_site",
+  "sites": [
+   {
+    "code": "ALL",
+    "label": "All sites",
+    "n": 175
+   },
+   {
+    "code": "SITEA",
+    "label": "SITEA",
+    "n": 140
+   },
+   {
+    "code": "SITEB",
+    "label": "SITEB",
+    "n": 35
+   }
+  ],
+  "trend": [
+   {
+    "metric_id": "M-OPD-01",
+    "points": [
+     {
+      "n": 0,
+      "status": "count_only",
+      "value": null,
+      "week_from": "2026-09-26",
+      "week_to": "2026-10-02"
+     },
+     {
+      "n": 0,
+      "status": "count_only",
+      "value": null,
+      "week_from": "2026-10-03",
+      "week_to": "2026-10-09"
+     },
+     {
+      "n": 40,
+      "status": "ok",
+      "value": 77.5,
+      "week_from": "2026-10-10",
+      "week_to": "2026-10-16"
+     },
+     {
+      "n": 109,
+      "status": "ok",
+      "value": 76.05504587155963,
+      "week_from": "2026-10-17",
+      "week_to": "2026-10-23"
+     }
+    ],
+    "site": "ALL"
+   },
+   {
+    "metric_id": "M-OPD-03",
+    "points": [
+     {
+      "n": 0,
+      "status": "count_only",
+      "value": null,
+      "week_from": "2026-09-26",
+      "week_to": "2026-10-02"
+     },
+     {
+      "n": 0,
+      "status": "count_only",
+      "value": null,
+      "week_from": "2026-10-03",
+      "week_to": "2026-10-09"
+     },
+     {
+      "n": 40,
+      "status": "ok",
+      "value": 70.0,
+      "week_from": "2026-10-10",
+      "week_to": "2026-10-16"
+     },
+     {
+      "n": 135,
+      "status": "ok",
+      "value": 60.74074074074074,
+      "week_from": "2026-10-17",
+      "week_to": "2026-10-23"
+     }
+    ],
+    "site": "ALL"
+   },
+   {
+    "metric_id": "M-OPD-05",
+    "points": [
+     {
+      "n": 0,
+      "status": "count_only",
+      "value": null,
+      "week_from": "2026-09-26",
+      "week_to": "2026-10-02"
+     },
+     {
+      "n": 0,
+      "status": "count_only",
+      "value": null,
+      "week_from": "2026-10-03",
+      "week_to": "2026-10-09"
+     },
+     {
+      "n": 40,
+      "status": "ok",
+      "value": 0.0,
+      "week_from": "2026-10-10",
+      "week_to": "2026-10-16"
+     },
+     {
+      "n": 135,
+      "status": "ok",
+      "value": 34.074074074074076,
+      "week_from": "2026-10-17",
+      "week_to": "2026-10-23"
+     }
+    ],
+    "site": "ALL"
+   },
+   {
+    "metric_id": "M-OPD-01",
+    "points": [
+     {
+      "n": 0,
+      "status": "count_only",
+      "value": null,
+      "week_from": "2026-09-26",
+      "week_to": "2026-10-02"
+     },
+     {
+      "n": 0,
+      "status": "count_only",
+      "value": null,
+      "week_from": "2026-10-03",
+      "week_to": "2026-10-09"
+     },
+     {
+      "n": 40,
+      "status": "ok",
+      "value": 77.5,
+      "week_from": "2026-10-10",
+      "week_to": "2026-10-16"
+     },
+     {
+      "n": 92,
+      "status": "ok",
+      "value": 75.65217391304348,
+      "week_from": "2026-10-17",
+      "week_to": "2026-10-23"
+     }
+    ],
+    "site": "SITEA"
+   },
+   {
+    "metric_id": "M-OPD-03",
+    "points": [
+     {
+      "n": 0,
+      "status": "count_only",
+      "value": null,
+      "week_from": "2026-09-26",
+      "week_to": "2026-10-02"
+     },
+     {
+      "n": 0,
+      "status": "count_only",
+      "value": null,
+      "week_from": "2026-10-03",
+      "week_to": "2026-10-09"
+     },
+     {
+      "n": 40,
+      "status": "ok",
+      "value": 70.0,
+      "week_from": "2026-10-10",
+      "week_to": "2026-10-16"
+     },
+     {
+      "n": 100,
+      "status": "ok",
+      "value": 68.0,
+      "week_from": "2026-10-17",
+      "week_to": "2026-10-23"
+     }
+    ],
+    "site": "SITEA"
+   },
+   {
+    "metric_id": "M-OPD-05",
+    "points": [
+     {
+      "n": 0,
+      "status": "count_only",
+      "value": null,
+      "week_from": "2026-09-26",
+      "week_to": "2026-10-02"
+     },
+     {
+      "n": 0,
+      "status": "count_only",
+      "value": null,
+      "week_from": "2026-10-03",
+      "week_to": "2026-10-09"
+     },
+     {
+      "n": 40,
+      "status": "ok",
+      "value": 0.0,
+      "week_from": "2026-10-10",
+      "week_to": "2026-10-16"
+     },
+     {
+      "n": 100,
+      "status": "ok",
+      "value": 46.0,
+      "week_from": "2026-10-17",
+      "week_to": "2026-10-23"
+     }
+    ],
+    "site": "SITEA"
+   },
+   {
+    "metric_id": "M-OPD-01",
+    "points": [
+     {
+      "n": 0,
+      "status": "count_only",
+      "value": null,
+      "week_from": "2026-09-26",
+      "week_to": "2026-10-02"
+     },
+     {
+      "n": 0,
+      "status": "count_only",
+      "value": null,
+      "week_from": "2026-10-03",
+      "week_to": "2026-10-09"
+     },
+     {
+      "n": 0,
+      "status": "count_only",
+      "value": null,
+      "week_from": "2026-10-10",
+      "week_to": "2026-10-16"
+     },
+     {
+      "n": 17,
+      "status": "greyed",
+      "value": 78.23529411764706,
+      "week_from": "2026-10-17",
+      "week_to": "2026-10-23"
+     }
+    ],
+    "site": "SITEB"
+   },
+   {
+    "metric_id": "M-OPD-03",
+    "points": [
+     {
+      "n": 0,
+      "status": "count_only",
+      "value": null,
+      "week_from": "2026-09-26",
+      "week_to": "2026-10-02"
+     },
+     {
+      "n": 0,
+      "status": "count_only",
+      "value": null,
+      "week_from": "2026-10-03",
+      "week_to": "2026-10-09"
+     },
+     {
+      "n": 0,
+      "status": "count_only",
+      "value": null,
+      "week_from": "2026-10-10",
+      "week_to": "2026-10-16"
+     },
+     {
+      "n": 35,
+      "status": "ok",
+      "value": 40.0,
+      "week_from": "2026-10-17",
+      "week_to": "2026-10-23"
+     }
+    ],
+    "site": "SITEB"
+   },
+   {
+    "metric_id": "M-OPD-05",
+    "points": [
+     {
+      "n": 0,
+      "status": "count_only",
+      "value": null,
+      "week_from": "2026-09-26",
+      "week_to": "2026-10-02"
+     },
+     {
+      "n": 0,
+      "status": "count_only",
+      "value": null,
+      "week_from": "2026-10-03",
+      "week_to": "2026-10-09"
+     },
+     {
+      "n": 0,
+      "status": "count_only",
+      "value": null,
+      "week_from": "2026-10-10",
+      "week_to": "2026-10-16"
+     },
+     {
+      "n": 35,
+      "status": "ok",
+      "value": 0.0,
+      "week_from": "2026-10-17",
+      "week_to": "2026-10-23"
+     }
+    ],
+    "site": "SITEB"
+   }
+  ]
+ }
+}

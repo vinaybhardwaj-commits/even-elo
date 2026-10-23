@@ -17,6 +17,12 @@
    "site_medical_head",
    "sgo_and_hr"
   ],
+  "cdmss": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "sgo_and_hr"
+  ],
   "document-audits": [
    "super_admin",
    "sgc_member",
@@ -115,6 +121,66 @@
    "hr",
    "sgo_and_hr",
    "plain_staff"
+  ],
+  "cdmss_drilldown": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "sgo_and_hr"
+  ],
+  "cdmss_finding_detail": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "sgo_and_hr"
+  ],
+  "cdmss_metric": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "sgo_and_hr"
+  ],
+  "cdmss_metric_catalogue": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "sgo_and_hr"
+  ],
+  "cdmss_v1_this_week": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "sgo_and_hr"
+  ],
+  "cdmss_v2_scorecard": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "sgo_and_hr"
+  ],
+  "cdmss_v3_doctor_variation": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "sgo_and_hr"
+  ],
+  "cdmss_v4_contributors": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "sgo_and_hr"
+  ],
+  "cdmss_v5_redflags": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "sgo_and_hr"
+  ],
+  "cdmss_v8_worklists": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "sgo_and_hr"
   ],
   "document_audit_detail": [
    "super_admin",

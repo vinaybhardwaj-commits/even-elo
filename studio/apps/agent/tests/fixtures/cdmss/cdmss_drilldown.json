@@ -1,0 +1,205 @@
+{
+ "columns": [
+  "note_day",
+  "doctor_uid",
+  "doctor_name",
+  "site",
+  "uid",
+  "finding_no",
+  "subject",
+  "value",
+  "quote",
+  "case_url"
+ ],
+ "mode": "fixture",
+ "row_count": 10,
+ "rows": [
+  {
+   "case_url": "https://even-cdmss.vercel.app/care/D1-L-01",
+   "doctor_name": "Dr One",
+   "doctor_uid": "D1",
+   "finding_no": 1,
+   "note_day": "2026-10-20",
+   "quote": "quote for lv1",
+   "site": "SITEA",
+   "subject": "lv1",
+   "uid": "D1-L-01",
+   "value": 0.8
+  },
+  {
+   "case_url": "https://even-cdmss.vercel.app/care/D1-L-01",
+   "doctor_name": "Dr One",
+   "doctor_uid": "D1",
+   "finding_no": 2,
+   "note_day": "2026-10-20",
+   "quote": "quote for lv1b",
+   "site": "SITEA",
+   "subject": "lv1b",
+   "uid": "D1-L-01",
+   "value": 0.8
+  },
+  {
+   "case_url": "https://even-cdmss.vercel.app/care/D1-L-02",
+   "doctor_name": "Dr One",
+   "doctor_uid": "D1",
+   "finding_no": 1,
+   "note_day": "2026-10-20",
+   "quote": "quote for lv2",
+   "site": "SITEA",
+   "subject": "lv2",
+   "uid": "D1-L-02",
+   "value": 0.8
+  },
+  {
+   "case_url": "https://even-cdmss.vercel.app/care/D1-L-03",
+   "doctor_name": "Dr One",
+   "doctor_uid": "D1",
+   "finding_no": 1,
+   "note_day": "2026-10-20",
+   "quote": "quote for lv3",
+   "site": "SITEA",
+   "subject": "lv3",
+   "uid": "D1-L-03",
+   "value": 0.8
+  },
+  {
+   "case_url": "https://even-cdmss.vercel.app/care/D1-L-04",
+   "doctor_name": "Dr One",
+   "doctor_uid": "D1",
+   "finding_no": 1,
+   "note_day": "2026-10-20",
+   "quote": "quote for lv4",
+   "site": "SITEA",
+   "subject": "lv4",
+   "uid": "D1-L-04",
+   "value": 0.8
+  },
+  {
+   "case_url": "https://even-cdmss.vercel.app/care/D1-L-05",
+   "doctor_name": "Dr One",
+   "doctor_uid": "D1",
+   "finding_no": 1,
+   "note_day": "2026-10-20",
+   "quote": "quote for lv5",
+   "site": "SITEA",
+   "subject": "lv5",
+   "uid": "D1-L-05",
+   "value": 0.8
+  },
+  {
+   "case_url": "https://even-cdmss.vercel.app/care/D2-L-01",
+   "doctor_name": "Dr Two",
+   "doctor_uid": "D2",
+   "finding_no": 1,
+   "note_day": "2026-10-20",
+   "quote": "quote for lv",
+   "site": "SITEA",
+   "subject": "lv",
+   "uid": "D2-L-01",
+   "value": 0.8
+  },
+  {
+   "case_url": "https://even-cdmss.vercel.app/care/D2-L-02",
+   "doctor_name": "Dr Two",
+   "doctor_uid": "D2",
+   "finding_no": 1,
+   "note_day": "2026-10-20",
+   "quote": "quote for lv",
+   "site": "SITEA",
+   "subject": "lv",
+   "uid": "D2-L-02",
+   "value": 0.8
+  },
+  {
+   "case_url": "https://even-cdmss.vercel.app/care/D2-L-03",
+   "doctor_name": "Dr Two",
+   "doctor_uid": "D2",
+   "finding_no": 1,
+   "note_day": "2026-10-20",
+   "quote": "quote for lv",
+   "site": "SITEA",
+   "subject": "lv",
+   "uid": "D2-L-03",
+   "value": 0.8
+  },
+  {
+   "case_url": "https://even-cdmss.vercel.app/care/D2-L-04",
+   "doctor_name": "Dr Two",
+   "doctor_uid": "D2",
+   "finding_no": 1,
+   "note_day": "2026-10-20",
+   "quote": "quote for lv",
+   "site": "SITEA",
+   "subject": "lv",
+   "uid": "D2-L-04",
+   "value": 0.8
+  }
+ ],
+ "source": {
+  "query_hash": "293267718269",
+  "tool": "cdmss_drilldown"
+ },
+ "synthetic": true,
+ "total": 46,
+ "view": {
+  "envelope": {
+   "action_line": "Open the case from any row; quotes are the audit's evidence text.",
+   "caveats": [],
+   "headline": {
+    "plain": "46 row(s) behind M-OPD-05 between 2026-10-17 and 2026-10-23. Showing 10.",
+    "sentence": "46 row(s) behind M-OPD-05 between 2026-10-17 and 2026-10-23. Showing 10."
+   },
+   "precision_line": "About 1 in 5 findings are wrong or contested (engine precision; the catalogue has no family-specific figure).",
+   "provenance": {
+    "data_cutoff": null,
+    "db13_as_of": null,
+    "engine_family": "opd-note-audit/0.81.3+ (derived by shape in cdmss_ro.opd_note_audit)",
+    "generated_at": "2026-10-23T12:00:00+05:30",
+    "query_hashes": [
+     "c5158c604742",
+     "a0c7f9000be7"
+    ],
+    "sources": [
+     "governance DB: physicians, physician_engagements, hospitals",
+     "cdmss_ro.opd_finding"
+    ],
+    "window": {
+     "anchor": "today (IST calendar days, inclusive)",
+     "days": 7,
+     "from": "2026-10-17",
+     "to": "2026-10-23",
+     "tz": "Asia/Kolkata"
+    }
+   },
+   "stats": [
+    {
+     "band": null,
+     "change": null,
+     "ci95": null,
+     "ci_method": "none",
+     "coverage": null,
+     "denominator": null,
+     "grey_reason": null,
+     "label": "Low-value findings (worklist size)",
+     "metric_id": "M-WL-01",
+     "n": 46,
+     "note": null,
+     "numerator": 46.0,
+     "plain": null,
+     "status": "ok",
+     "unit": "count",
+     "value": 46.0,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 7,
+      "from": "2026-10-17",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    }
+   ]
+  },
+  "metric_id": "M-OPD-05",
+  "total": 46
+ }
+}

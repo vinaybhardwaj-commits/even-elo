@@ -26,6 +26,9 @@ SCREEN_ROLES: dict[str, frozenset[str]] = {
     "surgical": frozenset({"super_admin"}),
     "onboarding": _ANY,
     "admin": frozenset({"super_admin"}),
+    # CDMSS module (Phase 1): super_admin + the governance leads (SGO/SGC = sgc_member, SMH = site_medical_head). Doctors never.
+    # "Named clinical reviewers" have no role flag in ops/neon/0011 (UNVERIFIED), so they are not gated in.
+    "cdmss": frozenset({"super_admin", "sgc_member", "site_medical_head"}),
 }
 
 GOVERNANCE_SCREEN = {
@@ -45,6 +48,16 @@ GOVERNANCE_SCREEN = {
     "document_audit_detail": "document-audits",
     "document_audit_doctor_rollup": "document-audits",
     "document_audit_headline": "document-audits",
+    "cdmss_v1_this_week": "cdmss",
+    "cdmss_v2_scorecard": "cdmss",
+    "cdmss_v3_doctor_variation": "cdmss",
+    "cdmss_v4_contributors": "cdmss",
+    "cdmss_v5_redflags": "cdmss",
+    "cdmss_v8_worklists": "cdmss",
+    "cdmss_metric_catalogue": "cdmss",
+    "cdmss_metric": "cdmss",
+    "cdmss_drilldown": "cdmss",
+    "cdmss_finding_detail": "cdmss",
 }
 HTTP_SCREEN = {
     "eiris_incidents": "incidents",

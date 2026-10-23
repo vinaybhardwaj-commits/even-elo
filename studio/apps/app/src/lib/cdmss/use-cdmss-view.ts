@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { VIEW_SCHEMAS, type ViewId, type ViewParams, type ViewPayload } from "./contract";
-import { FIXTURES } from "./fixtures";
 
 export const CDMSS_API = "/studio/api/cdmss";
 export const CDMSS_CACHE_TTL_MS = 30_000;
@@ -24,24 +23,19 @@ export const CDMSS_ERROR_TEXT: Record<string, string> = {
 };
 export const describeCdmssError = (code: string) => CDMSS_ERROR_TEXT[code] ?? "This read failed. Retry, or ask the assistant.";
 
-const useFixtures = () => process.env.NEXT_PUBLIC_CDMSS_FIXTURES === "1";
-
 /**
  * Loads ONE view payload through /studio/api/cdmss/<view>. One POST per (view, params) per mount: params compare by
  * value, successful reads are reused for 30 s, an abort cancels the request, and only a fetch that never got an answer
- * is retried (once). A route error is never retried. No polling, no interval, no refetch on focus.
+ * is retried (once). `null` params = idle (no request). A route error is never retried. No polling, no interval, no refetch on focus.
  */
-export function useCdmssView<V extends ViewId>(view: V, params: ViewParams): CdmssState<V> & { retry: () => void } {
+export function useCdmssView<V extends ViewId>(view: V, params: ViewParams | null): CdmssState<V> & { retry: () => void } {
   const key = JSON.stringify(params);
   const [attempt, setAttempt] = useState(0);
   const id = `${view}|${key}|${attempt}`;
   const [settled, setSettled] = useState<{ id: string; result: CdmssState<V> } | null>(null);
 
   useEffect(() => {
-    if (useFixtures()) {
-      setSettled({ id, result: { status: "ok", data: FIXTURES[view] as ViewPayload<V> } });
-      return;
-    }
+    if (params === null) return; // idle: the view waits for a parameter it cannot guess (e.g. V4 needs a site)
     const ck = `${view}|${key}`;
     const hit = attempt === 0 ? cache.get(ck) : undefined;
     if (hit && Date.now() - hit.at < CDMSS_CACHE_TTL_MS) {
@@ -74,7 +68,7 @@ export function useCdmssView<V extends ViewId>(view: V, params: ViewParams): Cdm
       if (!controller.signal.aborted) setSettled({ id, result });
     })();
     return () => controller.abort();
-  }, [view, key, attempt, id]);
+  }, [view, key, attempt, id, params === null]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const state: CdmssState<V> = settled && settled.id === id ? settled.result : { status: "loading" };
   const retry = useCallback(() => setAttempt((n) => n + 1), []);

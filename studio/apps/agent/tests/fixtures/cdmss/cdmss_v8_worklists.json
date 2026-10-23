@@ -1,0 +1,273 @@
+{
+ "columns": [
+  "note_day",
+  "doctor_uid",
+  "doctor_name",
+  "site",
+  "uid",
+  "finding_no",
+  "subject",
+  "lvc_category",
+  "rule_ref",
+  "quote",
+  "case_url"
+ ],
+ "mode": "fixture",
+ "row_count": 10,
+ "rows": [
+  {
+   "case_url": "https://even-cdmss.vercel.app/care/D1-L-01",
+   "doctor_name": "Dr One",
+   "doctor_uid": "D1",
+   "finding_no": 1,
+   "lvc_category": null,
+   "note_day": "2026-10-20",
+   "quote": "quote for lv1",
+   "rule_ref": null,
+   "site": "SITEA",
+   "subject": "lv1",
+   "uid": "D1-L-01"
+  },
+  {
+   "case_url": "https://even-cdmss.vercel.app/care/D1-L-01",
+   "doctor_name": "Dr One",
+   "doctor_uid": "D1",
+   "finding_no": 2,
+   "lvc_category": null,
+   "note_day": "2026-10-20",
+   "quote": "quote for lv1b",
+   "rule_ref": null,
+   "site": "SITEA",
+   "subject": "lv1b",
+   "uid": "D1-L-01"
+  },
+  {
+   "case_url": "https://even-cdmss.vercel.app/care/D1-L-02",
+   "doctor_name": "Dr One",
+   "doctor_uid": "D1",
+   "finding_no": 1,
+   "lvc_category": null,
+   "note_day": "2026-10-20",
+   "quote": "quote for lv2",
+   "rule_ref": null,
+   "site": "SITEA",
+   "subject": "lv2",
+   "uid": "D1-L-02"
+  },
+  {
+   "case_url": "https://even-cdmss.vercel.app/care/D1-L-03",
+   "doctor_name": "Dr One",
+   "doctor_uid": "D1",
+   "finding_no": 1,
+   "lvc_category": null,
+   "note_day": "2026-10-20",
+   "quote": "quote for lv3",
+   "rule_ref": null,
+   "site": "SITEA",
+   "subject": "lv3",
+   "uid": "D1-L-03"
+  },
+  {
+   "case_url": "https://even-cdmss.vercel.app/care/D1-L-04",
+   "doctor_name": "Dr One",
+   "doctor_uid": "D1",
+   "finding_no": 1,
+   "lvc_category": null,
+   "note_day": "2026-10-20",
+   "quote": "quote for lv4",
+   "rule_ref": null,
+   "site": "SITEA",
+   "subject": "lv4",
+   "uid": "D1-L-04"
+  },
+  {
+   "case_url": "https://even-cdmss.vercel.app/care/D1-L-05",
+   "doctor_name": "Dr One",
+   "doctor_uid": "D1",
+   "finding_no": 1,
+   "lvc_category": null,
+   "note_day": "2026-10-20",
+   "quote": "quote for lv5",
+   "rule_ref": null,
+   "site": "SITEA",
+   "subject": "lv5",
+   "uid": "D1-L-05"
+  },
+  {
+   "case_url": "https://even-cdmss.vercel.app/care/D2-L-01",
+   "doctor_name": "Dr Two",
+   "doctor_uid": "D2",
+   "finding_no": 1,
+   "lvc_category": null,
+   "note_day": "2026-10-20",
+   "quote": "quote for lv",
+   "rule_ref": null,
+   "site": "SITEA",
+   "subject": "lv",
+   "uid": "D2-L-01"
+  },
+  {
+   "case_url": "https://even-cdmss.vercel.app/care/D2-L-02",
+   "doctor_name": "Dr Two",
+   "doctor_uid": "D2",
+   "finding_no": 1,
+   "lvc_category": null,
+   "note_day": "2026-10-20",
+   "quote": "quote for lv",
+   "rule_ref": null,
+   "site": "SITEA",
+   "subject": "lv",
+   "uid": "D2-L-02"
+  },
+  {
+   "case_url": "https://even-cdmss.vercel.app/care/D2-L-03",
+   "doctor_name": "Dr Two",
+   "doctor_uid": "D2",
+   "finding_no": 1,
+   "lvc_category": null,
+   "note_day": "2026-10-20",
+   "quote": "quote for lv",
+   "rule_ref": null,
+   "site": "SITEA",
+   "subject": "lv",
+   "uid": "D2-L-03"
+  },
+  {
+   "case_url": "https://even-cdmss.vercel.app/care/D2-L-04",
+   "doctor_name": "Dr Two",
+   "doctor_uid": "D2",
+   "finding_no": 1,
+   "lvc_category": null,
+   "note_day": "2026-10-20",
+   "quote": "quote for lv",
+   "rule_ref": null,
+   "site": "SITEA",
+   "subject": "lv",
+   "uid": "D2-L-04"
+  }
+ ],
+ "source": {
+  "query_hash": "293267718269",
+  "tool": "cdmss_v8_worklists"
+ },
+ "synthetic": true,
+ "total": 46,
+ "view": {
+  "columns_meta": [
+   {
+    "key": "note_day",
+    "kind": "text",
+    "label": "note day"
+   },
+   {
+    "key": "doctor_uid",
+    "kind": "text",
+    "label": "doctor uid"
+   },
+   {
+    "key": "doctor_name",
+    "kind": "text",
+    "label": "doctor name"
+   },
+   {
+    "key": "site",
+    "kind": "text",
+    "label": "site"
+   },
+   {
+    "key": "uid",
+    "kind": "text",
+    "label": "uid"
+   },
+   {
+    "key": "finding_no",
+    "kind": "number",
+    "label": "finding no"
+   },
+   {
+    "key": "subject",
+    "kind": "text",
+    "label": "subject"
+   },
+   {
+    "key": "lvc_category",
+    "kind": "text",
+    "label": "lvc category"
+   },
+   {
+    "key": "rule_ref",
+    "kind": "text",
+    "label": "rule ref"
+   },
+   {
+    "key": "quote",
+    "kind": "text",
+    "label": "quote"
+   },
+   {
+    "key": "case_url",
+    "kind": "link",
+    "label": "case url"
+   }
+  ],
+  "envelope": {
+   "action_line": "Work the list top to bottom; each row opens the CDMSS case. Export the table to share it.",
+   "caveats": [],
+   "headline": {
+    "plain": "46 low-value findings between 2026-09-26 and 2026-10-23. Showing 10 (up to 500 per page).",
+    "sentence": "46 low-value findings between 2026-09-26 and 2026-10-23. Showing 10 (up to 500 per page)."
+   },
+   "precision_line": "About 1 in 5 findings are wrong or contested (engine precision; the catalogue has no family-specific figure).",
+   "provenance": {
+    "data_cutoff": null,
+    "db13_as_of": null,
+    "engine_family": "opd-note-audit/0.81.3+ (derived by shape in cdmss_ro.opd_note_audit)",
+    "generated_at": "2026-10-23T12:00:00+05:30",
+    "query_hashes": [
+     "c5158c604742",
+     "a0c7f9000be7"
+    ],
+    "sources": [
+     "governance DB: physicians, physician_engagements, hospitals",
+     "cdmss_ro.opd_finding"
+    ],
+    "window": {
+     "anchor": "today (IST calendar days, inclusive)",
+     "days": 28,
+     "from": "2026-09-26",
+     "to": "2026-10-23",
+     "tz": "Asia/Kolkata"
+    }
+   },
+   "stats": [
+    {
+     "band": null,
+     "change": null,
+     "ci95": null,
+     "ci_method": "none",
+     "coverage": null,
+     "denominator": null,
+     "grey_reason": null,
+     "label": "Low-value findings (worklist size)",
+     "metric_id": "M-WL-01",
+     "n": 46,
+     "note": null,
+     "numerator": 46.0,
+     "plain": null,
+     "status": "ok",
+     "unit": "count",
+     "value": 46.0,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 28,
+      "from": "2026-09-26",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    }
+   ]
+  },
+  "list": "low_value_findings",
+  "total": 46
+ }
+}
