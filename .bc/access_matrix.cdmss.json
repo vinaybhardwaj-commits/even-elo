@@ -1,0 +1,450 @@
+{
+ "personas": {
+  "hr": "staff,hr",
+  "plain_staff": "staff",
+  "sgc_member": "staff,sgc_member",
+  "sgo_and_hr": "staff,hr,sgc_member",
+  "site_medical_head": "staff,site_medical_head",
+  "super_admin": "staff,super_admin"
+ },
+ "screens": {
+  "admin": [
+   "super_admin"
+  ],
+  "audit-findings": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "sgo_and_hr"
+  ],
+  "cdmss": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "sgo_and_hr"
+  ],
+  "document-audits": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "hr",
+   "sgo_and_hr",
+   "plain_staff"
+  ],
+  "feedback": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "hr",
+   "sgo_and_hr",
+   "plain_staff"
+  ],
+  "incidents": [
+   "super_admin",
+   "sgc_member",
+   "sgo_and_hr"
+  ],
+  "onboarding": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "hr",
+   "sgo_and_hr",
+   "plain_staff"
+  ],
+  "overview": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "hr",
+   "sgo_and_hr",
+   "plain_staff"
+  ],
+  "physicians": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "hr",
+   "sgo_and_hr",
+   "plain_staff"
+  ],
+  "rmo-inbox": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "hr",
+   "sgo_and_hr",
+   "plain_staff"
+  ],
+  "surgical": [
+   "super_admin"
+  ]
+ },
+ "tools": {
+  "admin_audit": [
+   "super_admin"
+  ],
+  "admin_grant_role": [
+   "super_admin"
+  ],
+  "admin_process_resignation": [
+   "super_admin"
+  ],
+  "admin_resignations": [
+   "super_admin"
+  ],
+  "admin_roles": [
+   "super_admin"
+  ],
+  "admin_set_status": [
+   "super_admin"
+  ],
+  "admin_users": [
+   "super_admin"
+  ],
+  "audit_finding_detail": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "sgo_and_hr"
+  ],
+  "audit_findings": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "sgo_and_hr"
+  ],
+  "capture_gaps": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "hr",
+   "sgo_and_hr",
+   "plain_staff"
+  ],
+  "cdmss_drilldown": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "sgo_and_hr"
+  ],
+  "cdmss_finding_detail": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "sgo_and_hr"
+  ],
+  "cdmss_metric": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "sgo_and_hr"
+  ],
+  "cdmss_metric_catalogue": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "sgo_and_hr"
+  ],
+  "cdmss_v1_this_week": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "sgo_and_hr"
+  ],
+  "cdmss_v2_scorecard": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "sgo_and_hr"
+  ],
+  "cdmss_v3_doctor_variation": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "sgo_and_hr"
+  ],
+  "cdmss_v4_contributors": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "sgo_and_hr"
+  ],
+  "cdmss_v5_redflags": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "sgo_and_hr"
+  ],
+  "cdmss_v8_worklists": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "sgo_and_hr"
+  ],
+  "document_audit_detail": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "hr",
+   "sgo_and_hr",
+   "plain_staff"
+  ],
+  "document_audit_doctor_rollup": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "hr",
+   "sgo_and_hr",
+   "plain_staff"
+  ],
+  "document_audit_headline": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "hr",
+   "sgo_and_hr",
+   "plain_staff"
+  ],
+  "eiris_incident_detail": [
+   "super_admin",
+   "sgc_member",
+   "sgo_and_hr"
+  ],
+  "eiris_incidents": [
+   "super_admin",
+   "sgc_member",
+   "sgo_and_hr"
+  ],
+  "feedback_by_physician": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "hr",
+   "sgo_and_hr",
+   "plain_staff"
+  ],
+  "feedback_retract": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "hr",
+   "sgo_and_hr",
+   "plain_staff"
+  ],
+  "incident_summary": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "hr",
+   "sgo_and_hr",
+   "plain_staff"
+  ],
+  "interventions": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "hr",
+   "sgo_and_hr",
+   "plain_staff"
+  ],
+  "list_document_audits": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "hr",
+   "sgo_and_hr",
+   "plain_staff"
+  ],
+  "list_physicians": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "hr",
+   "sgo_and_hr",
+   "plain_staff"
+  ],
+  "migrate_db": [],
+  "not_a_tool": [],
+  "onboarding_hospitals": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "hr",
+   "sgo_and_hr",
+   "plain_staff"
+  ],
+  "onboarding_overview": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "hr",
+   "sgo_and_hr",
+   "plain_staff"
+  ],
+  "onboarding_pending_credentials": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "hr",
+   "sgo_and_hr",
+   "plain_staff"
+  ],
+  "onboarding_pipeline": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "hr",
+   "sgo_and_hr",
+   "plain_staff"
+  ],
+  "onboarding_prescreen": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "hr",
+   "sgo_and_hr",
+   "plain_staff"
+  ],
+  "onboarding_write": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "hr",
+   "sgo_and_hr",
+   "plain_staff"
+  ],
+  "opd_signals": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "sgo_and_hr"
+  ],
+  "overview_counts": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "hr",
+   "sgo_and_hr",
+   "plain_staff"
+  ],
+  "patient_feedback": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "hr",
+   "sgo_and_hr",
+   "plain_staff"
+  ],
+  "physician_metrics": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "hr",
+   "sgo_and_hr",
+   "plain_staff"
+  ],
+  "physician_oppe": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "hr",
+   "sgo_and_hr",
+   "plain_staff"
+  ],
+  "physician_privileges": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "hr",
+   "sgo_and_hr",
+   "plain_staff"
+  ],
+  "physician_profile": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "hr",
+   "sgo_and_hr",
+   "plain_staff"
+  ],
+  "physician_qualifications": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "hr",
+   "sgo_and_hr",
+   "plain_staff"
+  ],
+  "plan_visualization": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "hr",
+   "sgo_and_hr",
+   "plain_staff"
+  ],
+  "rmo_author": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "hr",
+   "sgo_and_hr",
+   "plain_staff"
+  ],
+  "rmo_inbox": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "hr",
+   "sgo_and_hr",
+   "plain_staff"
+  ],
+  "rmo_release": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "hr",
+   "sgo_and_hr",
+   "plain_staff"
+  ],
+  "signal_snapshots": [
+   "super_admin",
+   "sgc_member",
+   "site_medical_head",
+   "hr",
+   "sgo_and_hr",
+   "plain_staff"
+  ],
+  "surgical_audit_log": [
+   "super_admin"
+  ],
+  "surgical_cases": [
+   "super_admin"
+  ],
+  "surgical_leaderboard": [
+   "super_admin"
+  ],
+  "surgical_overview": [
+   "super_admin"
+  ],
+  "surgical_positions": [
+   "super_admin"
+  ],
+  "surgical_streams": [
+   "super_admin"
+  ],
+  "surgical_vc_detail": [
+   "super_admin"
+  ],
+  "surgical_vcs": [
+   "super_admin"
+  ],
+  "surgical_weights": [
+   "super_admin"
+  ],
+  "surgical_write": [
+   "super_admin"
+  ]
+ }
+}

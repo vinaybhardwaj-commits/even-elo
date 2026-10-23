@@ -50,6 +50,7 @@ from src.studio_checkpoint import dev_checkpointer, postgres_checkpointer
 from src.studio_db import connect_studio, studio_db_configured
 from src.studio_logging import configure_logging
 from src.studio_screen import MAX_AUDIT_BODY_BYTES, MAX_BODY_BYTES, record_http_audit, run_screen_tool
+from src.studio_cdmss_tools import CDMSS_TOOLS
 from src.studio_docaudit_tools import DOCAUDIT_TOOLS
 from src.studio_tools import GOVERNANCE_TOOLS, ROLES_KEY, STAFF_KEY, RoleToolGate, ToolErrorToResult
 from src.model import build_model
@@ -62,7 +63,7 @@ load_dotenv()
 configure_logging()
 
 # Read-only governance tools (M0-S2). No write tools exist.
-TOOLS = [plan_visualization, *GOVERNANCE_TOOLS, *DOCAUDIT_TOOLS]
+TOOLS = [plan_visualization, *GOVERNANCE_TOOLS, *DOCAUDIT_TOOLS, *CDMSS_TOOLS]
 
 
 def build_agent(checkpointer):

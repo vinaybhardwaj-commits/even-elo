@@ -66,6 +66,16 @@ def test_agent_tools_list_is_planning_plus_read_only_governance():
             "document_audit_detail",
             "document_audit_doctor_rollup",
             "document_audit_headline",
+            "cdmss_v1_this_week",
+            "cdmss_v2_scorecard",
+            "cdmss_v3_doctor_variation",
+            "cdmss_v4_contributors",
+            "cdmss_v5_redflags",
+            "cdmss_v8_worklists",
+            "cdmss_metric_catalogue",
+            "cdmss_metric",
+            "cdmss_drilldown",
+            "cdmss_finding_detail",
         ]
     finally:
         sys.modules.pop("main", None)

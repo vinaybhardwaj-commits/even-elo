@@ -1,0 +1,420 @@
+{
+ "columns": [
+  "id",
+  "label",
+  "family",
+  "status",
+  "unit"
+ ],
+ "mode": "fixture",
+ "row_count": 18,
+ "rows": [
+  {
+   "family": "opd",
+   "id": "M-OPD-01",
+   "label": "Mean OPD NQI (PDQI-assessed notes only)",
+   "status": "ok",
+   "unit": "score"
+  },
+  {
+   "family": "opd",
+   "id": "M-OPD-02",
+   "label": "NQI band mix (raw band)",
+   "status": "ok",
+   "unit": "percent"
+  },
+  {
+   "family": "opd",
+   "id": "M-OPD-03",
+   "label": "Clinical NQI",
+   "status": "ok",
+   "unit": "score"
+  },
+  {
+   "family": "opd",
+   "id": "M-OPD-04",
+   "label": "Documentation completeness",
+   "status": "ok",
+   "unit": "percent"
+  },
+  {
+   "family": "opd",
+   "id": "M-OPD-05",
+   "label": "Low-value findings per 100 notes",
+   "status": "ok",
+   "unit": "per_100"
+  },
+  {
+   "family": "opd",
+   "id": "M-OPD-06",
+   "label": "Low-value care observed/expected",
+   "status": "ok",
+   "unit": "ratio"
+  },
+  {
+   "family": "opd",
+   "id": "M-OPD-08",
+   "label": "Same-class duplicates per 1,000 Rx",
+   "status": "ok",
+   "unit": "per_1000"
+  },
+  {
+   "family": "opd",
+   "id": "M-OPD-09",
+   "label": "Sedatives in age 60+ per 1,000 Rx",
+   "status": "unavailable",
+   "unit": "per_1000"
+  },
+  {
+   "family": "opd",
+   "id": "M-OPD-10",
+   "label": "NSAID in age 60+ or CKD per 1,000 Rx",
+   "status": "unavailable",
+   "unit": "per_1000"
+  },
+  {
+   "family": "opd",
+   "id": "M-OPD-11",
+   "label": "Triple whammy per 1,000 Rx",
+   "status": "unavailable",
+   "unit": "per_1000"
+  },
+  {
+   "family": "opd",
+   "id": "M-OPD-12",
+   "label": "NSAID with an antithrombotic per 1,000 Rx",
+   "status": "ok",
+   "unit": "per_1000"
+  },
+  {
+   "family": "opd",
+   "id": "M-OPD-13",
+   "label": "Prescriptions with 5 or more medicines",
+   "status": "ok",
+   "unit": "percent"
+  },
+  {
+   "family": "opd",
+   "id": "M-OPD-14",
+   "label": "Tests per consult",
+   "status": "ok",
+   "unit": "count"
+  },
+  {
+   "family": "ams",
+   "id": "M-AMS-01",
+   "label": "WHO Access share of antibiotics",
+   "status": "unavailable",
+   "unit": "percent"
+  },
+  {
+   "family": "ams",
+   "id": "M-AMS-02",
+   "label": "Prescriptions with a Watch agent",
+   "status": "unavailable",
+   "unit": "percent"
+  },
+  {
+   "family": "ams",
+   "id": "M-AMS-03",
+   "label": "Antibiotic flagged in viral URTI",
+   "status": "ok",
+   "unit": "percent"
+  },
+  {
+   "family": "ams",
+   "id": "M-AMS-04",
+   "label": "Antibiotics in gastroenteritis",
+   "status": "unavailable",
+   "unit": "percent"
+  },
+  {
+   "family": "ams",
+   "id": "M-AMS-05",
+   "label": "Post-operative prophylaxis longer than 24 h",
+   "status": "unavailable",
+   "unit": "percent"
+  }
+ ],
+ "source": {
+  "query_hash": "e3b0c44298fc",
+  "tool": "cdmss_metric_catalogue"
+ },
+ "synthetic": true,
+ "view": {
+  "envelope": {
+   "action_line": "Ask for a metric by id; unavailable ones explain what data is missing.",
+   "caveats": [],
+   "headline": {
+    "plain": "",
+    "sentence": "18 catalogue metrics are defined for Phase 1; 7 cannot be reported yet and say why."
+   },
+   "precision_line": "About 1 in 5 findings are wrong or contested (engine precision; the catalogue has no family-specific figure).",
+   "provenance": {
+    "data_cutoff": null,
+    "db13_as_of": null,
+    "engine_family": "opd-note-audit/0.81.3+ (derived by shape in cdmss_ro.opd_note_audit)",
+    "generated_at": "2026-10-23T12:00:00+05:30",
+    "query_hashes": [],
+    "sources": [
+     "metric catalogue (module definitions; no database read)"
+    ],
+    "window": {
+     "anchor": "today (IST calendar days, inclusive)",
+     "days": 7,
+     "from": "2026-10-17",
+     "to": "2026-10-23",
+     "tz": "Asia/Kolkata"
+    }
+   },
+   "stats": []
+  },
+  "metrics": [
+   {
+    "caveats": [
+     "The score is an encounter proxy, not a clinician scorecard.",
+     "Notes where PDQI-9 was not assessed score 0 on note quality, which raises the index, so full NQI is shown over assessed notes only.",
+     "Underuse findings carry zero penalty."
+    ],
+    "definition": "Mean of the stored note_quality_index over notes where PDQI-9 was assessed (scorecard recorded and note_quality weight > 0); coverage = assessed / canonical notes; greyed under 50% coverage.",
+    "family": "opd",
+    "id": "M-OPD-01",
+    "label": "Mean OPD NQI (PDQI-assessed notes only)",
+    "min_n_kind": "group",
+    "sources": [
+     "cdmss_ro.opd_note_audit"
+    ],
+    "status": "ok",
+    "unit": "score"
+   },
+   {
+    "caveats": [
+     "The score is an encounter proxy, not a clinician scorecard.",
+     "Notes where PDQI-9 was not assessed score 0 on note quality, which raises the index, so full NQI is shown over assessed notes only.",
+     "Underuse findings carry zero penalty."
+    ],
+    "definition": "Share of PDQI-assessed notes with raw band A, A-B, and C-E (A>=85, B>=70, C>=55, D>=40, E<40). Value = share in A-B.",
+    "family": "opd",
+    "id": "M-OPD-02",
+    "label": "NQI band mix (raw band)",
+    "min_n_kind": "group",
+    "sources": [
+     "cdmss_ro.opd_note_audit"
+    ],
+    "status": "ok",
+    "unit": "percent"
+   },
+   {
+    "caveats": [
+     "Domain scores are assumed to be on the same 0-100 scale as the NQI."
+    ],
+    "definition": "Prescribing-safety and appropriateness domain scores, equally weighted and reweighted to 100 (documentation, patient-centredness and PDQI-9 excluded); over all canonical notes.",
+    "family": "opd",
+    "id": "M-OPD-03",
+    "label": "Clinical NQI",
+    "min_n_kind": "group",
+    "sources": [
+     "cdmss_ro.opd_note_audit"
+    ],
+    "status": "ok",
+    "unit": "score"
+   },
+   {
+    "caveats": [],
+    "definition": "Mean completeness_pct over canonical notes (NABH-OPD mandatory items).",
+    "family": "opd",
+    "id": "M-OPD-04",
+    "label": "Documentation completeness",
+    "min_n_kind": "group",
+    "sources": [
+     "cdmss_ro.opd_note_audit"
+    ],
+    "status": "ok",
+    "unit": "percent"
+   },
+   {
+    "caveats": [],
+    "definition": "Non-informational, non-underuse findings with verdict low-value per 100 canonical notes; also the share of notes with at least one.",
+    "family": "opd",
+    "id": "M-OPD-05",
+    "label": "Low-value findings per 100 notes",
+    "min_n_kind": "group",
+    "sources": [
+     "cdmss_ro.opd_note_audit"
+    ],
+    "status": "ok",
+    "unit": "per_100"
+   },
+   {
+    "caveats": [
+     "Complexity-adjusted only; age band is not available."
+    ],
+    "definition": "Notes with a low-value finding (O) over the sum of complexity-band stratum rates (E). Unbanded notes excluded. Not age-adjusted (age is not stored).",
+    "family": "opd",
+    "id": "M-OPD-06",
+    "label": "Low-value care observed/expected",
+    "min_n_kind": "doctor",
+    "sources": [
+     "cdmss_ro.opd_note_audit"
+    ],
+    "status": "ok",
+    "unit": "ratio"
+   },
+   {
+    "caveats": [
+     "Class membership is the audit's rule text; completeness UNVERIFIED."
+    ],
+    "definition": "Duplicate-prescription / duplicate-molecule / therapeutic-duplication findings per 1,000 prescriptions (with a medication line) among the audited notes found in the DB13 extract.",
+    "family": "opd",
+    "id": "M-OPD-08",
+    "label": "Same-class duplicates per 1,000 Rx",
+    "min_n_kind": "group",
+    "sources": [
+     "cdmss_ro.opd_note_audit",
+     "studio_ro.dw_individuals_prescriptions"
+    ],
+    "status": "ok",
+    "unit": "per_1000"
+   },
+   {
+    "caveats": [],
+    "definition": "Patient age is not stored on the audit row and the engine has no Beers/sedative-60+ rule.",
+    "family": "opd",
+    "id": "M-OPD-09",
+    "label": "Sedatives in age 60+ per 1,000 Rx",
+    "min_n_kind": "group",
+    "sources": [],
+    "status": "unavailable",
+    "unit": "per_1000"
+   },
+   {
+    "caveats": [],
+    "definition": "Neither age nor a CKD flag is stored.",
+    "family": "opd",
+    "id": "M-OPD-10",
+    "label": "NSAID in age 60+ or CKD per 1,000 Rx",
+    "min_n_kind": "group",
+    "sources": [],
+    "status": "unavailable",
+    "unit": "per_1000"
+   },
+   {
+    "caveats": [],
+    "definition": "Only the NSAID + ACE-I/ARB pair rule exists; there is no three-drug (with diuretic) test.",
+    "family": "opd",
+    "id": "M-OPD-11",
+    "label": "Triple whammy per 1,000 Rx",
+    "min_n_kind": "group",
+    "sources": [],
+    "status": "unavailable",
+    "unit": "per_1000"
+   },
+   {
+    "caveats": [
+     "Text match on the finding rationale; no structured rule id is stored. Low-dose aspirin may be counted in both classes (UNVERIFIED)."
+    ],
+    "definition": "drug_interaction findings whose rationale names an NSAID and an anticoagulant/antiplatelet, per 1,000 prescriptions.",
+    "family": "opd",
+    "id": "M-OPD-12",
+    "label": "NSAID with an antithrombotic per 1,000 Rx",
+    "min_n_kind": "group",
+    "sources": [
+     "cdmss_ro.opd_note_audit",
+     "studio_ro.dw_individuals_prescriptions"
+    ],
+    "status": "ok",
+    "unit": "per_1000"
+   },
+   {
+    "caveats": [],
+    "definition": "Share of prescriptions (with a medication line) listing five or more medicines, from the DB13 extract.",
+    "family": "opd",
+    "id": "M-OPD-13",
+    "label": "Prescriptions with 5 or more medicines",
+    "min_n_kind": "group",
+    "sources": [
+     "cdmss_ro.opd_note_audit",
+     "studio_ro.dw_individuals_prescriptions"
+    ],
+    "status": "ok",
+    "unit": "percent"
+   },
+   {
+    "caveats": [
+     "Shape of further_investigation in the extract is UNVERIFIED; a non-array counts as 0 tests."
+    ],
+    "definition": "Investigation lines per audited consult found in the DB13 extract (further_investigation array length).",
+    "family": "opd",
+    "id": "M-OPD-14",
+    "label": "Tests per consult",
+    "min_n_kind": "group",
+    "sources": [
+     "cdmss_ro.opd_note_audit",
+     "studio_ro.dw_individuals_prescriptions"
+    ],
+    "status": "ok",
+    "unit": "count"
+   },
+   {
+    "caveats": [],
+    "definition": "No WHO AWaRe classification is available: the formulary marks Reserve (restricted) only, and no AWaRe list is in the repo or the DB13 extract.",
+    "family": "ams",
+    "id": "M-AMS-01",
+    "label": "WHO Access share of antibiotics",
+    "min_n_kind": "group",
+    "sources": [],
+    "status": "unavailable",
+    "unit": "percent"
+   },
+   {
+    "caveats": [],
+    "definition": "No WHO AWaRe classification is available: the formulary marks Reserve (restricted) only, and no AWaRe list is in the repo or the DB13 extract.",
+    "family": "ams",
+    "id": "M-AMS-02",
+    "label": "Prescriptions with a Watch agent",
+    "min_n_kind": "group",
+    "sources": [],
+    "status": "unavailable",
+    "unit": "percent"
+   },
+   {
+    "caveats": [
+     "A lower bound: only what the audit caught. ICD code set UNVERIFIED."
+    ],
+    "definition": "Audited URTI consults (ICD J00-J06, J20-J22 in the DB13 extract) carrying the ratified R5 finding 'antibiotic for acute upper-respiratory illness', as a share of audited URTI consults.",
+    "family": "ams",
+    "id": "M-AMS-03",
+    "label": "Antibiotic flagged in viral URTI",
+    "min_n_kind": "group",
+    "sources": [
+     "cdmss_ro.opd_note_audit",
+     "studio_ro.dw_individuals_prescriptions"
+    ],
+    "status": "ok",
+    "unit": "percent"
+   },
+   {
+    "caveats": [],
+    "definition": "No ratified gastroenteritis-antibiotic rule exists, so there is no numerator.",
+    "family": "ams",
+    "id": "M-AMS-04",
+    "label": "Antibiotics in gastroenteritis",
+    "min_n_kind": "group",
+    "sources": [],
+    "status": "unavailable",
+    "unit": "percent"
+   },
+   {
+    "caveats": [],
+    "definition": "No order/MAR timestamps are in the DB13 extract and no rule exists.",
+    "family": "ams",
+    "id": "M-AMS-05",
+    "label": "Post-operative prophylaxis longer than 24 h",
+    "min_n_kind": "group",
+    "sources": [],
+    "status": "unavailable",
+    "unit": "percent"
+   }
+  ]
+ }
+}

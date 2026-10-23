@@ -1,0 +1,306 @@
+{
+ "columns": [
+  "doctor_uid",
+  "doctor_name",
+  "n",
+  "events",
+  "rate",
+  "share_of_gap",
+  "rate_without"
+ ],
+ "mode": "fixture",
+ "row_count": 3,
+ "rows": [
+  {
+   "doctor_name": "Dr Five",
+   "doctor_uid": "D5",
+   "events": 30,
+   "n": 60,
+   "rate": 0.5,
+   "rate_without": 0.375,
+   "share_of_gap": 0.6666666666666666
+  },
+  {
+   "doctor_name": "Dr Two",
+   "doctor_uid": "D2",
+   "events": 10,
+   "n": 20,
+   "rate": 0.5,
+   "rate_without": 0.4375,
+   "share_of_gap": 0.2222222222222222
+  },
+  {
+   "doctor_name": "Dr One",
+   "doctor_uid": "D1",
+   "events": 5,
+   "n": 20,
+   "rate": 0.25,
+   "rate_without": 0.5,
+   "share_of_gap": 0.1111111111111111
+  }
+ ],
+ "source": {
+  "query_hash": "87257ed73f49",
+  "tool": "cdmss_v4_contributors"
+ },
+ "synthetic": true,
+ "view": {
+  "contributors": [
+   {
+    "ci95": [
+     0.37734812427246284,
+     0.6226518757275372
+    ],
+    "doctor_name": "Dr Five",
+    "doctor_uid": "D5",
+    "events": 30,
+    "n": 60,
+    "rate": 0.5,
+    "share_of_gap": 0.6666666666666666,
+    "site_rate_without": 0.375,
+    "status": "ok"
+   },
+   {
+    "ci95": [
+     0.2992949144298199,
+     0.7007050855701801
+    ],
+    "doctor_name": "Dr Two",
+    "doctor_uid": "D2",
+    "events": 10,
+    "n": 20,
+    "rate": 0.5,
+    "share_of_gap": 0.2222222222222222,
+    "site_rate_without": 0.4375,
+    "status": "ok"
+   },
+   {
+    "ci95": [
+     0.11186005278940309,
+     0.4687050099580636
+    ],
+    "doctor_name": "Dr One",
+    "doctor_uid": "D1",
+    "events": 5,
+    "n": 20,
+    "rate": 0.25,
+    "share_of_gap": 0.1111111111111111,
+    "site_rate_without": 0.5,
+    "status": "ok"
+   }
+  ],
+  "envelope": {
+   "action_line": "Site medical head for SITEA: start with the largest contributor's notes; removing them moves the site rate to 38%.",
+   "caveats": [
+    "OPD site is the doctor's home site (governance DB engagement), not where the note was written.",
+    "A doctor's share of the gap is their excess over the other sites' rate; it describes the site's number, not individual quality."
+   ],
+   "headline": {
+    "plain": "about 0 low-value findings for every 100 notes",
+    "sentence": "At SITEA, 45% of notes carry a low-value finding, 45 points above the other sites (0%), over 100 notes."
+   },
+   "precision_line": "About 1 in 5 findings are wrong or contested (engine precision; the catalogue has no family-specific figure).",
+   "provenance": {
+    "data_cutoff": "2026-10-23T06:45:00+05:30",
+    "db13_as_of": null,
+    "engine_family": "opd-note-audit/0.81.3+ (derived by shape in cdmss_ro.opd_note_audit); versions read: opd-note-audit/0.81.21",
+    "generated_at": "2026-10-23T12:00:00+05:30",
+    "query_hashes": [
+     "ec6f6c50cbdb",
+     "c5158c604742"
+    ],
+    "sources": [
+     "cdmss_ro.opd_note_audit",
+     "governance DB: physicians, physician_engagements, hospitals"
+    ],
+    "window": {
+     "anchor": "today (IST calendar days, inclusive)",
+     "days": 7,
+     "from": "2026-10-17",
+     "to": "2026-10-23",
+     "tz": "Asia/Kolkata"
+    }
+   },
+   "stats": [
+    {
+     "band": null,
+     "change": {
+      "direction": "no clear change",
+      "early": {
+       "from": "2026-10-10",
+       "n": 40,
+       "to": "2026-10-16",
+       "value": 0.0
+      },
+      "late": {
+       "from": "2026-10-17",
+       "n": 100,
+       "to": "2026-10-23",
+       "value": 46.0
+      },
+      "p_value": 1.1825207479887467e-11,
+      "relative_change": null
+     },
+     "ci95": null,
+     "ci_method": "none",
+     "coverage": null,
+     "denominator": 100.0,
+     "extra": {
+      "ci_method": "wilson",
+      "notes_with_one_or_more": 45,
+      "pct_ci95": [
+       35.614375106403465,
+       54.75557296835656
+      ],
+      "pct_notes_with_one_or_more": 45.0
+     },
+     "grey_reason": null,
+     "label": "Low-value findings per 100 notes",
+     "metric_id": "M-OPD-05",
+     "n": 100,
+     "note": null,
+     "numerator": 46.0,
+     "plain": "about 0 low-value findings for every 100 notes",
+     "status": "ok",
+     "unit": "per_100",
+     "value": 46.0,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 7,
+      "from": "2026-10-17",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    },
+    {
+     "band": null,
+     "change": null,
+     "ci95": null,
+     "ci_method": "none",
+     "coverage": null,
+     "denominator": 35.0,
+     "extra": {
+      "ci_method": "wilson",
+      "notes_with_one_or_more": 0,
+      "pct_ci95": [
+       0.0,
+       9.890426758938869
+      ],
+      "pct_notes_with_one_or_more": 0.0
+     },
+     "grey_reason": null,
+     "label": "Low-value findings per 100 notes",
+     "metric_id": "M-OPD-05",
+     "n": 35,
+     "note": null,
+     "numerator": 0.0,
+     "plain": "about 0 low-value findings for every 100 notes",
+     "status": "ok",
+     "unit": "per_100",
+     "value": 0.0,
+     "window": {
+      "anchor": "today (IST calendar days, inclusive)",
+      "days": 7,
+      "from": "2026-10-17",
+      "to": "2026-10-23",
+      "tz": "Asia/Kolkata"
+     }
+    }
+   ]
+  },
+  "gap": {
+   "absolute": 0.45,
+   "relative": null
+  },
+  "metric": "lv_rate",
+  "other_sites_rate": {
+   "band": null,
+   "change": null,
+   "ci95": null,
+   "ci_method": "none",
+   "coverage": null,
+   "denominator": 35.0,
+   "extra": {
+    "ci_method": "wilson",
+    "notes_with_one_or_more": 0,
+    "pct_ci95": [
+     0.0,
+     9.890426758938869
+    ],
+    "pct_notes_with_one_or_more": 0.0
+   },
+   "grey_reason": null,
+   "label": "Low-value findings per 100 notes",
+   "metric_id": "M-OPD-05",
+   "n": 35,
+   "note": null,
+   "numerator": 0.0,
+   "plain": "about 0 low-value findings for every 100 notes",
+   "status": "ok",
+   "unit": "per_100",
+   "value": 0.0,
+   "window": {
+    "anchor": "today (IST calendar days, inclusive)",
+    "days": 7,
+    "from": "2026-10-17",
+    "to": "2026-10-23",
+    "tz": "Asia/Kolkata"
+   }
+  },
+  "site": "SITEA",
+  "site_rate": {
+   "band": null,
+   "change": {
+    "direction": "no clear change",
+    "early": {
+     "from": "2026-10-10",
+     "n": 40,
+     "to": "2026-10-16",
+     "value": 0.0
+    },
+    "late": {
+     "from": "2026-10-17",
+     "n": 100,
+     "to": "2026-10-23",
+     "value": 46.0
+    },
+    "p_value": 1.1825207479887467e-11,
+    "relative_change": null
+   },
+   "ci95": null,
+   "ci_method": "none",
+   "coverage": null,
+   "denominator": 100.0,
+   "extra": {
+    "ci_method": "wilson",
+    "notes_with_one_or_more": 45,
+    "pct_ci95": [
+     35.614375106403465,
+     54.75557296835656
+    ],
+    "pct_notes_with_one_or_more": 45.0
+   },
+   "grey_reason": null,
+   "label": "Low-value findings per 100 notes",
+   "metric_id": "M-OPD-05",
+   "n": 100,
+   "note": null,
+   "numerator": 46.0,
+   "plain": "about 0 low-value findings for every 100 notes",
+   "status": "ok",
+   "unit": "per_100",
+   "value": 46.0,
+   "window": {
+    "anchor": "today (IST calendar days, inclusive)",
+    "days": 7,
+    "from": "2026-10-17",
+    "to": "2026-10-23",
+    "tz": "Asia/Kolkata"
+   }
+  },
+  "top_contributor_removed": {
+   "doctor_uid": "D5",
+   "site_rate_without": 0.375
+  }
+ }
+}
