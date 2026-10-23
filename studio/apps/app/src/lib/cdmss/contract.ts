@@ -151,6 +151,9 @@ export const SiteComparison = z.object({
   coverage: z.number(),
   min_coverage: z.number().optional(),
   caption: z.string().nullable(),
+  // P11: where each doctor's site came from (governance engagement | KX hospital ids | none) and its one-line caption
+  basis: z.record(z.string(), z.object({ doctors: z.number(), notes: z.number() })).optional(),
+  basis_caption: z.string().optional(),
 });
 export type SiteComparison = z.infer<typeof SiteComparison>;
 const SiteOption = z.object({ code: z.string(), label: z.string(), n: z.number() });
