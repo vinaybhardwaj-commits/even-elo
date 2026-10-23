@@ -250,20 +250,20 @@ async def test_prewarm_builds_v1_and_v2_as_the_system_actor_and_users_then_hit_t
     assert await ct.prewarm_once() == "ok"
     assert audits and {a.staff_id for a in audits} == {"system:prewarm"} and {a.tool for a in audits} == {"cdmss_v1_this_week", "cdmss_v2_scorecard"}
     n = len(calls)
-    assert n > 0 and len(ct._cache) == 2
+    assert n > 0 and len([k for k in ct._cache if k[0] != "directory"]) == 2
     user = json.loads(await next(t for t in ct.CDMSS_TOOLS if t.name == "cdmss_v1_this_week").ainvoke({}, config=CFG))
     assert user["view"]["envelope"]["provenance"]["cached"] is True and len(calls) == n  # served from the warmed entry: no new query
     user2 = json.loads(await next(t for t in ct.CDMSS_TOOLS if t.name == "cdmss_v2_scorecard").ainvoke({}, config=CFG))
     assert user2["view"]["envelope"]["provenance"]["cached"] is True and len(calls) == n
-    assert await ct.prewarm_once() == "ok" and len(calls) == 2 * n  # a cycle rebuilds even though the entries are fresh
+    assert await ct.prewarm_once() == "ok" and len(calls) == n + (n - 2)  # a cycle rebuilds the views even though they are fresh (the directory's 2 reads stay cached)
     assert [a.staff_id for a in audits if a.staff_id != "system:prewarm"] == [STAFF] * 2  # the two user hits are audited as the user
 
 
 @pytest.mark.anyio
 async def test_prewarm_entries_outlive_the_ttl_by_the_grace_so_the_next_cycle_replaces_them_first(warm):
     await ct.prewarm_once()
-    ages = [time_left for time_left in (ct.CACHE_TTL_S - (__import__("time").monotonic() - v[0]) for v in ct._cache.values())]
-    assert all(a > ct.CACHE_TTL_S for a in ages)  # monotonic_at is in the future by PREWARM_GRACE_S
+    ages = [ct.CACHE_TTL_S - (__import__("time").monotonic() - v[0]) for k, v in ct._cache.items() if k[0] != "directory"]
+    assert len(ages) == 2 and all(a > ct.CACHE_TTL_S for a in ages)  # monotonic_at is in the future by PREWARM_GRACE_S
     assert ct.PREWARM_GRACE_S > 0 and ct.PREWARM_INTERVAL_S == 300
 
 
@@ -341,3 +341,107 @@ async def test_prewarm_task_stops_cleanly_on_shutdown_even_mid_build(warm, monke
     await ct.stop_prewarm(handle, timeout=0.1)
     assert handle[0].done() and ct._prewarm_lock.locked() is False
     await ct.stop_prewarm(None)  # nothing to stop is fine
+
+
+# --- P11B: pool size from the environment, and the cached directory ------------------------------------------------------
+
+def test_pool_per_db_reads_env_with_bounds(monkeypatch):
+    monkeypatch.delenv("CDMSS_POOL_PER_DB", raising=False)
+    assert ct.pool_per_db() == 2  # the safe default until the relay pool is 4
+    for raw, want in (("1", 1), ("3", 3), ("4", 4), ("0", 1), ("-5", 1), ("9", 4), ("99", 4), ("abc", 2), ("", 2), ("2.5", 2)):
+        monkeypatch.setenv("CDMSS_POOL_PER_DB", raw)
+        assert ct.pool_per_db() == want, raw
+
+
+@pytest.mark.anyio
+async def test_semaphores_follow_the_env(monkeypatch):
+    monkeypatch.setenv("CDMSS_POOL_PER_DB", "3")
+    ct._SEMS.clear()
+    sems = ct._semaphores()
+    assert sems["cdmss"]._value == 3 and sems["gov"]._value == 3
+    ct._SEMS.clear()
+
+
+def test_conftest_scrubs_prewarm_and_pool_env():
+    import os
+
+    assert "CDMSS_PREWARM" not in os.environ and "CDMSS_POOL_PER_DB" not in os.environ
+
+
+@pytest.fixture
+def dirs(monkeypatch):
+    gov, audits = [], []
+
+    async def fetch(sql, params):
+        gov.append(sql)
+        await asyncio.sleep(0.01)
+        if sql == ct.DIRECTORY_SQL:
+            return [{"doctor_uid": "G1", "full_name": "Dr G1", "primary_specialty": "Med", "sites": ["S1"]}]
+        if sql == ct.KX_SQL:
+            return [{"doctor_uid": "U1", "kx_keys": ["KA", "KA2"], "gov_sites": []}]
+        if "GROUP BY s.doctor_uid" in sql:  # one doctor (MULTI via KX, so unplaced): coverage 0 -> site comparison withheld
+            return [{"doctor_uid": "U1", "period": "late", "complexity_band": None, "n": 20, "cutoff": None, "versions": []}]
+        return []
+
+    async def sink(row):
+        audits.append(row)
+
+    monkeypatch.setattr(ct, "fetch_gov", fetch)
+    monkeypatch.setattr(ct, "fetch_cdmss", fetch)
+    monkeypatch.setattr(studio_audit, "audit_sink", sink)
+    monkeypatch.setattr(ct, "now_ist", lambda: dt.datetime(2026, 10, 23, 9, 0, tzinfo=ct.KOLKATA))
+    ct.clear_cache()
+    return gov
+
+
+@pytest.mark.anyio
+async def test_directory_is_read_once_per_ist_day_and_ttl_with_independent_copies(dirs, monkeypatch):
+    gov = dirs
+    a = await ct.load_directory(ct.Run("cdmss_metric", {}, CFG))
+    assert len(gov) == 2 and a["G1"].site == "S1" and a["U1"].site == "MULTI" and a["U1"].basis == "kx"
+    a["G1"].name = "mutated"
+    a["ZZ"] = ct.Doc("ZZ")
+    run2 = ct.Run("cdmss_v4_contributors", {}, CFG)
+    b = await ct.load_directory(run2)
+    assert len(gov) == 2  # no second read: the refusal path and the views share it
+    assert b["G1"].name == "Dr G1" and "ZZ" not in b  # a caller's additions never reach the next caller
+    assert set(run2.sources) >= set(ct.DIRECTORY_SOURCES)  # provenance still names the sources
+    monkeypatch.setattr(ct, "now_ist", lambda: dt.datetime(2026, 10, 24, 0, 5, tzinfo=ct.KOLKATA))  # next IST day
+    await ct.load_directory(ct.Run("cdmss_metric", {}, CFG))
+    assert len(gov) == 4
+    monkeypatch.setattr(ct, "CACHE_TTL_S", 0)  # expired
+    await ct.load_directory(ct.Run("cdmss_metric", {}, CFG))
+    assert len(gov) == 6
+
+
+@pytest.mark.anyio
+async def test_concurrent_directory_loads_share_one_read_and_a_failure_is_not_cached(dirs, monkeypatch):
+    gov = dirs
+    runs = [ct.Run("cdmss_metric", {}, CFG) for _ in range(5)]
+    out = await asyncio.gather(*(ct.load_directory(r) for r in runs))
+    assert len(gov) == 2 and all(o["G1"].site == "S1" for o in out) and len({id(o) for o in out}) == 5
+    ct.clear_cache()
+    gov.clear()
+    calls = {"n": 0}
+    real = ct.fetch_gov
+
+    async def flaky(sql, params):
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise RuntimeError("boom")
+        return await real(sql, params)
+
+    monkeypatch.setattr(ct, "fetch_gov", flaky)
+    with pytest.raises(ct.ToolError):
+        await ct.load_directory(ct.Run("cdmss_metric", {}, CFG))
+    assert (await ct.load_directory(ct.Run("cdmss_metric", {}, CFG)))["G1"].site == "S1"  # the failure left nothing behind
+
+
+@pytest.mark.anyio
+async def test_a_site_refusal_reuses_the_cached_directory(dirs):
+    gov = dirs
+    await ct.load_directory(ct.Run("cdmss_metric", {}, CFG))
+    n = len(gov)
+    with pytest.raises(ct.ToolError):  # withheld (no notes with a site) -> refused, and the directory was not read again
+        await next(t for t in ct.CDMSS_TOOLS if t.name == "cdmss_metric").ainvoke({"metric_id": "M-OPD-01", "site": "S1"}, config=CFG)
+    assert gov.count(ct.DIRECTORY_SQL) == 1 and gov.count(ct.KX_SQL) == 1 and len(gov) >= n

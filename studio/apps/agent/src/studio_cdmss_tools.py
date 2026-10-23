@@ -27,6 +27,7 @@ import re
 import time
 import weakref
 import contextvars
+import dataclasses
 from collections import Counter, OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Literal, Optional
@@ -46,7 +47,8 @@ logger = logging.getLogger("studio.cdmss")
 DOCTOR_MIN_N = 10  # doctor rows
 GROUP_MIN_N = 15  # site / specialty groups
 SITE_COMPARISON_MIN_COVERAGE = 0.90  # share of window notes whose doctor has exactly one home site; below it every site comparison is withheld (ruling, 23 Oct)
-POOL_PER_DB = 2  # pgbouncer relay pool_size per database: concurrent queries of one call never exceed it
+POOL_PER_DB = 2  # default of CDMSS_POOL_PER_DB: pgbouncer relay pool_size per database; concurrent queries of one call never exceed it
+POOL_PER_DB_MIN, POOL_PER_DB_MAX = 1, 4
 CACHE_MAX_ENTRIES = 256  # LRU cap (drilldown / finding_detail keys grow per uid and offset)
 CACHE_TTL_S = 300  # finished payloads are reused for 5 minutes (same tool, same normalised params, same IST day)
 FUNNEL_MIN_N = 50  # funnel inclusion (audited notes)
@@ -258,12 +260,22 @@ fetch_gov = _fetch_gov
 _SEMS: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
 
 
+def pool_per_db() -> int:
+    """CDMSS_POOL_PER_DB, default 2, clamped to 1..4. Production sets 4 ONLY after the relay's own pool is 4 (ops/ branch gov/p11-ops); a larger value
+    than the relay serves just queues behind pgbouncer, so the default stays the safe one. Unreadable values fall back to the default."""
+    try:
+        n = int(os.environ.get("CDMSS_POOL_PER_DB", POOL_PER_DB))
+    except ValueError:
+        n = POOL_PER_DB
+    return max(POOL_PER_DB_MIN, min(POOL_PER_DB_MAX, n))
+
+
 def _semaphores() -> dict:
     """One semaphore per database per event loop (a loop is the process in production; tests use a loop each)."""
     loop = asyncio.get_running_loop()
     sems = _SEMS.get(loop)
     if sems is None:
-        sems = _SEMS[loop] = {"cdmss": asyncio.Semaphore(POOL_PER_DB), "gov": asyncio.Semaphore(POOL_PER_DB)}
+        sems = _SEMS[loop] = {"cdmss": asyncio.Semaphore(pool_per_db()), "gov": asyncio.Semaphore(pool_per_db())}
     return sems
 
 
@@ -728,6 +740,9 @@ class Dataset:
         return g
 
 
+# Live evidence (gov-orch, 23 Oct 10:47 UTC, prod, governance-linked doctors with one site and one key): vZmEPseTKP3vS3DrZzrv -> EHRC 109/109,
+# F8jrPHlVTWsvNtB1Iz0k -> EHBR 6/6; dw_doctors.uid matched all 160 governance cdmss_doctor_uid values (uid equivalence verified live). The constant
+# below stays EMPTY on purpose: the runtime derivation decides (it would accept both keys on that evidence), and a drift WARNING tells ops when to pin it.
 # KX hospital id -> site code, DERIVED from the data and never guessed: over doctors linked in governance with exactly one site AND exactly one KX key,
 # a key maps to a site only when >= 90% of those doctors agree and there are >= 3 of them. This constant is the last derived map; the same bar is
 # re-run on every directory load (derive_kx_map) and a WARNING is logged when the two differ. The builder had no live access, so it starts EMPTY:
@@ -795,6 +810,50 @@ def apply_kx_sites(docs: dict, kx_rows: list, kxmap: dict) -> None:
 
 
 async def load_directory(run: Run) -> dict:
+    """The doctor directory with sites resolved (governance, then KX). Cached per IST day for CACHE_TTL_S in the view cache (same LRU), with
+    single-flight; every caller gets its own copy because fill_names and the views add to it. Refusals and views therefore share one read."""
+    key = ("directory", run.today.isoformat())
+    run.sources.extend(x for x in DIRECTORY_SOURCES if x not in run.sources)
+    hit = _cache.get(key)
+    if hit and time.monotonic() - hit[0] < CACHE_TTL_S:
+        _cache.move_to_end(key)
+        return _copy_docs(hit[2])
+    fut = _inflight.get(key)
+    if fut is not None:
+        try:
+            return _copy_docs(await asyncio.shield(fut))
+        except asyncio.CancelledError:
+            if fut.cancelled():  # the leader's client gave up, not this one: read it ourselves
+                return await _load_directory(run)
+            raise
+    fut = asyncio.get_running_loop().create_future()
+    _inflight[key] = fut
+    try:
+        docs = await _load_directory(run)
+        _cache_put(key, (time.monotonic(), dt.datetime.now(KOLKATA).isoformat(timespec="seconds"), docs))
+        if not fut.done():
+            fut.set_result(docs)
+        return _copy_docs(docs)
+    except BaseException as exc:
+        if not fut.done():
+            if isinstance(exc, asyncio.CancelledError):
+                fut.cancel()
+            else:
+                fut.set_exception(exc)
+                fut.exception()
+        raise
+    finally:
+        _inflight.pop(key, None)
+
+
+DIRECTORY_SOURCES = ("governance DB: physicians, physician_engagements, hospitals", "studio_ro.dw_doctors (KX hospital ids) + governance engagements")
+
+
+def _copy_docs(docs: dict) -> dict:
+    return {k: dataclasses.replace(v) for k, v in docs.items()}
+
+
+async def _load_directory(run: Run) -> dict:
     rows, kx_rows = await gather_all(
         run.q("gov", DIRECTORY_SQL, {}, "governance DB: physicians, physician_engagements, hospitals"),
         run.q("gov", KX_SQL, {}, "studio_ro.dw_doctors (KX hospital ids) + governance engagements"),
