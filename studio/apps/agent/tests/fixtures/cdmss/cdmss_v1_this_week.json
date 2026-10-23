@@ -114,7 +114,7 @@
   }
  ],
  "source": {
-  "query_hash": "76ee4424f878",
+  "query_hash": "ff79fef74bc2",
   "tool": "cdmss_v1_this_week"
  },
  "synthetic": true,
@@ -125,7 +125,8 @@
     "The score is an encounter proxy, not a clinician scorecard.",
     "Notes where PDQI-9 was not assessed score 0 on note quality, which raises the index, so full NQI is shown over assessed notes only.",
     "Underuse findings carry zero penalty.",
-    "OPD site is the doctor's home site (governance DB engagement), not where the note was written.",
+    "OPD site is the doctor's home site (governance engagement, else KX hospital ids), not where the note was written.",
+    "Site from governance for 5 doctors, from KX hospital ids for 0, none for 0; 100% of notes have a site.",
     "Notes newer than DB13 as of 2026-10-22T22:30:00+05:30 are not in the extract and are excluded from the per-1,000-Rx metrics (and the other DB13-based figures).",
     "Domain scores are assumed to be on the same 0-100 scale as the NQI.",
     "A lower bound: only what the audit caught. ICD code set UNVERIFIED.",
@@ -145,12 +146,14 @@
      "702bdfe8382b",
      "3267c3a82a63",
      "c5158c604742",
+     "922008a59fb3",
      "d42709a40ade",
      "47b496568017"
     ],
     "sources": [
      "cdmss_ro.opd_note_audit",
      "governance DB: physicians, physician_engagements, hospitals",
+     "studio_ro.dw_doctors (KX hospital ids) + governance engagements",
      "studio_ro.dw_individuals_prescriptions",
      "studio_ro.dw_extract_status"
     ],

@@ -50,7 +50,7 @@ from src.studio_checkpoint import dev_checkpointer, postgres_checkpointer
 from src.studio_db import connect_studio, studio_db_configured
 from src.studio_logging import configure_logging
 from src.studio_screen import MAX_AUDIT_BODY_BYTES, MAX_BODY_BYTES, record_http_audit, run_screen_tool
-from src.studio_cdmss_tools import CDMSS_TOOLS
+from src.studio_cdmss_tools import CDMSS_TOOLS, start_prewarm, stop_prewarm
 from src.studio_docaudit_tools import DOCAUDIT_TOOLS
 from src.studio_tools import GOVERNANCE_TOOLS, ROLES_KEY, STAFF_KEY, RoleToolGate, ToolErrorToResult
 from src.model import build_model
@@ -100,12 +100,16 @@ agent = build_agent(dev_checkpointer())
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    if not studio_db_configured():
-        yield
-        return
-    async with postgres_checkpointer() as saver:
-        app.state.studio_agent = build_ag_ui_agent(build_agent(saver))
-        yield
+    prewarm = start_prewarm()  # None unless CDMSS_PREWARM=1; one background task, stopped below
+    try:
+        if not studio_db_configured():
+            yield
+            return
+        async with postgres_checkpointer() as saver:
+            app.state.studio_agent = build_ag_ui_agent(build_agent(saver))
+            yield
+    finally:
+        await stop_prewarm(prewarm)
 
 
 # No docs/openapi: the surface is POST /agent, GET /agent/health and POST /agent/tools/{name} (screen reads) and POST /agent/audit (app-side HTTP reads).

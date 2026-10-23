@@ -382,12 +382,17 @@ async def test_cache_hit_runs_no_query_says_cached_at_and_is_audited_as_one_cach
     assert len(calls) > ran
 
 
+def vk():
+    """The view-payload keys of the shared cache (the doctor directory lives in the same LRU under a ("directory", day) key)."""
+    return [k for k in ct._cache if k[0] != "directory"]
+
+
 @pytest.mark.anyio
 async def test_cache_expires_after_300_seconds_and_a_failed_run_is_not_cached(stub, monkeypatch):
     calls, audits = stub
     await _run("cdmss_v3_doctor_variation", {})
     n = len(calls)
-    key = next(iter(ct._cache))
+    key = vk()[0]
     at, iso, payload = ct._cache[key]
     ct._cache[key] = (at - ct.CACHE_TTL_S - 1, iso, payload)
     await _run("cdmss_v3_doctor_variation", {})
@@ -400,7 +405,7 @@ async def test_cache_expires_after_300_seconds_and_a_failed_run_is_not_cached(st
     monkeypatch.setattr(ct, "fetch_cdmss", boom)
     with pytest.raises(ToolError):
         await _run("cdmss_v1_this_week", {})
-    assert not ct._cache and not ct._inflight
+    assert not vk() and not ct._inflight
 
 
 @pytest.mark.anyio
@@ -473,20 +478,20 @@ async def test_a_failing_query_cancels_its_siblings(stub, monkeypatch):
 
 @pytest.mark.anyio
 async def test_cache_is_lru_capped_and_purges_expired_entries(stub, monkeypatch):
-    monkeypatch.setattr(ct, "CACHE_MAX_ENTRIES", 3)
+    monkeypatch.setattr(ct, "CACHE_MAX_ENTRIES", 4)  # three view payloads + the shared directory entry (same LRU)
     for d in (7, 14, 21, 28, 35):
         await _run("cdmss_v1_this_week", {"window_days": d})
-    assert len(ct._cache) == 3
-    kept = [json.loads(k[2])["window_days"] for k in ct._cache]
+    assert len(ct._cache) == 4 and len(vk()) == 3
+    kept = [json.loads(k[2])["window_days"] for k in vk()]
     assert kept == [21, 28, 35]  # least recently used went first
     await _run("cdmss_v1_this_week", {"window_days": 21})  # a hit refreshes recency
     await _run("cdmss_v1_this_week", {"window_days": 42})
-    assert [json.loads(k[2])["window_days"] for k in ct._cache] == [35, 21, 42]  # 28 was the least recently used
-    old = next(iter(ct._cache))
+    assert [json.loads(k[2])["window_days"] for k in vk()] == [35, 21, 42]  # 28 was the least recently used
+    old = vk()[0]
     at, iso, payload = ct._cache[old]
     ct._cache[old] = (at - ct.CACHE_TTL_S - 1, iso, payload)
     await _run("cdmss_v1_this_week", {"window_days": 49})
-    assert old not in ct._cache and len(ct._cache) <= 3
+    assert old not in ct._cache and len(vk()) <= 3
 
 
 @pytest.mark.anyio

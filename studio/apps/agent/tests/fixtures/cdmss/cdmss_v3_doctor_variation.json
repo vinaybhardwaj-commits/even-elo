@@ -70,7 +70,7 @@
   }
  ],
  "source": {
-  "query_hash": "fb38d90e7159",
+  "query_hash": "c44eecdc971e",
   "tool": "cdmss_v3_doctor_variation"
  },
  "synthetic": true,
@@ -341,7 +341,8 @@
   "envelope": {
    "action_line": "Site medical heads: no doctor is beyond the 99.8% limit; read the ranked list for the widest intervals.",
    "caveats": [
-    "OPD site is the doctor's home site (governance DB engagement), not where the note was written.",
+    "OPD site is the doctor's home site (governance engagement, else KX hospital ids), not where the note was written.",
+    "Site from governance for 5 doctors, from KX hospital ids for 0, none for 0; 100% of notes have a site.",
     "Variation between doctors reflects case mix and documentation habits as well as quality; a position beyond a limit is a prompt to look, not a verdict.",
     "Funnel limits are plain binomial around the pooled rate (no overdispersion adjustment)."
    ],
@@ -357,11 +358,13 @@
     "generated_at": "2026-10-23T12:00:00+05:30",
     "query_hashes": [
      "702bdfe8382b",
-     "c5158c604742"
+     "c5158c604742",
+     "922008a59fb3"
     ],
     "sources": [
      "cdmss_ro.opd_note_audit",
-     "governance DB: physicians, physician_engagements, hospitals"
+     "governance DB: physicians, physician_engagements, hospitals",
+     "studio_ro.dw_doctors (KX hospital ids) + governance engagements"
     ],
     "window": {
      "anchor": "today (IST calendar days, inclusive)",

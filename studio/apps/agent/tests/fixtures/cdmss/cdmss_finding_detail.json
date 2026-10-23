@@ -34,7 +34,7 @@
   }
  ],
  "source": {
-  "query_hash": "d6e7c3ee305c",
+  "query_hash": "9a27c92912fb",
   "tool": "cdmss_finding_detail"
  },
  "synthetic": true,
@@ -61,12 +61,14 @@
     "query_hashes": [
      "50818cac20b1",
      "f5c233830e78",
-     "c5158c604742"
+     "c5158c604742",
+     "922008a59fb3"
     ],
     "sources": [
      "cdmss_ro.opd_note_audit",
      "cdmss_ro.opd_finding",
-     "governance DB: physicians, physician_engagements, hospitals"
+     "governance DB: physicians, physician_engagements, hospitals",
+     "studio_ro.dw_doctors (KX hospital ids) + governance engagements"
     ],
     "window": {
      "anchor": "today (IST calendar days, inclusive)",
@@ -80,7 +82,7 @@
   },
   "findings": [
    {
-    "audit_id": "4734dbbc-4092-4f8b-8dad-69a03f0465bc",
+    "audit_id": "3c611fb7-1a40-4bb2-9fc7-76e8c296ed4a",
     "case": {
      "family": "opd",
      "uid": "D1-L-01",
@@ -105,7 +107,7 @@
     "verdict": "low-value"
    },
    {
-    "audit_id": "4734dbbc-4092-4f8b-8dad-69a03f0465bc",
+    "audit_id": "3c611fb7-1a40-4bb2-9fc7-76e8c296ed4a",
     "case": {
      "family": "opd",
      "uid": "D1-L-01",
@@ -131,7 +133,7 @@
    }
   ],
   "note": {
-   "audit_id": "4734dbbc-4092-4f8b-8dad-69a03f0465bc",
+   "audit_id": "3c611fb7-1a40-4bb2-9fc7-76e8c296ed4a",
    "doctor_name": "Dr One",
    "doctor_uid": "D1",
    "engine_version": "opd-note-audit/0.81.21",

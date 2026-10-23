@@ -12,6 +12,8 @@ def _clean_studio_env(monkeypatch):
         "STUDIO_ACTOR_SECRET",
         "STUDIO_RATE_PER_MIN",
         "STUDIO_LOG_LEVEL",
+        "CDMSS_PREWARM",
+        "CDMSS_POOL_PER_DB",
     ):
         monkeypatch.delenv(name, raising=False)
 

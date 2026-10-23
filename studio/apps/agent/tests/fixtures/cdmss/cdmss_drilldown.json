@@ -136,7 +136,7 @@
   }
  ],
  "source": {
-  "query_hash": "aa12a735a91f",
+  "query_hash": "58180be23889",
   "tool": "cdmss_drilldown"
  },
  "synthetic": true,
@@ -157,11 +157,13 @@
     "generated_at": "2026-10-23T12:00:00+05:30",
     "query_hashes": [
      "c5158c604742",
+     "922008a59fb3",
      "2b42f064a44a",
      "e796cd511243"
     ],
     "sources": [
      "governance DB: physicians, physician_engagements, hospitals",
+     "studio_ro.dw_doctors (KX hospital ids) + governance engagements",
      "cdmss_ro.opd_finding",
      "cdmss_ro.opd_note_audit"
     ],

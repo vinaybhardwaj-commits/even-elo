@@ -186,7 +186,8 @@ export function TrendLines({ data, metricId }: { data: Scorecard; metricId: stri
   const series = data.trend.filter((t) => t.metric_id === metricId);
   const weeks = Array.from(new Set(series.flatMap((s) => s.points.map((p) => p.week_to)))).sort();
   const vals = series.flatMap((s) => s.points.map((p) => p.value).filter((v): v is number => v !== null));
-  if (!weeks.length || !vals.length) return <p className="scr-muted">No trend data.</p>;
+  if (!series.length) return <p className="scr-muted" data-testid="no-trend">Trend not available for this metric.</p>;
+  if (!weeks.length || !vals.length) return <p className="scr-muted">No trend data in this window.</p>;
   const lo = Math.min(...vals), hi = Math.max(...vals), span = hi - lo || 1;
   const W = 480, H = 160, P = 28;
   const x = (w: string) => P + (weeks.length === 1 ? 0 : (weeks.indexOf(w) * (W - 2 * P)) / (weeks.length - 1));

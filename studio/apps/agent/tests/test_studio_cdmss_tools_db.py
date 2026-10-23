@@ -101,6 +101,7 @@ CREATE TABLE physician_engagements (physician_id int, hospital_id int, status te
 CREATE TABLE studio_ro.dw_individuals_prescriptions (uid text, doctor_uid text, "timestamp" timestamptz, is_draft boolean, medications jsonb,
   further_investigation jsonb, diagnosis_icd_codes text[], impression_icd_codes text[]);
 CREATE TABLE studio_ro.dw_extract_status (status text, db13_snapshot_now timestamptz);
+CREATE TABLE studio_ro.dw_doctors (uid text, karexpert_metadata__practitioner_id_by_hospital jsonb);
 INSERT INTO hospitals VALUES (1, 'SITEA'), (2, 'SITEB');
 INSERT INTO physicians VALUES (1,'Dr One','Medicine','D1'),(2,'Dr Two','Medicine','D2'),(3,'Dr Three','Surgery','D3'),(4,'Dr Four','Surgery','D4'),(5,'Dr Five','Medicine','D5'),(6,'Dr Six','Medicine','D6');
 INSERT INTO physician_engagements VALUES (1,1,'active'),(2,1,'active'),(3,2,'active'),(4,2,'active'),(5,1,'active'),(6,1,'active'),(6,2,'active'),(2,2,'terminated');

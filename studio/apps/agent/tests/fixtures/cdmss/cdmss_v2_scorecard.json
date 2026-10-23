@@ -180,7 +180,7 @@
   }
  ],
  "source": {
-  "query_hash": "08e14b7b7d5f",
+  "query_hash": "6a5b78d2da11",
   "tool": "cdmss_v2_scorecard"
  },
  "synthetic": true,
@@ -724,7 +724,8 @@
     "The score is an encounter proxy, not a clinician scorecard.",
     "Notes where PDQI-9 was not assessed score 0 on note quality, which raises the index, so full NQI is shown over assessed notes only.",
     "Underuse findings carry zero penalty.",
-    "OPD site is the doctor's home site (governance DB engagement), not where the note was written.",
+    "OPD site is the doctor's home site (governance engagement, else KX hospital ids), not where the note was written.",
+    "Site from governance for 5 doctors, from KX hospital ids for 0, none for 0; 100% of notes have a site.",
     "Domain scores are assumed to be on the same 0-100 scale as the NQI."
    ],
    "headline": {
@@ -739,11 +740,13 @@
     "generated_at": "2026-10-23T12:00:00+05:30",
     "query_hashes": [
      "c5158c604742",
+     "922008a59fb3",
      "702bdfe8382b",
      "65e51ebb14e0"
     ],
     "sources": [
      "governance DB: physicians, physician_engagements, hospitals",
+     "studio_ro.dw_doctors (KX hospital ids) + governance engagements",
      "cdmss_ro.opd_note_audit"
     ],
     "window": {
@@ -2845,6 +2848,21 @@
   ],
   "site_basis": "doctor_home_site",
   "site_comparison": {
+   "basis": {
+    "governance": {
+     "doctors": 5,
+     "notes": 175
+    },
+    "kx": {
+     "doctors": 0,
+     "notes": 0
+    },
+    "none": {
+     "doctors": 0,
+     "notes": 0
+    }
+   },
+   "basis_caption": "Site from governance for 5 doctors, from KX hospital ids for 0, none for 0; 100% of notes have a site.",
    "caption": null,
    "coverage": 1.0,
    "min_coverage": 0.9,
