@@ -201,6 +201,11 @@ describe("behaviour", () => {
     expect(await screen.findByTestId("site-withheld")).toHaveTextContent("Site comparison withheld: 13% of notes have no site (doctor home-site mapping). Fix pending.");
     expect(screen.queryByLabelText("Site")).toBeNull();
     expect(screen.getByRole("table", { name: "Site scorecard" }).querySelectorAll("thead th")).toHaveLength(2);
+    // T1: the hospital-wide trend still draws while the per-site lines are withheld
+    expect(screen.queryByText("No trend data.")).toBeNull();
+    const lines = document.querySelectorAll("polyline[data-site]");
+    expect(lines.length).toBeGreaterThan(0);
+    for (const l of Array.from(lines)) expect(l.getAttribute("data-site")).toBe("ALL");
   });
   it("site comparison withheld: V4 shows the caption and the hospital-wide figure, no contributor table", async () => {
     const v4 = JSON.parse(JSON.stringify(FIXTURES.contributors));

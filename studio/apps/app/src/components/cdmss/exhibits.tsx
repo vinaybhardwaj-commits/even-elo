@@ -182,7 +182,8 @@ export function ScorecardMatrix({ data }: { data: Scorecard }) {
 
 /** Trend lines, one per site, fixed colours. */
 export function TrendLines({ data, metricId }: { data: Scorecard; metricId: string }) {
-  const series = data.trend.filter((t) => t.metric_id === metricId && t.site !== "ALL");
+  // The hospital-wide (ALL) line always draws; while site comparison is withheld it is the only line.
+  const series = data.trend.filter((t) => t.metric_id === metricId);
   const weeks = Array.from(new Set(series.flatMap((s) => s.points.map((p) => p.week_to)))).sort();
   const vals = series.flatMap((s) => s.points.map((p) => p.value).filter((v): v is number => v !== null));
   if (!weeks.length || !vals.length) return <p className="scr-muted">No trend data.</p>;

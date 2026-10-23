@@ -353,6 +353,8 @@ def test_plain_rate_gloss_for_per_100_and_per_1000():
     assert ct.plain_rate(80.63, 100, "notes") == "about 81 in every 100 notes"
     assert ct.plain_rate(49.6, 1000, "prescriptions") == "about 50 in every 1,000 prescriptions"
     assert ct.plain_rate(None, 100, "notes") is None
+    # findings per 100 notes is not a share and can pass 100
+    assert ct.plain_findings_per_100(80.63) == "about 81 findings per 100 notes" and ct.plain_findings_per_100(142.0) == "about 142 findings per 100 notes" and ct.plain_findings_per_100(None) is None
 
 
 # --- result cache, single-flight, concurrency ----------------------------------------------------------------
@@ -467,3 +469,67 @@ async def test_a_failing_query_cancels_its_siblings(stub, monkeypatch):
         await _run("cdmss_v1_this_week", {})
     await asyncio.sleep(0.3)
     assert finished == []  # the sibling read was cancelled, not left running and auditing
+
+
+@pytest.mark.anyio
+async def test_cache_is_lru_capped_and_purges_expired_entries(stub, monkeypatch):
+    monkeypatch.setattr(ct, "CACHE_MAX_ENTRIES", 3)
+    for d in (7, 14, 21, 28, 35):
+        await _run("cdmss_v1_this_week", {"window_days": d})
+    assert len(ct._cache) == 3
+    kept = [json.loads(k[2])["window_days"] for k in ct._cache]
+    assert kept == [21, 28, 35]  # least recently used went first
+    await _run("cdmss_v1_this_week", {"window_days": 21})  # a hit refreshes recency
+    await _run("cdmss_v1_this_week", {"window_days": 42})
+    assert [json.loads(k[2])["window_days"] for k in ct._cache] == [35, 21, 42]  # 28 was the least recently used
+    old = next(iter(ct._cache))
+    at, iso, payload = ct._cache[old]
+    ct._cache[old] = (at - ct.CACHE_TTL_S - 1, iso, payload)
+    await _run("cdmss_v1_this_week", {"window_days": 49})
+    assert old not in ct._cache and len(ct._cache) <= 3
+
+
+@pytest.mark.anyio
+async def test_the_pool_limit_is_shared_by_concurrent_calls(stub, monkeypatch):
+    import asyncio
+
+    live = {"cdmss": 0, "gov": 0}
+    peak = {"cdmss": 0, "gov": 0}
+
+    def make(db):
+        async def f(sql, params):
+            live[db] += 1
+            peak[db] = max(peak[db], live[db])
+            await asyncio.sleep(0.02)
+            live[db] -= 1
+            return []
+        return f
+
+    monkeypatch.setattr(ct, "fetch_cdmss", make("cdmss"))
+    monkeypatch.setattr(ct, "fetch_gov", make("gov"))
+    await asyncio.gather(*[_run("cdmss_v2_scorecard", {"window_days": d}) for d in (7, 14, 21, 28)])  # four different calls at once
+    assert all(v <= ct.POOL_PER_DB for v in peak.values()), peak
+
+
+@pytest.mark.anyio
+async def test_v2_failure_cancels_the_shared_directory_read(stub, monkeypatch):
+    import asyncio
+
+    finished = []
+
+    async def gov(sql, params):
+        await asyncio.sleep(0.2)
+        finished.append("gov")
+        return []
+
+    async def cdmss(sql, params):
+        raise RuntimeError("down")
+
+    monkeypatch.setattr(ct, "fetch_gov", gov)
+    monkeypatch.setattr(ct, "fetch_cdmss", cdmss)
+    calls, audits = stub
+    with pytest.raises(ToolError):
+        await _run("cdmss_v2_scorecard", {})
+    n = len(audits)
+    await asyncio.sleep(0.3)
+    assert finished == [] and len(audits) == n  # the directory read did not finish and audit after the call had failed

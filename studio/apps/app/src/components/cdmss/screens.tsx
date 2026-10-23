@@ -107,7 +107,7 @@ export function ScorecardScreen() {
               <EnvelopeBlock env={d.view.envelope} />
               <SiteWithheld sc={d.view.site_comparison} />
               <section className="scr-card" aria-label="Site scorecard"><ScorecardMatrix data={d.view} /></section>
-              {d.view.metrics.map((m) => (
+              {d.view.metrics.filter((m) => d.view.trend.some((t) => t.metric_id === m.metric_id)).map((m) => (
                 <section key={m.metric_id} className="scr-card" aria-label={`Trend ${m.label}`}>
                   <h3>{m.label}: weekly trend</h3>
                   <TrendLines data={d.view} metricId={m.metric_id} />
@@ -165,12 +165,14 @@ export function ContributorsScreen() {
   const state = useCdmssView("contributors", params);
   useCdmssContext("contributors", params ?? { window_days }, state.status, state.status === "ok" ? state.data.source.query_hash : null);
   const own = useSites(state);
+  // Withheld is known from the V2 read as soon as it lands, before V4 answers: the picker is gone in both cases.
+  const withheld = (state.status === "ok" && state.data.view.site_comparison?.withheld) || (siteRead.status === "ok" && siteRead.data.view.site_comparison?.withheld);
   const sites = own.length ? own : known;
   return (
     <ScreenFrame title="CDMSS · Contributors">
       <ViewTabs current="contributors" />
       <form className="scr-filters scr-form" onSubmit={(e) => e.preventDefault()}>
-        {!(state.status === "ok" && state.data.view.site_comparison?.withheld) && <SitePicker sites={sites} value={site} all={false} onChange={setPicked} />}
+        {!withheld && <SitePicker sites={sites} value={site} all={false} onChange={setPicked} />}
         <Select label="Window" value={window_days} options={WINDOWS.map((d) => [d, `${d} days`] as [number, string])} onChange={setWindow} />
       </form>
       {params === null && siteRead.status === "error" && <ViewState state={siteRead} retry={siteRead.retry}>{() => null}</ViewState>}

@@ -147,7 +147,7 @@
   }
  ],
  "source": {
-  "query_hash": "7c7f233339b9",
+  "query_hash": "aa12a735a91f",
   "tool": "cdmss_v8_worklists"
  },
  "synthetic": true,
@@ -219,17 +219,19 @@
    },
    "precision_line": "About 1 in 5 findings are wrong or contested (engine precision; the catalogue has no family-specific figure).",
    "provenance": {
-    "data_cutoff": null,
+    "data_cutoff": "2026-10-23T06:45:00+05:30",
     "db13_as_of": null,
     "engine_family": "opd-note-audit/0.81.3+ (derived by shape in cdmss_ro.opd_note_audit)",
     "generated_at": "2026-10-23T12:00:00+05:30",
     "query_hashes": [
      "c5158c604742",
-     "2b42f064a44a"
+     "2b42f064a44a",
+     "e796cd511243"
     ],
     "sources": [
      "governance DB: physicians, physician_engagements, hospitals",
-     "cdmss_ro.opd_finding"
+     "cdmss_ro.opd_finding",
+     "cdmss_ro.opd_note_audit"
     ],
     "window": {
      "anchor": "today (IST calendar days, inclusive)",

@@ -13,7 +13,7 @@ import pytest
 from psycopg.rows import dict_row
 
 from src import studio_audit, studio_cdmss_tools as ct, studio_tools
-from src.studio_tools import STAFF_KEY, assert_read_only
+from src.studio_tools import STAFF_KEY, ToolError, assert_read_only
 from tests.cdmss_harness import ROLE, cdmss, needs_env  # noqa: F401  (fixture)
 
 pytestmark = needs_env
@@ -733,3 +733,73 @@ async def test_site_comparison_is_withheld_below_90_percent_coverage_but_hospita
 
 def test_site_comparison_threshold_constant_is_90_percent():
     assert ct.SITE_COMPARISON_MIN_COVERAGE == 0.90
+
+
+@pytest.mark.anyio
+async def test_h1_site_filters_are_refused_while_withheld_and_work_when_shown(world, cdmss):
+    c = cdmss
+    caption = "Site comparison withheld: 13% of notes have no site (doctor home-site mapping). Fix pending."
+    for i in range(1, 21):  # 87.1% coverage
+        add_note(c, f"D6-H1-{i:02d}", "D6", findings=[f("lvx")])
+    try:
+        # the refuter's probe: two site-filtered calls must not rebuild a comparison
+        for name, args in (
+            ("cdmss_metric", {"metric_id": "M-OPD-05b", "window_days": 7, "site": "SITEA"}),
+            ("cdmss_metric", {"metric_id": "M-OPD-05b", "window_days": 7, "site": "SITEB"}),
+            ("cdmss_drilldown", {"metric_id": "M-OPD-05", "window_days": 7, "site": "SITEA"}),
+            ("cdmss_v3_doctor_variation", {"window_days": 7, "site": "SITEA"}),
+            ("cdmss_v5_redflags", {"window_days": 7, "site": "SITEA"}),
+            ("cdmss_v8_worklists", {"list": "low_value_findings", "window_days": 7, "site": "SITEA"}),
+            ("cdmss_v8_worklists", {"list": "signals_open", "window_days": 7, "site": "SITEB"}),
+        ):
+            with pytest.raises(ToolError) as e:
+                await call(name, args)
+            assert str(e.value) == caption, name
+        # no site filter: everything still answers
+        for name, args in (("cdmss_metric", {"metric_id": "M-OPD-05b", "window_days": 7}), ("cdmss_v3_doctor_variation", {"window_days": 7}), ("cdmss_v5_redflags", {"window_days": 7}),
+                           ("cdmss_v8_worklists", {"list": "low_value_findings", "window_days": 7}), ("cdmss_drilldown", {"metric_id": "M-OPD-05", "window_days": 7})):
+            assert (await call(name, args))["view"]["envelope"]
+        # L5: no per-site counts in the picker lists while withheld
+        v2 = (await call("cdmss_v2_scorecard", {"window_days": 7}))["view"]
+        v4 = (await call("cdmss_v4_contributors", {"site": "SITEA", "window_days": 7}))["view"]
+        assert [x["code"] for x in v2["sites"]] == ["ALL"] and [x["code"] for x in v4["sites"]] == ["ALL"]
+    finally:
+        drop_notes(c, "D6-H1-")
+    # shown (all placed): the same site filters answer
+    v = (await call("cdmss_metric", {"metric_id": "M-OPD-05b", "window_days": 7, "site": "SITEA"}))["view"]
+    assert v["groups"][0]["stat"]["status"] == "ok"
+    assert (await call("cdmss_v5_redflags", {"window_days": 7, "site": "SITEA"}))["view"]["envelope"]
+
+
+@pytest.mark.anyio
+async def test_t2_signal_and_finding_views_carry_a_data_cutoff(world):
+    cut = lambda b: b["view"]["envelope"]["provenance"]["data_cutoff"]  # noqa: E731
+    for name, args in (
+        ("cdmss_v5_redflags", {"window_days": 7}),
+        ("cdmss_v8_worklists", {"list": "low_value_findings", "window_days": 7}),
+        ("cdmss_v8_worklists", {"list": "missing_pdqi", "window_days": 7}),
+        ("cdmss_v8_worklists", {"list": "signals_open", "window_days": 7}),
+        ("cdmss_drilldown", {"metric_id": "M-OPD-05", "window_days": 7}),
+        ("cdmss_drilldown", {"metric_id": "M-OPD-01", "window_days": 7}),
+    ):
+        b = await call(name, args)
+        assert cut(b) is not None, (name, args)
+    # the note-based reads agree with the aggregate views: the newest audited_at in the window
+    # V5 reads signals as well as findings: the cut-off is the newest of everything read, so it is at least the newest note audit
+    assert instant(cut(await call("cdmss_v5_redflags", {"window_days": 7}))) >= instant("2026-10-23T01:15:00Z")
+    assert instant(cut(await call("cdmss_v8_worklists", {"list": "low_value_findings", "window_days": 7}))) == instant("2026-10-23T01:15:00Z")
+
+
+@pytest.mark.anyio
+async def test_t1_hospital_wide_trend_survives_the_withholding(world, cdmss):
+    c = cdmss
+    for i in range(1, 21):
+        add_note(c, f"D6-T1-{i:02d}", "D6", findings=[f("lvx")])
+    try:
+        v2 = (await call("cdmss_v2_scorecard", {"window_days": 28}))["view"]
+        assert v2["site_comparison"]["withheld"] is True
+        assert {t["site"] for t in v2["trend"]} == {"ALL"} and {t["metric_id"] for t in v2["trend"]} >= {"M-OPD-01"}
+        pts = next(t for t in v2["trend"] if t["metric_id"] == "M-OPD-01")["points"]
+        assert len(pts) == 4 and any(p["value"] is not None for p in pts)
+    finally:
+        drop_notes(c, "D6-T1-")

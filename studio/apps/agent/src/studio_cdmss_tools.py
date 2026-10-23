@@ -25,6 +25,8 @@ import math
 import os
 import re
 import time
+import weakref
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Literal, Optional
 
@@ -44,6 +46,7 @@ DOCTOR_MIN_N = 10  # doctor rows
 GROUP_MIN_N = 15  # site / specialty groups
 SITE_COMPARISON_MIN_COVERAGE = 0.90  # share of window notes whose doctor has exactly one home site; below it every site comparison is withheld (ruling, 23 Oct)
 POOL_PER_DB = 2  # pgbouncer relay pool_size per database: concurrent queries of one call never exceed it
+CACHE_MAX_ENTRIES = 256  # LRU cap (drilldown / finding_detail keys grow per uid and offset)
 CACHE_TTL_S = 300  # finished payloads are reused for 5 minutes (same tool, same normalised params, same IST day)
 FUNNEL_MIN_N = 50  # funnel inclusion (audited notes)
 COVERAGE_GREY_PCT = 50.0
@@ -177,6 +180,11 @@ def plain_rate(v: Optional[float], per: int, noun: str) -> Optional[str]:
     return f"about {v:,.0f} in every {per:,} {noun}"
 
 
+def plain_findings_per_100(v: Optional[float]) -> Optional[str]:
+    """Findings per 100 notes can exceed 100 and is not a share: 80.63 -> 'about 81 findings per 100 notes'."""
+    return None if v is None else f"about {v:,.0f} findings per 100 notes"
+
+
 def plain_in_ten(p: Optional[float]) -> Optional[str]:
     """p as a fraction 0-1 -> 'about 3 in 10'."""
     if p is None:
@@ -246,6 +254,18 @@ fetch_cdmss = _fetch_cdmss
 fetch_gov = _fetch_gov
 
 
+_SEMS: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+
+
+def _semaphores() -> dict:
+    """One semaphore per database per event loop (a loop is the process in production; tests use a loop each)."""
+    loop = asyncio.get_running_loop()
+    sems = _SEMS.get(loop)
+    if sems is None:
+        sems = _SEMS[loop] = {"cdmss": asyncio.Semaphore(POOL_PER_DB), "gov": asyncio.Semaphore(POOL_PER_DB)}
+    return sems
+
+
 async def gather_all(*coros: Awaitable) -> list:
     """asyncio.gather that does not leave siblings running (and auditing) after one fails: they are cancelled and awaited."""
     tasks = [asyncio.ensure_future(c) for c in coros]
@@ -275,8 +295,8 @@ class Run:
         self.versions: set[str] = set()
         self.db13_as_of: Optional[str] = None
         self.incomplete: list[str] = []
-        # Independent queries of one view run together (asyncio.gather) but never more than the relay pool can serve (pool_size 2 per DB).
-        self._sem = {"cdmss": asyncio.Semaphore(POOL_PER_DB), "gov": asyncio.Semaphore(POOL_PER_DB)}
+        # Independent queries run together but never more than the relay pool can serve: the limit is process-wide (all concurrent calls share it).
+        self._sem = _semaphores()
 
     async def audit_cache(self) -> None:
         """A cache hit (or a shared single-flight result) is audited too: one row, no query, row_count 0. The table's CHECK only allows
@@ -460,7 +480,7 @@ LIMIT 5000
 
 SIGNALS_SQL = """
 SELECT s.signal_id::text AS signal_id, s.reference, s.doctor_uid, s.signal_type, s.importance, COALESCE(s.status, 'routed') AS status,
-       s.response_required, s.window_from, s.window_to, s.sla_due_at, s.created_at,
+       s.response_required, s.window_from, s.window_to, s.sla_due_at, s.created_at, s.updated_at,
        (s.sla_due_at IS NOT NULL AND s.sla_due_at < now()) AS overdue,
        count(*) OVER () AS total_count
 FROM cdmss_ro.gov_signal s
@@ -471,6 +491,13 @@ WHERE s.app_source = %(app)s AND COALESCE(s.status, 'routed') NOT IN ('ruled', '
   AND (%(doctors)s::text[] IS NULL OR s.doctor_uid = ANY(%(doctors)s::text[]) OR (%(prefix)s::text IS NOT NULL AND starts_with(s.reference, %(prefix)s::text)))
 ORDER BY (s.sla_due_at IS NOT NULL AND s.sla_due_at < now()) DESC, s.created_at DESC, s.signal_id
 LIMIT %(limit)s OFFSET %(offset)s
+"""
+
+# Data cut-off for the signal / finding reads: the newest audit the window's notes carry (those reads return no audit timestamp of their own).
+NOTE_CUTOFF_SQL = """
+SELECT max(a.audited_at) AS cutoff
+FROM cdmss_ro.opd_note_audit a
+WHERE a.note_day_ist BETWEEN %(from)s AND %(to)s AND a.app_source = %(app)s
 """
 
 FINDING_COLS = """f.audit_id::text AS audit_id, f.uid, f.doctor_uid, f.note_day_ist::text AS note_day, f.finding_no, f.subject, f.domain, f.verdict,
@@ -550,6 +577,7 @@ ALL_SQL_TEXTS = {
     "signals": SIGNALS_SQL,
     "finding_detail": FINDING_DETAIL_SQL,
     "note_header": NOTE_HEADER_SQL,
+    "note_cutoff": NOTE_CUTOFF_SQL,
 }
 # The CDMSS views these tools touch (the role holds SELECT on exactly the cdmss_ro views).
 CDMSS_VIEWS = ("cdmss_ro.opd_note_audit", "cdmss_ro.opd_finding", "cdmss_ro.doctor_dim", "cdmss_ro.gov_signal")
@@ -942,7 +970,7 @@ def _metric_stat(mid: str, g: Group, ds: Dataset, kind: str = "group") -> dict:
                  "pct_ci95": None if ci is None else [100 * ci[0], 100 * ci[1]], "ci_method": "wilson"}
         return stat(mid, w, value=None if r is None else 100 * r, num=L.n_lv, den=L.n, n=L.n, kind=kind, extra=extra,
                     change=_change(ew, w, None if er is None else 100 * er, None if r is None else 100 * r, E.n, L.n, rate_change_p(E.n_lv, E.n, L.n_lv, L.n)),
-                    plain=plain_rate(None if r is None else 100 * r, 100, "notes"))
+                    plain=plain_findings_per_100(None if r is None else 100 * r))
     if mid == "M-OPD-05b":
         p, ep = _ratio(L.n_lv_notes, L.n), _ratio(E.n_lv_notes, E.n)
         ci = wilson(L.n_lv_notes, L.n)
@@ -1232,6 +1260,15 @@ def site_comparison(ds: Dataset) -> dict:
     return {"withheld": withheld, "coverage": round(cov, 4), "min_coverage": SITE_COMPARISON_MIN_COVERAGE, "notes": int(total), "notes_with_site": int(mapped), "caption": caption}
 
 
+async def refuse_site_filter_if_withheld(run: Run, days: int, site: Optional[str], ds: Optional["Dataset"] = None) -> None:
+    """While site comparison is withheld, a site FILTER is a comparison too (two filtered calls rebuild it): refuse it with the caption."""
+    if not site:
+        return
+    sc = site_comparison(ds if ds is not None else await load_dataset(run, days))
+    if sc["withheld"]:
+        raise ToolError(sc["caption"])
+
+
 def withheld_stat(st: dict, caption: str) -> dict:
     """A Stat reduced to its count: the figure and everything that gives it back (interval, numerator/denominator, change) is dropped."""
     out = {**st, "value": None, "numerator": None, "denominator": None, "ci95": None, "ci_method": "none", "change": None, "plain": None, "status": "count_only", "grey_reason": "site_coverage", "note": caption}
@@ -1298,16 +1335,18 @@ async def build_v2(run: Run, days: int, family: str, site_filter: Optional[str])
     metrics = SCORECARD_METRICS[family]
     # The window aggregate and the weekly trend aggregate are independent reads: run them together, sharing one directory read.
     directory = asyncio.ensure_future(load_directory(run))
+    # the directory task is one of the gathered jobs, so a failing sibling cancels it instead of leaving it to finish and audit
     if family == "opd":
-        ds, wds = await gather_all(load_dataset(run, days, directory=directory), load_dataset(run, days, weekly=True, directory=directory))
+        _, ds, wds = await gather_all(directory, load_dataset(run, days, directory=directory), load_dataset(run, days, weekly=True, directory=directory))
     else:
-        ds, wds = await load_dataset(run, days, need_rx=True, directory=directory), None
+        _, ds = await gather_all(directory, load_dataset(run, days, need_rx=True, directory=directory))
+        wds = None
     by_site = groups_by(ds, site_of(ds))
     allg = ds.group()
     sc = site_comparison(ds)
     # Withheld: only the hospital-wide ("ALL") row, trend and band mix are built; no site is compared with another.
     sites = ["ALL"] if sc["withheld"] else ["ALL", *sorted(s for s in by_site if site_filter is None or s == site_filter)]
-    site_list = [{"code": "ALL", "label": "All sites", "n": int(allg.late.n)}] + [{"code": k, "label": k, "n": int(by_site[k].late.n)} for k in sorted(by_site)]
+    site_list = [{"code": "ALL", "label": "All sites", "n": int(allg.late.n)}] + ([] if sc["withheld"] else [{"code": k, "label": k, "n": int(by_site[k].late.n)} for k in sorted(by_site)])  # no per-site counts while withheld
     matrix, rows, band_mix = [], [], []
     for s in sites:
         g = allg if s == "ALL" else by_site[s]
@@ -1366,6 +1405,7 @@ def position(rate: float, p_bar: float, n: int) -> str:
 
 async def build_v3(run: Run, days: int, metric: str, site: Optional[str], specialty: Optional[str]) -> str:
     ds = await load_dataset(run, days)
+    await refuse_site_filter_if_withheld(run, days, site, ds)
     ok_doc = lambda u: (site is None or ds.doc(u).site == site) and (specialty is None or (ds.doc(u).speciality or "").lower() == specialty.lower())  # noqa: E731
     gs = groups_by(ds, lambda u: u if ok_doc(u) else None)
     rows, doctors, excluded = [], [], 0
@@ -1428,8 +1468,7 @@ async def build_v4(run: Run, days: int, site: str) -> str:
         # The whole view is a site comparison: show the caption and the hospital-wide figure only.
         all_stat = metric_stat("M-OPD-05b", ds.group(), ds, "all")
         other = {**withheld_stat(all_stat, sc["caption"]), "n": 0}
-        all_sites = groups_by(ds, site_of(ds))
-        site_list = [{"code": "ALL", "label": "All sites", "n": int(ds.group().late.n)}] + [{"code": k, "label": k, "n": int(all_sites[k].late.n)} for k in sorted(all_sites)]
+        site_list = [{"code": "ALL", "label": "All sites", "n": int(ds.group().late.n)}]  # no per-site counts while withheld
         env = build_envelope(run, ds.late, f"{sc['caption']} {sentence(all_stat)}", all_stat.get("plain") or sentence(all_stat), [all_stat], caveats=(SITE_CAVEAT, sc["caption"]),
                              action="Governance leads: contributors by site are paused until each note has a site; use the hospital-wide figure and the doctor variation view.")
         view = {"envelope": env, "site": site, "sites": site_list, "site_comparison": sc, "metric": "lv_rate", "site_rate": all_stat, "other_sites_rate": other, "gap": None, "contributors": [], "top_contributor_removed": None}
@@ -1512,16 +1551,24 @@ def _site_args(ds_docs: dict, site: Optional[str]) -> tuple[Optional[list], Opti
     return sorted(u for u, d in ds_docs.items() if d.site == site), f"{site}-"
 
 
+async def note_cutoff(run: Run, window: "Window") -> None:
+    for r in await run.q("cdmss", NOTE_CUTOFF_SQL, {"from": window.frm, "to": window.to}, "cdmss_ro.opd_note_audit"):
+        if r.get("cutoff"):
+            run.cutoffs.append(r["cutoff"])
+
+
 async def signals_for(run: Run, directory: dict, *, site, doctor, overdue_only: bool, limit: int, offset: int) -> tuple[list, int]:
     doctors, prefix = _site_args(directory, site)
     rows = await run.q("cdmss", SIGNALS_SQL, {"overdue_only": overdue_only, "doctor": doctor, "doctors": doctors, "prefix": prefix, "limit": limit, "offset": offset}, "cdmss_ro.gov_signal")
     total = int(rows[0]["total_count"]) if rows else 0
+    run.cutoffs.extend(t for r in rows for t in (r.get("created_at"), r.get("updated_at")) if t)  # the newest signal thread read
     await fill_names(run, directory, {r["doctor_uid"] for r in rows if r.get("doctor_uid")})
     return [_signal_row(r, directory) for r in rows], total
 
 
 async def build_v5(run: Run, days: int, site: Optional[str], doctor: Optional[str], limit: int) -> str:
     window, _ = window_pair(days, run.today)
+    await refuse_site_filter_if_withheld(run, days, site)
     directory = await load_directory(run)
     signals, total = await signals_for(run, directory, site=site, doctor=doctor, overdue_only=False, limit=LIST_CAP, offset=0)
     by_doc: dict = {}
@@ -1532,7 +1579,10 @@ async def build_v5(run: Run, days: int, site: Optional[str], doctor: Optional[st
     uids = sorted(by_doc, key=lambda u: (rank(by_doc[u]), -len(by_doc[u]), u))[:limit]
     ev_rows: list = []
     if uids:
-        ev_rows = await run.q("cdmss", findings_sql("redflag", by_doctors=True, by_one_doctor=False), {"from": window.frm, "to": window.to, "doctors": uids, "limit": LIST_CAP, "offset": 0, "r5": R5_RULE_REF}, "cdmss_ro.opd_finding")
+        ev_rows, _ = await gather_all(
+            run.q("cdmss", findings_sql("redflag", by_doctors=True, by_one_doctor=False), {"from": window.frm, "to": window.to, "doctors": uids, "limit": LIST_CAP, "offset": 0, "r5": R5_RULE_REF}, "cdmss_ro.opd_finding"),
+            note_cutoff(run, window),
+        )
     ev: dict = {}
     for r in ev_rows:
         lst = ev.setdefault(r["doctor_uid"], [])
@@ -1574,6 +1624,7 @@ def _columns_meta(cols: list) -> list:
 
 async def build_v8(run: Run, days: int, lst: str, site: Optional[str], doctor: Optional[str], limit: int, offset: int) -> str:
     window, _ = window_pair(days, run.today)
+    await refuse_site_filter_if_withheld(run, days, site)
     directory = await load_directory(run)
     cols = WORKLIST_COLUMNS[lst]
     rows: list = []
@@ -1593,9 +1644,10 @@ async def build_v8(run: Run, days: int, lst: str, site: Optional[str], doctor: O
         else:
             p = {"from": window.frm, "to": window.to, "doctors": doctors, "doctor": doctor, "limit": limit, "offset": offset, "r5": R5_RULE_REF}
             if lst == "low_value_findings":
-                raw = await run.q("cdmss", findings_sql("lv", by_doctors=doctors is not None, by_one_doctor=doctor is not None), p, "cdmss_ro.opd_finding")
+                read = run.q("cdmss", findings_sql("lv", by_doctors=doctors is not None, by_one_doctor=doctor is not None), p, "cdmss_ro.opd_finding")
             else:
-                raw = await run.q("cdmss", notes_list_sql(NOTE_ORDERS["recent"], False, True, doctors is not None, doctor is not None), p, "cdmss_ro.opd_note_audit")
+                read = run.q("cdmss", notes_list_sql(NOTE_ORDERS["recent"], False, True, doctors is not None, doctor is not None), p, "cdmss_ro.opd_note_audit")
+            raw, _ = await gather_all(read, note_cutoff(run, window))
         total = int(raw[0]["total_count"]) if raw else 0
         await fill_names(run, directory, {r["doctor_uid"] for r in raw})
         for r in raw:
@@ -1637,6 +1689,7 @@ async def build_metric(run: Run, mid: str, days: int, group_by: str, site: Optio
         env = build_envelope(run, window, sentence(st), "", [st], action="No action: the data does not exist yet. Governance leads can decide whether to source it.")
         return wrap(run, "cdmss_metric", ["key", "label", "value", "unit", "n", "status"], [], {"envelope": env, "metric": meta, "groups": []})
     ds = await load_dataset(run, days, need_rx=mid in RX_METRICS)
+    await refuse_site_filter_if_withheld(run, days, site, ds)
     pred = _site_pred(ds, site, doctor)
     if group_by == "none":
         gmap = {"ALL": ds.group(pred)}
@@ -1679,6 +1732,7 @@ async def build_drilldown(run: Run, mid: str, days: int, site: Optional[str], do
         reason = METRICS[mid]["definition"] if METRICS[mid]["status"] == "unavailable" else "This metric's numerator lives in the DB13 extract, so there are no CDMSS rows to list."
         env = build_envelope(run, window, f"No rows to list for {mid}.", "", [], caveats=(reason,), action="")
         return wrap(run, "cdmss_drilldown", DRILL_COLUMNS, [], {"envelope": env, "metric_id": mid, "total": 0}, total=0)
+    await refuse_site_filter_if_withheld(run, days, site)
     directory = await load_directory(run)
     doctors = sorted(u for u, d in directory.items() if d.site == site) if site else None
     rows: list = []
@@ -1687,9 +1741,10 @@ async def build_drilldown(run: Run, mid: str, days: int, site: Optional[str], do
         p = {"from": window.frm, "to": window.to, "doctors": doctors, "doctor": doctor, "limit": limit, "offset": offset, "r5": R5_RULE_REF}
         kind, which, assessed = spec
         if kind == "findings":
-            raw = await run.q("cdmss", findings_sql(which, by_doctors=doctors is not None, by_one_doctor=doctor is not None), p, "cdmss_ro.opd_finding")
+            read = run.q("cdmss", findings_sql(which, by_doctors=doctors is not None, by_one_doctor=doctor is not None), p, "cdmss_ro.opd_finding")
         else:
-            raw = await run.q("cdmss", notes_list_sql(NOTE_ORDERS[which], bool(assessed), False, doctors is not None, doctor is not None), p, "cdmss_ro.opd_note_audit")
+            read = run.q("cdmss", notes_list_sql(NOTE_ORDERS[which], bool(assessed), False, doctors is not None, doctor is not None), p, "cdmss_ro.opd_note_audit")
+        raw, _ = await gather_all(read, note_cutoff(run, window))
         total = int(raw[0]["total_count"]) if raw else 0
         await fill_names(run, directory, {r["doctor_uid"] for r in raw})
         for r in raw:
@@ -1811,13 +1866,23 @@ class FindingArgs(BaseModel):
 # payloads are cached. Every request is audited: a real run audits each query, a hit or a shared result audits one cache row.
 # --------------------------------------------------------------------------------------------------------------
 
-_cache: dict = {}  # key -> (monotonic_at, cached_at_iso, payload dict)
+_cache: "OrderedDict" = OrderedDict()  # key -> (monotonic_at, cached_at_iso, payload dict), least recently used first
 _inflight: dict = {}  # key -> asyncio.Future of the payload dict
 
 
 def clear_cache() -> None:
     _cache.clear()
     _inflight.clear()
+
+
+def _cache_put(key, entry) -> None:
+    now = time.monotonic()
+    for k in [k for k, v in _cache.items() if now - v[0] >= CACHE_TTL_S]:  # expired entries go first
+        del _cache[k]
+    _cache[key] = entry
+    _cache.move_to_end(key)
+    while len(_cache) > CACHE_MAX_ENTRIES:
+        _cache.popitem(last=False)
 
 
 def _cached_copy(payload: dict, at_iso: str) -> str:
@@ -1835,6 +1900,7 @@ async def cached(run: Run, build: Callable[[], Awaitable[str]]) -> str:
     key = (run.tool, run.today.isoformat(), json.dumps(run.params, sort_keys=True, default=str))
     hit = _cache.get(key)
     if hit and time.monotonic() - hit[0] < CACHE_TTL_S:
+        _cache.move_to_end(key)
         await run.audit_cache()
         return _cached_copy(hit[2], hit[1])
     fut = _inflight.get(key)
@@ -1853,7 +1919,7 @@ async def cached(run: Run, build: Callable[[], Awaitable[str]]) -> str:
         body = await build()
         payload = json.loads(body)
         at_iso = dt.datetime.now(KOLKATA).isoformat(timespec="seconds")
-        _cache[key] = (time.monotonic(), at_iso, payload)
+        _cache_put(key, (time.monotonic(), at_iso, payload))
         if not fut.done():
             fut.set_result((payload, at_iso))
         return body
