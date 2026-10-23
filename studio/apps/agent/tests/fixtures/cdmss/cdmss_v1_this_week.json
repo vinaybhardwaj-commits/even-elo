@@ -525,7 +525,7 @@
      "n": 135,
      "note": null,
      "numerator": 46.0,
-     "plain": "about 34 in every 100 notes",
+     "plain": "about 34 findings per 100 notes",
      "status": "ok",
      "unit": "per_100",
      "value": 34.074074074074076,
@@ -1057,7 +1057,7 @@
      },
      {
       "headline": "Low-value findings per 100 notes was 34 per 100 notes over 135 notes between 2026-10-17 to 2026-10-23. There is no clear change against the previous period.",
-      "plain": "about 34 in every 100 notes",
+      "plain": "about 34 findings per 100 notes",
       "stat": {
        "band": null,
        "change": {
@@ -1097,7 +1097,7 @@
        "n": 135,
        "note": null,
        "numerator": 46.0,
-       "plain": "about 34 in every 100 notes",
+       "plain": "about 34 findings per 100 notes",
        "status": "ok",
        "unit": "per_100",
        "value": 34.074074074074076,

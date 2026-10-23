@@ -31,7 +31,7 @@
   }
  ],
  "source": {
-  "query_hash": "c6f069b46459",
+  "query_hash": "18b92d3b5add",
   "tool": "cdmss_v5_redflags"
  },
  "synthetic": true,
@@ -43,7 +43,7 @@
     "doctor_uid": "D5",
     "evidence": [
      {
-      "audit_id": "b6d827fd-2b9b-443b-88ea-102cbf61f534",
+      "audit_id": "230e871c-aea7-4360-9014-2174ada5ccbe",
       "case": {
        "family": "opd",
        "uid": "D5-L-01",
@@ -65,7 +65,7 @@
       "verdict": "low-value"
      },
      {
-      "audit_id": "cb323198-9e0f-4a20-8e0b-41b65d348c2d",
+      "audit_id": "9849a663-bcbc-486e-bb79-1e1e5bbaf863",
       "case": {
        "family": "opd",
        "uid": "D5-L-02",
@@ -87,7 +87,7 @@
       "verdict": "low-value"
      },
      {
-      "audit_id": "5c1da57e-3344-4eea-8538-fd518e56fc37",
+      "audit_id": "a6fc0293-dcc4-4388-8a8f-67d2226036d5",
       "case": {
        "family": "opd",
        "uid": "D5-L-03",
@@ -109,7 +109,7 @@
       "verdict": "low-value"
      },
      {
-      "audit_id": "61c161aa-31a7-44e5-97fe-c88ee44af3a5",
+      "audit_id": "7673667a-08c3-40c5-9bc6-0e616d4d9514",
       "case": {
        "family": "opd",
        "uid": "D5-L-04",
@@ -131,7 +131,7 @@
       "verdict": "low-value"
      },
      {
-      "audit_id": "9fcc9cca-19e7-4139-8da3-e14556a5533e",
+      "audit_id": "c6f6d873-7adf-4106-aea3-a7e5c7a654fb",
       "case": {
        "family": "opd",
        "uid": "D5-L-05",
@@ -161,7 +161,7 @@
       "overdue": true,
       "reference": "SITEA-AUD-2026-0001",
       "response_required": true,
-      "signal_id": "f9e7ab97-7612-468e-9d2c-8a2a9689df67",
+      "signal_id": "9555721b-10ce-45fa-886d-45c8fa7fbe51",
       "signal_type": "low_value_pattern",
       "site": "SITEA",
       "sla_due_at": "2026-10-15T05:30:00+05:30",
@@ -184,7 +184,7 @@
       "overdue": false,
       "reference": "SITEB-AUD-2026-0003",
       "response_required": false,
-      "signal_id": "57c1a96a-7532-4e41-813e-a09f486f9aaf",
+      "signal_id": "79cbf9cf-e017-4446-92b2-0c735356f36f",
       "signal_type": "documentation",
       "site": "SITEB",
       "sla_due_at": "2027-01-01T05:30:00+05:30",
@@ -208,19 +208,21 @@
    },
    "precision_line": "About 1 in 5 findings are wrong or contested (engine precision; the catalogue has no family-specific figure).",
    "provenance": {
-    "data_cutoff": null,
+    "data_cutoff": "2026-10-23T14:45:15.848212+05:30",
     "db13_as_of": null,
     "engine_family": "opd-note-audit/0.81.3+ (derived by shape in cdmss_ro.opd_note_audit)",
     "generated_at": "2026-10-23T12:00:00+05:30",
     "query_hashes": [
      "c5158c604742",
-     "2e8645a4e8c3",
-     "08be48701bcf"
+     "ce01b7604f5e",
+     "08be48701bcf",
+     "e796cd511243"
     ],
     "sources": [
      "governance DB: physicians, physician_engagements, hospitals",
      "cdmss_ro.gov_signal",
-     "cdmss_ro.opd_finding"
+     "cdmss_ro.opd_finding",
+     "cdmss_ro.opd_note_audit"
     ],
     "window": {
      "anchor": "today (IST calendar days, inclusive)",
