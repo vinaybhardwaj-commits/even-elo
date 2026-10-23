@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { toCsv } from "@/lib/cdmss/csv";
 import type { DoctorRow, Envelope, Evidence, Stat, ViewPayload } from "@/lib/cdmss/contract";
 import { describeCdmssError } from "@/lib/cdmss/use-cdmss-view";
@@ -45,7 +45,7 @@ export function Figure({ s, withWindow = false }: { s: Stat; withWindow?: boolea
       <span className="cd-ci">{ci(s.ci95, s.unit)}</span>
       {s.coverage && <span className="cd-cov">, {s.coverage.pct.toFixed(0)}% of notes assessed</span>}
       {s.band && <span className="cd-cov"> · band {s.band}</span>}
-      <span className="cd-def"> {s.numerator ?? "–"}/{s.denominator ?? "–"} · n {s.n} · {s.metric_id}{withWindow ? ` · ${s.window.from} to ${s.window.to}` : ""}</span>
+      <span className="cd-def"> {s.numerator !== null && s.denominator !== null ? `${s.numerator}/${s.denominator} · ` : ""}n {s.n} · {s.metric_id}{withWindow ? ` · ${s.window.from} to ${s.window.to}` : ""}</span>
       {grey && s.grey_reason && <span className="cd-def"> · {s.grey_reason.replace(/_/g, " ")}</span>}
       {s.plain && <span className="cd-def"> · {s.plain}</span>}
     </span>
@@ -86,6 +86,16 @@ export function EnvelopeBlock({ env }: { env: Envelope }) {
   );
 }
 
+/** The standing caption while site comparisons are withheld (agent-side switch, coverage under 90%). */
+export function SiteWithheld({ sc }: { sc: { withheld: boolean; caption: string | null } | undefined }) {
+  if (!sc?.withheld || !sc.caption) return null;
+  return (
+    <p className="scr-card cd-withheld" role="note" data-testid="site-withheld">
+      {sc.caption}
+    </p>
+  );
+}
+
 export function SourceNote({ d }: { d: { source: { tool: string; query_hash: string }; mode: string; synthetic: boolean; incomplete?: string } }) {
   return (
     <p className="scr-source" data-testid="source-line">
@@ -94,8 +104,24 @@ export function SourceNote({ d }: { d: { source: { tool: string; query_hash: str
   );
 }
 
+export const STILL_LOADING_MS = 10_000;
+
+/** "Loading…", then after 10 s "still loading" (the agent is slow, not failing): never an error because time passed. */
+function LoadingNote() {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setSlow(true), STILL_LOADING_MS);
+    return () => clearTimeout(t);
+  }, []);
+  return (
+    <p className="scr-muted" role="status">
+      {slow ? "Still loading: a large window can take up to a minute. Nothing is wrong; the page will fill in." : "Loading…"}
+    </p>
+  );
+}
+
 export function ViewState<T>({ state, retry, children }: { state: { status: "loading" } | { status: "error"; code: string } | { status: "ok"; data: T }; retry: () => void; children: (data: T) => ReactNode }) {
-  if (state.status === "loading") return <p className="scr-muted" role="status">Loading…</p>;
+  if (state.status === "loading") return <LoadingNote />;
   if (state.status === "error")
     return (
       <p className="scr-error" role="alert">

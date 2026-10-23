@@ -363,3 +363,16 @@ def test_admin_tools_are_auditable_and_ops_names_are_not(monkeypatch, tool):
     assert rows[0].tool == tool and rows[0].staff_id == STAFF
     for ops in ["admin_migrate", "admin_seed", "admin_wipe_smoke", "admin_dedupe", "admin_recompute"]:
         assert asyncio.run(studio_screen.record_http_audit({**body, "tool": ops}, STAFF))[0] == 422
+
+
+def test_refused_screen_calls_log_a_warning_with_tool_and_code_only(caplog):
+    import asyncio
+    from src import studio_screen
+
+    with caplog.at_level(logging.WARNING, logger="studio.screen"):
+        status, _ = asyncio.run(studio_screen.run_screen_tool("cdmss_v2_scorecard", {"family": "opd", "sql": "select 1 -- SECRET"}, STAFF, {"staff", "super_admin"}))
+        status2, _ = asyncio.run(studio_screen.run_screen_tool("cdmss_v2_scorecard", {}, STAFF, {"staff"}))
+    assert (status, status2) == (422, 403)
+    text = " ".join(r.getMessage() for r in caplog.records)
+    assert "tool=cdmss_v2_scorecard" in text and "status=422 error=bad_params" in text and "status=403 error=forbidden" in text
+    assert "SECRET" not in text and "select" not in text  # no params, no data

@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { VIEW_SCHEMAS, type ViewId, type ViewParams, type ViewPayload } from "./contract";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { VIEW_SCHEMAS, paramsFor, type ViewId, type ViewParams, type ViewPayload } from "./contract";
 
 export const CDMSS_API = "/studio/api/cdmss";
 export const CDMSS_CACHE_TTL_MS = 30_000;
@@ -28,7 +28,9 @@ export const describeCdmssError = (code: string) => CDMSS_ERROR_TEXT[code] ?? "T
  * value, successful reads are reused for 30 s, an abort cancels the request, and only a fetch that never got an answer
  * is retried (once). `null` params = idle (no request). A route error is never retried. No polling, no interval, no refetch on focus.
  */
-export function useCdmssView<V extends ViewId>(view: V, params: ViewParams | null): CdmssState<V> & { retry: () => void } {
+export function useCdmssView<V extends ViewId>(view: V, requested: ViewParams | null): CdmssState<V> & { retry: () => void } {
+  // Only keys the tool accepts ever leave the hook: the agent refuses any other.
+  const params = requested === null ? null : paramsFor(view, requested);
   const key = JSON.stringify(params);
   const [attempt, setAttempt] = useState(0);
   const id = `${view}|${key}|${attempt}`;
@@ -71,6 +73,12 @@ export function useCdmssView<V extends ViewId>(view: V, params: ViewParams | nul
   }, [view, key, attempt, id, params === null]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const state: CdmssState<V> = settled && settled.id === id ? settled.result : { status: "loading" };
-  const retry = useCallback(() => setAttempt((n) => n + 1), []);
+  // A retry never starts a second request while one is in flight (a double click, or a stale button, must not stack agent runs).
+  const loading = state.status === "loading";
+  const loadingRef = useRef(loading);
+  loadingRef.current = loading;
+  const retry = useCallback(() => {
+    if (!loadingRef.current) setAttempt((n) => n + 1);
+  }, []);
   return { ...state, retry };
 }

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 
 const contexts: Array<{ value: Record<string, unknown> }> = [];
@@ -9,10 +9,12 @@ vi.mock("@/components/screens/screen-frame", () => ({
 }));
 
 import { ContributorsScreen, DoctorsScreen, RedFlagsScreen, ScorecardScreen, ThisWeekScreen, WorklistsScreen } from "../screens";
-import { clearCdmssCache } from "@/lib/cdmss/use-cdmss-view";
+import { clearCdmssCache, useCdmssView } from "@/lib/cdmss/use-cdmss-view";
 import { FIXTURES } from "@/lib/cdmss/fixtures";
 import { Figure } from "../exhibits";
 import type { Stat } from "@/lib/cdmss/contract";
+import ARGS from "../../../../../agent/tests/fixtures/cdmss/args_schema.json";
+import { VIEW_PARAM_KEYS, VIEW_TOOL, type ViewId } from "@/lib/cdmss/contract";
 import { NAV_ITEMS } from "@/components/screens/studio-nav";
 
 const fetchMock = vi.fn();
@@ -91,7 +93,7 @@ describe("behaviour", () => {
   it("sends the typed params for the open filters (body is the params, nothing else)", async () => {
     render(<DoctorsScreen />);
     await screen.findByTestId("provenance");
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ family: "opd", metric: "lv_rate", window_days: 28 });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ metric: "lv_rate", window_days: 28 });
   });
   it("unavailable metrics say so with the reason", async () => {
     render(<ThisWeekScreen />);
@@ -155,6 +157,91 @@ describe("behaviour", () => {
     const row = (await screen.findByText(v4.view.contributors[0].doctor_name)).closest("tr")!;
     expect(row).toHaveClass("cd-grey");
     expect(row.textContent).not.toMatch(/\b7\b|70\.0%|50%/);
+  });
+  it("the per-view allowlist equals the agent's real args schemas (args_schema.json)", () => {
+    for (const view of Object.keys(VIEW_TOOL) as ViewId[]) {
+      expect([...VIEW_PARAM_KEYS[view]].sort(), view).toEqual((ARGS as Record<string, string[]>)[VIEW_TOOL[view]]);
+    }
+  });
+  it("every request any screen can build (default and each filter value) uses only keys its tool accepts", async () => {
+    const screens: Array<[() => React.JSX.Element, ViewId[]]> = [
+      [ThisWeekScreen, ["this_week"]], [ScorecardScreen, ["scorecard"]], [DoctorsScreen, ["doctor_variation"]],
+      [ContributorsScreen, ["scorecard", "contributors"]], [RedFlagsScreen, ["redflags"]], [WorklistsScreen, ["worklists"]],
+    ];
+    for (const [Comp, views] of screens) {
+      cleanup();
+      clearCdmssCache();
+      fetchMock.mockClear();
+      const { container } = render(<Comp />);
+      await screen.findByTestId("provenance");
+      for (const sel of Array.from(container.querySelectorAll("select"))) {
+        for (const opt of Array.from(sel.querySelectorAll("option"))) {
+          fireEvent.change(sel, { target: { value: opt.getAttribute("value") } });
+          await new Promise((r) => setTimeout(r, 5));
+        }
+      }
+      await new Promise((r) => setTimeout(r, 20));
+      expect(fetchMock.mock.calls.length).toBeGreaterThan(0);
+      for (const [url, init] of fetchMock.mock.calls) {
+        const view = String(url).split("/").pop() as ViewId;
+        expect(views, String(url)).toContain(view);
+        const allowed = (ARGS as Record<string, string[]>)[VIEW_TOOL[view]];
+        for (const k of Object.keys(JSON.parse(init.body))) expect(allowed, `${view} sent ${k}`).toContain(k);
+      }
+    }
+  });
+  it("site comparison withheld: V2 shows the caption, hospital-wide rows only and no site picker", async () => {
+    const v2 = JSON.parse(JSON.stringify(FIXTURES.scorecard));
+    v2.view.site_comparison = { withheld: true, coverage: 0.87, caption: "Site comparison withheld: 13% of notes have no site (doctor home-site mapping). Fix pending." };
+    v2.view.matrix = v2.view.matrix.filter((m: { site: string }) => m.site === "ALL");
+    v2.view.trend = v2.view.trend.filter((t: { site: string }) => t.site === "ALL");
+    v2.view.band_mix = v2.view.band_mix.filter((b: { site: string }) => b.site === "ALL");
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify(v2), { status: 200 }));
+    render(<ScorecardScreen />);
+    expect(await screen.findByTestId("site-withheld")).toHaveTextContent("Site comparison withheld: 13% of notes have no site (doctor home-site mapping). Fix pending.");
+    expect(screen.queryByLabelText("Site")).toBeNull();
+    expect(screen.getByRole("table", { name: "Site scorecard" }).querySelectorAll("thead th")).toHaveLength(2);
+  });
+  it("site comparison withheld: V4 shows the caption and the hospital-wide figure, no contributor table", async () => {
+    const v4 = JSON.parse(JSON.stringify(FIXTURES.contributors));
+    v4.view.site_comparison = { withheld: true, coverage: 0.87, caption: "Site comparison withheld: 13% of notes have no site (doctor home-site mapping). Fix pending." };
+    v4.view.contributors = [];
+    v4.view.gap = null;
+    fetchMock.mockImplementation(async (url: string) => new Response(JSON.stringify(String(url).endsWith("scorecard") ? FIXTURES.scorecard : v4), { status: 200 }));
+    render(<ContributorsScreen />);
+    expect(await screen.findByTestId("site-withheld")).toBeInTheDocument();
+    expect(screen.getByLabelText("Hospital-wide")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Contributors")).toBeNull();
+    expect(screen.queryByLabelText("Site")).toBeNull();
+  });
+  it("after 10 s of loading the page says it is still loading (not an error)", async () => {
+    vi.useFakeTimers();
+    try {
+      fetchMock.mockImplementation(() => new Promise(() => {}));
+      render(<ThisWeekScreen />);
+      expect(screen.getByRole("status")).toHaveTextContent("Loading…");
+      await act(async () => { vi.advanceTimersByTime(10_001); });
+      expect(screen.getByRole("status")).toHaveTextContent("Still loading");
+      expect(screen.queryByRole("alert")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("retry does nothing while a request is in flight, and works after an error", async () => {
+    fetchMock.mockImplementation(() => new Promise(() => {}));
+    const { result } = renderHook(() => useCdmssView("this_week", {}));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    act(() => { result.current.retry(); result.current.retry(); });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    cleanup();
+    clearCdmssCache();
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify({ ok: false, error: "tool_failed" }), { status: 502 }));
+    const second = renderHook(() => useCdmssView("this_week", {}));
+    await waitFor(() => expect(second.result.current.status).toBe("error"));
+    act(() => second.result.current.retry());
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
   });
   it("nav has the CDMSS entry", () => {
     expect(NAV_ITEMS.some((i) => i.href === "/cdmss")).toBe(true);

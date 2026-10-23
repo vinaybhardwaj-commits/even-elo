@@ -43,7 +43,7 @@
     "doctor_uid": "D5",
     "evidence": [
      {
-      "audit_id": "ec59a837-a58c-4428-ac23-67de40f2fa44",
+      "audit_id": "b6d827fd-2b9b-443b-88ea-102cbf61f534",
       "case": {
        "family": "opd",
        "uid": "D5-L-01",
@@ -65,7 +65,7 @@
       "verdict": "low-value"
      },
      {
-      "audit_id": "b9acc7b7-ca31-43e1-9fa2-0720d49addf8",
+      "audit_id": "cb323198-9e0f-4a20-8e0b-41b65d348c2d",
       "case": {
        "family": "opd",
        "uid": "D5-L-02",
@@ -87,7 +87,7 @@
       "verdict": "low-value"
      },
      {
-      "audit_id": "427b8307-53b7-43ab-99fe-35e7eb6499f2",
+      "audit_id": "5c1da57e-3344-4eea-8538-fd518e56fc37",
       "case": {
        "family": "opd",
        "uid": "D5-L-03",
@@ -109,7 +109,7 @@
       "verdict": "low-value"
      },
      {
-      "audit_id": "1d6b6bbb-b7f2-4b50-9c93-c9c90bf2d1ca",
+      "audit_id": "61c161aa-31a7-44e5-97fe-c88ee44af3a5",
       "case": {
        "family": "opd",
        "uid": "D5-L-04",
@@ -131,7 +131,7 @@
       "verdict": "low-value"
      },
      {
-      "audit_id": "d2807cf9-e6ef-4577-90ea-fbfad96e8b0d",
+      "audit_id": "9fcc9cca-19e7-4139-8da3-e14556a5533e",
       "case": {
        "family": "opd",
        "uid": "D5-L-05",
@@ -161,7 +161,7 @@
       "overdue": true,
       "reference": "SITEA-AUD-2026-0001",
       "response_required": true,
-      "signal_id": "ed8a47bf-0ee1-4ff1-99d6-bb19a1e2d8bc",
+      "signal_id": "f9e7ab97-7612-468e-9d2c-8a2a9689df67",
       "signal_type": "low_value_pattern",
       "site": "SITEA",
       "sla_due_at": "2026-10-15T05:30:00+05:30",
@@ -184,7 +184,7 @@
       "overdue": false,
       "reference": "SITEB-AUD-2026-0003",
       "response_required": false,
-      "signal_id": "0ebb20cc-8635-4307-b592-d539315ad9de",
+      "signal_id": "57c1a96a-7532-4e41-813e-a09f486f9aaf",
       "signal_type": "documentation",
       "site": "SITEB",
       "sla_due_at": "2027-01-01T05:30:00+05:30",
@@ -239,6 +239,7 @@
      "coverage": null,
      "denominator": null,
      "grey_reason": null,
+     "kind": "rate",
      "label": "Open governance signals",
      "metric_id": "M-SIG-01",
      "n": 2,

@@ -1,0 +1,56 @@
+{
+ "cdmss_drilldown": [
+  "doctor_uid",
+  "limit",
+  "metric_id",
+  "offset",
+  "site",
+  "window_days"
+ ],
+ "cdmss_finding_detail": [
+  "finding_no",
+  "uid"
+ ],
+ "cdmss_metric": [
+  "doctor_uid",
+  "group_by",
+  "limit",
+  "metric_id",
+  "site",
+  "window_days"
+ ],
+ "cdmss_metric_catalogue": [],
+ "cdmss_v1_this_week": [
+  "window_days"
+ ],
+ "cdmss_v2_scorecard": [
+  "family",
+  "site",
+  "window_days"
+ ],
+ "cdmss_v3_doctor_variation": [
+  "metric",
+  "site",
+  "specialty",
+  "window_days"
+ ],
+ "cdmss_v4_contributors": [
+  "metric",
+  "site",
+  "window_days"
+ ],
+ "cdmss_v5_redflags": [
+  "doctor_uid",
+  "limit",
+  "site",
+  "window_days"
+ ],
+ "cdmss_v8_worklists": [
+  "doctor_uid",
+  "limit",
+  "list",
+  "offset",
+  "site",
+  "window_days"
+ ]
+}
