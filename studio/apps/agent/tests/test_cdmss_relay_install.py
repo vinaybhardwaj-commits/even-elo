@@ -480,7 +480,7 @@ def test_relay_render_adds_a_read_only_cdmss_alias_only_when_configured_and_pinn
     assert r.returncode == 0, r.stderr
     line = [l for l in ini.splitlines() if l.startswith("cdmss = ")]
     assert len(line) == 1
-    assert f"host={HOST} port=5432 dbname=neondb user=studio_cdmss_ro password='{PW}' pool_size=2" in line[0]
+    assert f"host={HOST} port=5432 dbname=neondb user=studio_cdmss_ro password='{PW}' pool_size=4" in line[0]
     assert "connect_query='SET default_transaction_read_only = on; SET statement_timeout = 30000'" in line[0]
     assert any(l.startswith("gov = ") for l in ini.splitlines()) and any(l.startswith("studio = ") for l in ini.splitlines())
     assert '"agent_cdmss" "' + "c" * 48 + '"' in users
