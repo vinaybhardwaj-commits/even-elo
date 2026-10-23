@@ -56,3 +56,15 @@ describe("csv", () => {
 describe("fixtures satisfy the provisional contract", () => {
   for (const v of VIEW_IDS) it(v, () => expect(VIEW_SCHEMAS[v].safeParse(FIXTURES[v]).success).toBe(true));
 });
+import { ViewParams, VIEW_TOOL } from "../contract";
+describe("params and tools", () => {
+  it("ViewParams is strict (no smuggled keys)", () => {
+    expect(ViewParams.safeParse({ window_days: 28, site: "EHRC" }).success).toBe(true);
+    expect(ViewParams.safeParse({ sql: "x" }).success).toBe(false);
+    expect(ViewParams.safeParse({ window_days: 3 }).success).toBe(false);
+    expect(ViewParams.safeParse({ limit: 501 }).success).toBe(false);
+  });
+  it("tool names are the contract's", () => {
+    expect(Object.values(VIEW_TOOL).sort()).toEqual(["cdmss_v1_this_week", "cdmss_v2_scorecard", "cdmss_v3_doctor_variation", "cdmss_v4_contributors", "cdmss_v5_redflags", "cdmss_v8_worklists"]);
+  });
+});

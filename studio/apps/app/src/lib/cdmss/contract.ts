@@ -1,165 +1,241 @@
 import { z } from "zod";
 
-// PROVISIONAL view payload shapes for the CDMSS module (Phase 1). Builder A's CONTRACT.md was not available when this
-// was written; every field here is the spec's presentation rules (PHASE1-SPEC.md) made concrete. When CONTRACT.md lands,
-// change THIS file and the fixtures only; the exhibits read these types.
+// Agent <-> app contract for the CDMSS module, from builder A's .bc/CONTRACT.md (section refs in comments).
+// Parsed with zod before anything is rendered: a result without its envelope is never shown. Objects are not strict
+// (the agent may add keys); fields the exhibits read are required.
 
-export const VIEW_IDS = ["this_week", "scorecard", "doctors", "contributors", "red_flags", "worklists"] as const;
+export const VIEW_IDS = ["this_week", "scorecard", "doctor_variation", "contributors", "redflags", "worklists"] as const;
 export type ViewId = (typeof VIEW_IDS)[number];
 
-export const SITES = ["EHRC", "EHBR", "EHVJ", "EHCV"] as const; // UNVERIFIED site list: take from the contract
-export const FAMILIES = ["opd", "stewardship"] as const;
+/** View id -> agent tool name (CONTRACT section 0). */
+export const VIEW_TOOL: Record<ViewId, string> = {
+  this_week: "cdmss_v1_this_week",
+  scorecard: "cdmss_v2_scorecard",
+  doctor_variation: "cdmss_v3_doctor_variation",
+  contributors: "cdmss_v4_contributors",
+  redflags: "cdmss_v5_redflags",
+  worklists: "cdmss_v8_worklists",
+};
+
+export const FAMILIES = ["opd", "ams"] as const;
 export type Family = (typeof FAMILIES)[number];
+export const WORKLISTS = ["signals_open", "signals_overdue", "low_value_findings", "missing_pdqi"] as const;
+export type WorklistId = (typeof WORKLISTS)[number];
+export const DV_METRICS = ["lv_rate", "nqi"] as const;
+export type DvMetric = (typeof DV_METRICS)[number];
 
-const nullableNum = z.number().nullable();
+/** Params the app may send (CONTRACT 0.2 and per view). The route validates the same schema, strictly. */
+export const ViewParams = z
+  .object({
+    window_days: z.number().int().min(7).max(182).optional(),
+    site: z.string().regex(/^[A-Z]{2,12}$/).optional(),
+    doctor_uid: z.string().regex(/^[A-Za-z0-9_.:-]{1,80}$/).optional(),
+    family: z.enum(FAMILIES).optional(),
+    metric: z.enum(DV_METRICS).optional(),
+    specialty: z.string().max(80).optional(),
+    list: z.enum(WORKLISTS).optional(),
+    limit: z.number().int().min(1).max(500).optional(),
+    offset: z.number().int().min(0).max(100_000).optional(),
+  })
+  .strict();
+export type ViewParams = z.infer<typeof ViewParams>;
 
-export const Provenance = z.object({
-  window: z.object({ from: z.string(), to: z.string(), label: z.string() }),
-  data_cutoff: z.string().nullable(),
-  sources: z.array(z.string()),
-  engine_family: z.string(),
-  db13_as_of: z.string().nullable(),
+const num = z.number().nullable();
+const Window = z.object({ from: z.string(), to: z.string(), days: z.number().optional() });
+
+const Change = z.object({
+  direction: z.enum(["rising", "falling", "no clear change"]),
+  p_value: num,
+  relative_change: num,
+  early: z.object({ from: z.string(), to: z.string(), value: num, n: z.number() }),
+  late: z.object({ from: z.string(), to: z.string(), value: num, n: z.number() }),
 });
-export type Provenance = z.infer<typeof Provenance>;
+export type Change = z.infer<typeof Change>;
 
-/** Rule 3: every number carries numerator, denominator, n, window and definition id. */
-export const Metric = z.object({
-  id: z.string(), // catalogue M-id, e.g. M-OPD-01
+/** CONTRACT 1: every number. */
+export const Stat = z.object({
+  metric_id: z.string(),
   label: z.string(),
-  unit: z.enum(["proportion", "score", "rate_per_100", "rate_per_1000", "ratio", "count"]),
-  value: nullableNum,
-  numerator: nullableNum,
-  denominator: nullableNum,
-  n: z.number().int().nonnegative(),
-  ci: z.object({ lo: z.number(), hi: z.number() }).nullable(),
-  coverage: nullableNum.optional(), // full NQI: assessed / canonical (RULING Missing PDQI-9)
-  status: z.enum(["ok", "grey", "unavailable"]),
-  reason: z.string().nullable().optional(), // why grey / unavailable
-  note: z.string().nullable().optional(), // e.g. "stored index, not policy-recomputed" (G-15)
+  value: num,
+  unit: z.enum(["score", "percent", "per_100", "per_1000", "ratio", "count"]),
+  numerator: num,
+  denominator: num,
+  n: z.number(),
+  ci95: z.tuple([z.number(), z.number()]).nullable(),
+  ci_method: z.string().optional(),
+  window: Window,
+  coverage: z.object({ assessed: z.number(), total: z.number(), pct: z.number() }).nullable(),
+  status: z.enum(["ok", "greyed", "count_only", "unavailable"]),
+  grey_reason: z.string().nullable(),
+  change: Change.nullable(),
+  plain: z.string().nullable(),
+  note: z.string().nullable(),
+  band: z.string().nullable().optional(),
 });
-export type Metric = z.infer<typeof Metric>;
+export type Stat = z.infer<typeof Stat>;
 
+/** CONTRACT 0.3. */
 export const Envelope = z.object({
-  provenance: Provenance,
-  headline: z.object({ claim: z.string(), plain: z.string() }),
+  provenance: z.object({
+    window: Window.extend({ tz: z.string().optional(), anchor: z.string().optional() }),
+    data_cutoff: z.string().nullable(),
+    sources: z.array(z.string()),
+    engine_family: z.string(),
+    db13_as_of: z.string().nullable(),
+  }),
+  headline: z.object({ sentence: z.string(), plain: z.string().nullable() }),
+  stats: z.array(Stat),
   caveats: z.array(z.string()),
-  action: z.string(),
+  precision_line: z.string(),
+  action_line: z.string(),
 });
 export type Envelope = z.infer<typeof Envelope>;
 
-const SiteCell = Metric.extend({ site: z.string() });
-export const ThisWeek = Envelope.extend({
-  tiles: z.array(
+const Evidence = z.object({
+  audit_id: z.union([z.string(), z.number()]).nullable().optional(),
+  uid: z.string().nullable().optional(),
+  note_day: z.string().nullable().optional(),
+  finding_no: z.number().nullable().optional(),
+  subject: z.string().nullable().optional(),
+  quote: z.string().nullable().optional(),
+  rationale: z.string().nullable().optional(),
+  case: z.object({ url: z.string().nullable() }).nullable().optional(),
+});
+export type Evidence = z.infer<typeof Evidence>;
+
+const Wrapper = {
+  source: z.object({ tool: z.string(), query_hash: z.string() }),
+  mode: z.string(),
+  synthetic: z.boolean(),
+  columns: z.array(z.string()),
+  rows: z.array(z.record(z.string(), z.unknown())),
+  row_count: z.number(),
+  total: z.number().optional(),
+  incomplete: z.string().optional(),
+};
+
+// 3.1
+export const ThisWeekView = z.object({
+  envelope: Envelope,
+  families: z.array(
     z.object({
       family: z.string(),
-      title: z.string(),
-      state: z.enum(["live", "coming"]),
-      headline: z.string().nullable(),
-      metric: Metric.nullable(),
-      change: z.enum(["rising", "falling", "no clear change"]).nullable(),
-      early_late: z.string().nullable(),
+      label: z.string(),
+      status: z.enum(["live", "coming"]),
+      tiles: z.array(z.object({ stat: Stat, headline: z.string().nullable().optional(), plain: z.string().nullable().optional() })).optional(),
     }),
   ),
 });
-export type ThisWeek = z.infer<typeof ThisWeek>;
-
-export const Scorecard = Envelope.extend({
-  family: z.enum(FAMILIES),
-  metrics: z.array(z.object({ id: z.string(), label: z.string(), higher_is: z.enum(["better", "worse"]) })),
-  cells: z.array(SiteCell.extend({ metric_id: z.string() })),
+// 3.2
+export const ScorecardView = z.object({
+  envelope: Envelope,
+  site_basis: z.string(),
+  sites: z.array(z.string()),
+  metrics: z.array(z.object({ metric_id: z.string(), label: z.string(), unit: z.string() })),
+  matrix: z.array(z.object({ site: z.string(), n_notes: z.number(), cells: z.record(z.string(), Stat) })),
   trend: z.array(
-    z.object({ metric_id: z.string(), site: z.string(), points: z.array(z.object({ week: z.string(), value: nullableNum, n: z.number().int() })) }),
+    z.object({
+      site: z.string(),
+      metric_id: z.string(),
+      points: z.array(z.object({ week_from: z.string(), week_to: z.string(), value: num, n: z.number(), status: z.string() })),
+    }),
   ),
-  band_mix: z.array(z.object({ site: z.string(), n: z.number().int(), shares: z.record(z.string(), z.number()) })),
-  change: z.array(z.object({ metric_id: z.string(), site: z.string(), verdict: z.enum(["rising", "falling", "no clear change"]), early_late: z.string() })),
 });
-export type Scorecard = z.infer<typeof Scorecard>;
-
+// 3.3
 export const DoctorRow = z.object({
   doctor_uid: z.string(),
-  name: z.string(),
-  site: z.string(),
-  specialty: z.string().nullable(),
-  metric: Metric,
-  expected: nullableNum, // reference rate at this volume
-  funnel: z.object({ lo95: z.number(), hi95: z.number(), lo998: z.number(), hi998: z.number() }).nullable(),
-  flag: z.enum(["above_998", "above_95", "within", "below_95", "below_998", "not_ranked"]),
-  cases_url: z.string().nullable(),
+  doctor_name: z.string(),
+  site: z.string().nullable(),
+  speciality: z.string().nullable().optional(),
+  n: z.number(),
+  value: num,
+  ci95: z.tuple([z.number(), z.number()]).nullable(),
+  expected_rate: num.optional(),
+  oe: num.optional(),
+  position: z.enum(["above_998", "above_95", "within", "below_95", "below_998", "greyed"]),
+  rank: z.number().nullable(),
+  stat: Stat,
 });
 export type DoctorRow = z.infer<typeof DoctorRow>;
-export const Doctors = Envelope.extend({
-  family: z.enum(FAMILIES),
-  metric_id: z.string(),
-  reference: nullableNum,
-  overdispersion_caveat: z.string().nullable(),
-  rows: z.array(DoctorRow),
+export const DoctorVariationView = z.object({
+  envelope: Envelope,
+  metric: z.enum(DV_METRICS),
+  funnel: z
+    .object({
+      centre: z.number(),
+      centre_basis: z.string(),
+      z95: z.number(),
+      z998: z.number(),
+      adjustment: z.string(),
+      min_n_include: z.number(),
+      limits: z.array(z.object({ n: z.number(), lo95: z.number(), hi95: z.number(), lo998: z.number(), hi998: z.number() })),
+    })
+    .nullable(),
+  doctors: z.array(DoctorRow),
+  excluded: z.object({ count: z.number(), reason: z.string() }),
 });
-export type Doctors = z.infer<typeof Doctors>;
-
-export const Contributors = Envelope.extend({
-  family: z.enum(FAMILIES),
-  metric_id: z.string(),
+// 3.4
+export const ContributorsView = z.object({
+  envelope: Envelope,
   site: z.string(),
-  site_metric: Metric,
-  gap_to_reference: nullableNum,
-  site_without_top: nullableNum,
-  rows: z.array(
+  metric: z.string(),
+  site_rate: Stat,
+  other_sites_rate: Stat,
+  gap: z.object({ absolute: z.number(), relative: z.number().nullable() }).nullable(),
+  contributors: z.array(
     z.object({
       doctor_uid: z.string(),
-      name: z.string(),
-      metric: Metric,
-      share_of_gap: nullableNum,
-      cases_url: z.string().nullable(),
+      doctor_name: z.string(),
+      n: z.number(),
+      events: z.number(),
+      rate: num,
+      ci95: z.tuple([z.number(), z.number()]).nullable(),
+      share_of_gap: num,
+      site_rate_without: num,
+      status: z.enum(["ok", "count_only"]),
     }),
   ),
+  top_contributor_removed: z.object({ doctor_uid: z.string(), site_rate_without: num }).nullable(),
 });
-export type Contributors = z.infer<typeof Contributors>;
-
-export const Dossier = z.object({
-  doctor_uid: z.string(),
-  name: z.string(),
-  site: z.string(),
-  why: z.string(),
-  metrics: z.array(Metric),
-  findings: z.array(
+// 3.5
+export const RedflagsView = z.object({
+  envelope: Envelope,
+  dossiers: z.array(
     z.object({
-      finding_id: z.string(),
-      subject: z.string(),
-      quote: z.string().nullable(),
-      case_url: z.string().nullable(),
+      doctor_uid: z.string(),
+      doctor_name: z.string(),
+      site: z.string().nullable(),
+      n_notes: z.number(),
+      signals: z.array(
+        z.object({
+          signal_id: z.union([z.string(), z.number()]),
+          reference: z.string().nullable().optional(),
+          signal_type: z.string().nullable().optional(),
+          importance: z.string().nullable().optional(),
+          status: z.string().nullable().optional(),
+          response_required: z.boolean().nullable().optional(),
+          overdue: z.boolean().nullable().optional(),
+          sla_due_at: z.string().nullable().optional(),
+        }),
+      ),
+      evidence: z.array(Evidence),
     }),
   ),
 });
-export const RedFlags = Envelope.extend({ family: z.enum(FAMILIES), dossiers: z.array(Dossier) });
-export type RedFlags = z.infer<typeof RedFlags>;
-
-export const WorklistRow = z.object({
-  row_id: z.string(),
-  doctor: z.string(),
-  uhid: z.string().nullable(),
-  site: z.string(),
-  note_date: z.string(),
-  finding: z.string(),
-  quote: z.string().nullable(),
-  case_url: z.string().nullable(),
+// 3.6
+export const WorklistsView = z.object({
+  envelope: Envelope,
+  list: z.enum(WORKLISTS),
+  columns_meta: z.array(z.object({ key: z.string(), label: z.string(), kind: z.string() })),
+  total: z.number(),
 });
-export const Worklists = Envelope.extend({
-  family: z.enum(FAMILIES),
-  metric_id: z.string(),
-  total: z.number().int(),
-  truncated: z.boolean(), // lists are capped at 500 rows
-  rows: z.array(WorklistRow),
-});
-export type Worklists = z.infer<typeof Worklists>;
 
 export const VIEW_SCHEMAS = {
-  this_week: ThisWeek,
-  scorecard: Scorecard,
-  doctors: Doctors,
-  contributors: Contributors,
-  red_flags: RedFlags,
-  worklists: Worklists,
+  this_week: z.object({ ...Wrapper, view: ThisWeekView }),
+  scorecard: z.object({ ...Wrapper, view: ScorecardView }),
+  doctor_variation: z.object({ ...Wrapper, view: DoctorVariationView }),
+  contributors: z.object({ ...Wrapper, view: ContributorsView }),
+  redflags: z.object({ ...Wrapper, view: RedflagsView }),
+  worklists: z.object({ ...Wrapper, view: WorklistsView }),
 } as const;
 export type ViewPayload<V extends ViewId> = z.infer<(typeof VIEW_SCHEMAS)[V]>;
-
-export type ViewParams = { family?: Family; site?: string; metric_id?: string; weeks?: number };

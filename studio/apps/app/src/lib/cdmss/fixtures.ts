@@ -1,135 +1,120 @@
-import { wilson, funnelLimits, Z95, Z998 } from "./stats";
-import type { ViewId, ViewPayload, Metric } from "./contract";
+import type { Stat, ViewId, ViewPayload } from "./contract";
+import { funnelLimits, wilson, Z95, Z998 } from "./stats";
 
-// Fixtures for tests and for the screens until builder A's CONTRACT.md lands. Synthetic names; no real identifiers.
+// Synthetic payloads shaped exactly as CONTRACT.md. Used by tests and by the opt-in fixture mode
+// (NEXT_PUBLIC_CDMSS_FIXTURES=1) for local viewing; never served by the agent. Names are invented.
 
-const prov = {
-  window: { from: "2026-10-17", to: "2026-10-23", label: "IST calendar weeks ending 23 Oct 2026" },
-  data_cutoff: "2026-10-23T08:14:00+05:30",
-  sources: ["cdmss_ro.opd_note_audit", "cdmss_ro.opd_finding", "studio_ro.dw_* (denominators)"],
-  engine_family: "opd-note-audit/0.81.x",
-  db13_as_of: "2026-10-22T22:30:00+05:30",
+const win = { from: "2026-10-17", to: "2026-10-23", days: 7 };
+export const stat = (id: string, label: string, over: Partial<Stat> = {}): Stat => ({
+  metric_id: id, label, value: null, unit: "percent", numerator: null, denominator: null, n: 0, ci95: null, window: win,
+  coverage: null, status: "ok", grey_reason: null, change: null, plain: null, note: null, band: null, ...over,
+});
+const prop = (id: string, label: string, k: number, n: number, over: Partial<Stat> = {}): Stat => {
+  const ci = wilson(k, n);
+  return stat(id, label, { value: n ? k / n : null, numerator: k, denominator: n, n, ci95: ci ? [ci.lo, ci.hi] : null, ...over });
 };
-const env = (claim: string, plain: string) => ({
-  provenance: prov,
-  headline: { claim, plain },
-  caveats: [
-    "About 1 in 5 findings are wrong or contested; treat a flag as a prompt to look, not a verdict.",
-    "NQI is an encounter proxy, not a clinician scorecard.",
-    "Stored index, not policy-recomputed.",
-  ],
-  action: "Site medical heads: open the doctors above the 99.8% line first.",
+const wrap = <T,>(tool: string, view: T, rows: Array<Record<string, unknown>> = [], columns: string[] = []) => ({
+  source: { tool, query_hash: "0123456789ab" }, mode: "fixture", synthetic: true, columns, rows, row_count: rows.length, view,
 });
-export const metric = (id: string, label: string, k: number, n: number, over: Partial<Metric> = {}): Metric => ({
-  id,
-  label,
-  unit: "proportion",
-  value: n ? k / n : null,
-  numerator: k,
-  denominator: n,
-  n,
-  ci: wilson(k, n),
-  status: n >= 15 ? "ok" : "grey",
-  ...over,
+const envelope = (sentence: string, plain: string, stats: Stat[] = []) => ({
+  provenance: { window: { ...win, tz: "Asia/Kolkata" }, data_cutoff: "2026-10-23T02:41:07+00:00", sources: ["cdmss_ro.opd_note_audit", "cdmss_ro.opd_finding"], engine_family: "opd-note-audit/0.81.3+ (versions seen: 0.81.21)", db13_as_of: "2026-10-22T17:00:00+00:00" },
+  headline: { sentence, plain },
+  stats,
+  caveats: ["The score is an encounter proxy, not a clinician scorecard.", "OPD site = the doctor's home site, not where the note was written."],
+  precision_line: "About 1 in 5 findings are wrong or contested (engine precision).",
+  action_line: "Site medical heads: start with the doctors above the 99.8% limit.",
 });
 
-const SITES = ["EHRC", "EHBR"];
+const nqi = stat("M-OPD-01", "Mean OPD NQI (PDQI-assessed notes only)", { unit: "score", value: 78.4, numerator: 4234, denominator: 54, n: 54, ci95: [74.1, 82.7], coverage: { assessed: 54, total: 87, pct: 62.1 }, band: "B", plain: "about 8 in 10 on the 100-point scale",
+  change: { direction: "no clear change", p_value: 0.41, relative_change: 0.02, early: { from: "2026-10-10", to: "2026-10-16", value: 76.9, n: 50 }, late: { from: "2026-10-17", to: "2026-10-23", value: 78.4, n: 54 } } });
+const ams01 = stat("M-AMS-01", "WHO Access share", { status: "unavailable", grey_reason: "not_available", note: "No AWaRe list in the repo." });
+
 const docs = [
-  { doctor_uid: "d1", name: "Dr Asha Rao", site: "EHRC", k: 31, n: 80 },
-  { doctor_uid: "d2", name: "Dr Bimal Nair", site: "EHRC", k: 9, n: 90 },
-  { doctor_uid: "d3", name: "Dr Chitra Iyer", site: "EHBR", k: 14, n: 60 },
-  { doctor_uid: "d4", name: "Dr Dev Menon", site: "EHBR", k: 3, n: 6 },
+  { doctor_uid: "d1", doctor_name: "Dr Asha Rao", site: "EHRC", n: 80, k: 33 },
+  { doctor_uid: "d2", doctor_name: "Dr Bimal Nair", site: "EHRC", n: 90, k: 20 },
+  { doctor_uid: "d3", doctor_name: "Dr Chitra Iyer", site: "EHBR", n: 60, k: 17 },
+  { doctor_uid: "d4", doctor_name: "Dr Dev Menon", site: "EHBR", n: 6, k: 2 },
 ];
-const REF = 0.2;
-
-const doctors: ViewPayload<"doctors"> = {
-  ...env("One doctor is clearly above the rest on low-value findings.", "Dr Rao is about 4 in 10 against a site norm of about 2 in 10."),
-  family: "opd",
-  metric_id: "M-OPD-05",
-  reference: REF,
-  overdispersion_caveat: "Plain binomial limits; no overdispersion adjustment for this metric.",
-  rows: docs.map((d) => {
-    const n = d.n;
-    const f95 = funnelLimits(REF, n, Z95);
-    const f998 = funnelLimits(REF, n, Z998);
-    const rate = d.k / n;
-    const small = n < 10;
-    return {
-      doctor_uid: d.doctor_uid,
-      name: d.name,
-      site: d.site,
-      specialty: "General medicine",
-      metric: metric("M-OPD-05", "Notes with a low-value finding", d.k, n, small ? { status: "grey", reason: "fewer than 10 notes" } : {}),
-      expected: REF,
-      funnel: { lo95: f95.lo, hi95: f95.hi, lo998: f998.lo, hi998: f998.hi },
-      flag: small ? "not_ranked" : rate > f998.hi ? "above_998" : rate > f95.hi ? "above_95" : rate < f998.lo ? "below_998" : rate < f95.lo ? "below_95" : "within",
-      cases_url: `https://cdmss.example/case/${d.doctor_uid}`,
-    };
-  }),
+const C = 0.31;
+const position = (n: number, v: number) => {
+  if (n < 10) return "greyed" as const;
+  const a = funnelLimits(C, n, Z95), b = funnelLimits(C, n, Z998);
+  return v > b.hi ? ("above_998" as const) : v > a.hi ? ("above_95" as const) : v < b.lo ? ("below_998" as const) : v < a.lo ? ("below_95" as const) : ("within" as const);
 };
+let rank = 0;
+const doctors = docs.map((d) => {
+  const v = d.k / d.n, ci = wilson(d.k, d.n)!, small = d.n < 10;
+  return {
+    doctor_uid: d.doctor_uid, doctor_name: d.doctor_name, site: d.site, speciality: "General medicine", n: d.n,
+    value: v, ci95: small ? null : ([ci.lo, ci.hi] as [number, number]), expected_rate: small ? null : C, oe: small ? null : v / C,
+    position: position(d.n, v), rank: small ? null : ++rank,
+    stat: small ? prop("M-OPD-05", "Notes with a low-value finding", d.k, d.n, { status: "count_only", value: null, ci95: null, grey_reason: "min_n" }) : prop("M-OPD-05", "Notes with a low-value finding", d.k, d.n),
+  };
+});
+
+const lvcols = ["note_day", "doctor_uid", "doctor_name", "site", "uid", "finding_no", "subject", "lvc_category", "rule_ref", "quote", "case_url"];
 
 export const FIXTURES: { [V in ViewId]: ViewPayload<V> } = {
-  this_week: {
-    ...env("OPD note quality held steady this week; stewardship tiles are partly unavailable.", "About 6 in 10 notes are band A or B."),
-    tiles: [
-      { family: "opd", title: "OPD note audit", state: "live", headline: "Mean NQI 78 (62% of notes assessed)", metric: metric("M-OPD-01", "Mean NQI", 780, 10, { unit: "score", value: 78, coverage: 0.62 }), change: "no clear change", early_late: "first 3 weeks vs last 3 weeks" },
-      { family: "stewardship", title: "Antimicrobial stewardship", state: "live", headline: "WHO Access share unavailable: no AWaRe list", metric: metric("M-AMS-01", "WHO Access share", 0, 0, { status: "unavailable", reason: "AWaRe list not supplied" }), change: null, early_late: null },
-      { family: "ipd", title: "IPD discharge audit", state: "coming", headline: null, metric: null, change: null, early_late: null },
-      { family: "preop", title: "Pre-op", state: "coming", headline: null, metric: null, change: null, early_late: null },
+  this_week: wrap("cdmss_v1_this_week", {
+    envelope: envelope("Mean OPD NQI is 78 over 62% of notes this week.", "About 8 in 10.", [nqi]),
+    families: [
+      { family: "opd", label: "OPD note audit", status: "live", tiles: [{ stat: nqi, headline: "NQI 78, 62% of notes", plain: "about 8 in 10" }] },
+      { family: "ams", label: "Antimicrobial stewardship", status: "live", tiles: [{ stat: ams01, headline: "WHO Access share is unavailable", plain: null }] },
+      { family: "ipd", label: "IPD discharge & episode audits", status: "coming" },
+      { family: "ot", label: "OT notes", status: "coming" },
+      { family: "preop", label: "Pre-op risk", status: "coming" },
+      { family: "readmission", label: "Readmissions", status: "coming" },
     ],
-  },
-  scorecard: {
-    ...env("EHRC has more low-value findings than EHBR.", "About 3 in 10 notes at EHRC, about 2 in 10 at EHBR."),
-    family: "opd",
-    metrics: [
-      { id: "M-OPD-01", label: "Mean NQI", higher_is: "better" },
-      { id: "M-OPD-05", label: "Low-value findings", higher_is: "worse" },
+  }),
+  scorecard: wrap("cdmss_v2_scorecard", {
+    envelope: envelope("EHRC has a lower NQI than EHBR.", "About 4 points lower.", [nqi]),
+    site_basis: "doctor_home_site",
+    sites: ["ALL", "EHRC", "EHBR"],
+    metrics: [{ metric_id: "M-OPD-01", label: "Mean NQI", unit: "score" }, { metric_id: "M-OPD-05", label: "Low-value findings per 100 notes", unit: "per_100" }],
+    matrix: ["ALL", "EHRC", "EHBR"].map((site, i) => ({ site, n_notes: 400 - i * 100, cells: {
+      "M-OPD-01": { ...nqi, value: 78 - i * 2 },
+      "M-OPD-05": stat("M-OPD-05", "Low-value findings per 100 notes", { unit: "per_100", value: 12 + i, numerator: 40, denominator: 300, n: 300 }),
+    } })),
+    trend: ["EHRC", "EHBR"].flatMap((site, i) => ["M-OPD-01", "M-OPD-05"].map((metric_id) => ({
+      site, metric_id, points: [0, 1, 2, 3].map((j) => ({ week_from: `2026-10-${String(2 + j * 7).padStart(2, "0")}`, week_to: `2026-10-${String(8 + j * 7).padStart(2, "0")}`, value: (metric_id === "M-OPD-01" ? 76 : 12) + i + j * 0.5, n: 90, status: "ok" })),
+    }))),
+  }),
+  doctor_variation: wrap("cdmss_v3_doctor_variation", {
+    envelope: envelope("One doctor is above the 99.8% limit on low-value findings.", "About 4 in 10 notes against about 3 in 10 overall.", doctors.map((d) => d.stat)),
+    metric: "lv_rate" as const,
+    funnel: { centre: C, centre_basis: "pooled rate over included doctors", z95: 1.96, z998: 3.09, adjustment: "plain binomial limits (no overdispersion adjustment, no age adjustment)", min_n_include: 50,
+      limits: [10, 50, 100, 150].map((n) => { const a = funnelLimits(C, n, Z95), b = funnelLimits(C, n, Z998); return { n, lo95: a.lo, hi95: a.hi, lo998: b.lo, hi998: b.hi }; }) },
+    doctors,
+    excluded: { count: 14, reason: "fewer than 10 audited notes" },
+  }, doctors.map((d) => ({ doctor_uid: d.doctor_uid, doctor_name: d.doctor_name, site: d.site, speciality: d.speciality, n: d.n, value: d.value, ci_lo: d.ci95?.[0] ?? null, ci_hi: d.ci95?.[1] ?? null, position: d.position }))),
+  contributors: wrap("cdmss_v4_contributors", {
+    envelope: envelope("Dr Rao accounts for most of the EHRC gap.", "About 8 in 10 of it."),
+    site: "EHRC", metric: "lv_rate",
+    site_rate: prop("M-OPD-05", "EHRC notes with a low-value finding", 53, 170),
+    other_sites_rate: prop("M-OPD-05", "Other sites", 17, 66),
+    gap: { absolute: 0.054, relative: 0.2 },
+    contributors: [
+      { doctor_uid: "d1", doctor_name: "Dr Asha Rao", n: 80, events: 33, rate: 0.41, ci95: [0.31, 0.52], share_of_gap: 0.8, site_rate_without: 0.22, status: "ok" as const },
+      { doctor_uid: "d2", doctor_name: "Dr Bimal Nair", n: 90, events: 20, rate: 0.22, ci95: [0.15, 0.32], share_of_gap: 0.2, site_rate_without: 0.39, status: "ok" as const },
+      { doctor_uid: "d9", doctor_name: "Dr Esha Pillai", n: 4, events: 1, rate: null, ci95: null, share_of_gap: null, site_rate_without: null, status: "count_only" as const },
     ],
-    cells: SITES.flatMap((site, i) => [
-      { ...metric("M-OPD-01", "Mean NQI", 0, 120, { unit: "score", value: 78 - i * 4, ci: null, coverage: 0.62 }), site, metric_id: "M-OPD-01" },
-      { ...metric("M-OPD-05", "Low-value findings", 40 - i * 15, 170), site, metric_id: "M-OPD-05" },
-    ]),
-    trend: SITES.map((site, i) => ({ metric_id: "M-OPD-05", site, points: ["W40", "W41", "W42", "W43"].map((week, j) => ({ week, value: 0.3 - i * 0.08 + j * 0.005, n: 40 })) })),
-    band_mix: SITES.map((site) => ({ site, n: 120, shares: { A: 0.2, B: 0.4, C: 0.25, D: 0.1, E: 0.05 } })),
-    change: SITES.map((site) => ({ metric_id: "M-OPD-05", site, verdict: "no clear change" as const, early_late: "weeks 40-41 vs 42-43" })),
-  },
-  doctors,
-  contributors: {
-    ...env("Two doctors account for most of the EHRC gap.", "About 8 in 10 of the gap."),
-    family: "opd",
-    metric_id: "M-OPD-05",
-    site: "EHRC",
-    site_metric: metric("M-OPD-05", "Low-value findings", 40, 170),
-    gap_to_reference: 0.035,
-    site_without_top: 0.19,
-    rows: [
-      { doctor_uid: "d1", name: "Dr Asha Rao", metric: metric("M-OPD-05", "Low-value findings", 31, 80), share_of_gap: 0.78, cases_url: "https://cdmss.example/case/d1" },
-      { doctor_uid: "d2", name: "Dr Bimal Nair", metric: metric("M-OPD-05", "Low-value findings", 9, 90), share_of_gap: 0.22, cases_url: null },
-    ],
-  },
-  red_flags: {
-    ...env("One doctor needs a dossier review.", "One of four doctors."),
-    family: "opd",
-    dossiers: [
-      {
-        doctor_uid: "d1",
-        name: "Dr Asha Rao",
-        site: "EHRC",
-        why: "Above the 99.8% funnel limit on low-value findings, n = 80.",
-        metrics: [metric("M-OPD-05", "Low-value findings", 31, 80)],
-        findings: [{ finding_id: "f1", subject: "Antibiotic for acute URTI", quote: "Rx Amoxiclav 625 x5d for sore throat", case_url: "https://cdmss.example/case/n1" }],
-      },
-    ],
-  },
-  worklists: {
-    ...env("12 notes to review for Dr Rao.", "About 4 in 10 of the audited notes."),
-    family: "opd",
-    metric_id: "M-OPD-05",
+    top_contributor_removed: { doctor_uid: "d1", site_rate_without: 0.22 },
+  }),
+  redflags: wrap("cdmss_v5_redflags", {
+    envelope: envelope("One doctor has an open signal with evidence.", "One doctor."),
+    dossiers: [{
+      doctor_uid: "d1", doctor_name: "Dr Asha Rao", site: "EHRC", n_notes: 80,
+      signals: [{ signal_id: "s1", reference: "EHRC-AUD-2026-0001", signal_type: "low_value_antibiotic", importance: "high", status: "routed", response_required: true, overdue: true, sla_due_at: "2026-10-20T00:00:00+05:30" }],
+      evidence: [{ uid: "n1", note_day: "2026-10-20", finding_no: 1, subject: "Antibiotic for acute URTI", quote: "Rx Amoxiclav 625 x5d for sore throat", rationale: "No bacterial indication documented.", case: { url: "https://cases.example/care/n1" } }],
+    }],
+  }),
+  worklists: wrap("cdmss_v8_worklists", {
+    envelope: envelope("Two low-value findings to review.", "Two notes."),
+    list: "low_value_findings" as const,
+    columns_meta: lvcols.map((key) => ({ key, label: key.replace(/_/g, " "), kind: key === "case_url" ? "url" : "text" })),
     total: 2,
-    truncated: false,
-    rows: [
-      { row_id: "r1", doctor: "Dr Asha Rao", uhid: "UH-000001", site: "EHRC", note_date: "2026-10-20", finding: "Antibiotic for acute URTI", quote: "Rx Amoxiclav 625 x5d", case_url: "https://cdmss.example/case/n1" },
-      { row_id: "r2", doctor: "Dr Asha Rao", uhid: "UH-000002", site: "EHRC", note_date: "2026-10-21", finding: "Unindicated investigation", quote: "=CBC, ESR, CRP", case_url: null },
-    ],
-  },
+  }, [
+    { note_day: "2026-10-20", doctor_uid: "d1", doctor_name: "Dr Asha Rao", site: "EHRC", uid: "n1", finding_no: 1, subject: "Antibiotic for acute URTI", lvc_category: "antibiotic", rule_ref: "r5", quote: "Rx Amoxiclav 625 x5d", case_url: "https://cases.example/care/n1" },
+    { note_day: "2026-10-21", doctor_uid: "d1", doctor_name: "Dr Asha Rao", site: "EHRC", uid: "n2", finding_no: 2, subject: "Unindicated investigation", lvc_category: "unindicated_investigation", rule_ref: null, quote: "=CBC, ESR, CRP", case_url: null },
+  ], lvcols),
 };

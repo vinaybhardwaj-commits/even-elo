@@ -7,7 +7,7 @@ import type { ViewId, ViewParams } from "./contract";
  * through its own audited tools. */
 export function useCdmssContext(view: ViewId, filters: ViewParams, status: string, queryHash?: string | null) {
   useAgentContext({
-    description: "The CDMSS module view the user is looking at right now: view id, active filters (family, site, metric, weeks) and load status. Answer about this view first, using the catalogue metric tools.",
+    description: "The CDMSS module view the user is looking at right now: view id, active filters (family, site, metric, list, window) and load status. Answer about this view first, using the cdmss_* metric tools.",
     value: JSON.parse(JSON.stringify({ screen: `cdmss/${view}`, view, filters, status, query_hash: queryHash ?? null })) as JsonSerializable,
   });
 }

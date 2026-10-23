@@ -29,9 +29,9 @@ afterEach(() => cleanup());
 const CASES: Array<[string, () => React.JSX.Element, string, RegExp]> = [
   ["this_week", ThisWeekScreen, "this_week", /Coming/],
   ["scorecard", ScorecardScreen, "scorecard", /Mean NQI/],
-  ["doctors", DoctorsScreen, "doctors", /Dr Asha Rao/],
+  ["doctor_variation", DoctorsScreen, "doctor_variation", /Dr Asha Rao/],
   ["contributors", ContributorsScreen, "contributors", /Dr Bimal Nair/],
-  ["red_flags", RedFlagsScreen, "red_flags", /Antibiotic for acute URTI/],
+  ["redflags", RedFlagsScreen, "redflags", /Antibiotic for acute URTI/],
   ["worklists", WorklistsScreen, "worklists", /open case/],
 ];
 
@@ -41,6 +41,7 @@ describe.each(CASES)("%s", (_n, Comp, view, text) => {
     await waitFor(() => expect(screen.getByTestId("provenance")).toBeInTheDocument());
     expect(screen.getAllByText(text).length).toBeGreaterThan(0);
     expect(screen.getByText(/Look first:/)).toBeInTheDocument();
+    expect(screen.getByText(/wrong or contested/)).toBeInTheDocument();
     expect(screen.getByLabelText("Caveats")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0][0]).toBe(`/studio/api/cdmss/${view}`);
@@ -62,7 +63,7 @@ describe("behaviour", () => {
   it("a changed filter makes exactly one more read", async () => {
     render(<DoctorsScreen />);
     await screen.findByTestId("provenance");
-    fireEvent.change(screen.getByLabelText("Metric"), { target: { value: "M-OPD-06" } });
+    fireEvent.change(screen.getByLabelText("Measure"), { target: { value: "nqi" } });
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
   });
   it("a route error is shown with Retry and is not retried automatically", async () => {
@@ -73,7 +74,7 @@ describe("behaviour", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
   it("a payload without its envelope is refused", async () => {
-    fetchMock.mockImplementation(async () => new Response(JSON.stringify({ tiles: [] }), { status: 200 }));
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify({ view: { families: [] } }), { status: 200 }));
     render(<ThisWeekScreen />);
     expect(await screen.findByRole("alert")).toHaveTextContent("shape this view does not understand");
   });
@@ -84,6 +85,20 @@ describe("behaviour", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Export CSV" }));
     expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it("sends the typed params for the open filters (body is the params, nothing else)", async () => {
+    render(<DoctorsScreen />);
+    await screen.findByTestId("provenance");
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ family: "opd", metric: "lv_rate", window_days: 28 });
+  });
+  it("greyed and count-only figures show n, not a value", async () => {
+    render(<ContributorsScreen />);
+    const row = (await screen.findByText("Dr Esha Pillai")).closest("tr")!;
+    expect(row).toHaveClass("cd-grey");
+  });
+  it("unavailable metrics say so with the reason", async () => {
+    render(<ThisWeekScreen />);
+    expect(await screen.findByText(/unavailable: No AWaRe list/)).toBeInTheDocument();
   });
   it("nav has the CDMSS entry", () => {
     expect(NAV_ITEMS.some((i) => i.href === "/cdmss")).toBe(true);
