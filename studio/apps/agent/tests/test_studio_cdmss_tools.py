@@ -196,14 +196,12 @@ def test_tools_are_registered_for_the_screen_door_and_the_chat_agent():
                                    "cdmss_metric_catalogue", "cdmss_metric", "cdmss_drilldown", "cdmss_finding_detail"]
 
 
-def test_contract_names_the_same_tools():
-    contract = ROOT / ".bc" / "CONTRACT.md"
-    if not contract.exists():
-        pytest.skip(".bc/CONTRACT.md is not in this checkout")
-    text = contract.read_text()
-    assert set(re.findall(r"`(cdmss_[a-z0-9_]+)`", text)) - {"cdmss_ro"} == set(ct.CDMSS_TOOL_NAMES)
-    for mid in ct.CATALOGUE_IDS:
-        assert mid in text or mid in ("M-OPD-09", "M-OPD-10", "M-OPD-11"), mid
+def test_fixtures_and_screen_map_name_the_same_tools():
+    # the committed fixtures are one per tool; every tool belongs to the cdmss screen
+    stems = sorted(p.stem for p in (Path(__file__).resolve().parent / "fixtures" / "cdmss").glob("*.json"))
+    assert sorted(ct.CDMSS_TOOL_NAMES) == stems
+    for n in ct.CDMSS_TOOL_NAMES:
+        assert studio_access.GOVERNANCE_SCREEN[n] == "cdmss", n
 
 
 # --- running the tools with stub databases --------------------------------------------------------------------

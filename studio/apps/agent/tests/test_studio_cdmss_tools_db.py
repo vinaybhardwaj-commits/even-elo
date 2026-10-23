@@ -308,6 +308,19 @@ async def test_v4_contributors_shares_and_site_rate_without_top(world):
     assert v["top_contributor_removed"]["doctor_uid"] == "D5" and v["contributors"][0]["doctor_uid"] == "D5"
 
 
+@pytest.mark.anyio
+async def test_v4_withholds_the_gap_when_the_other_sites_are_under_the_floor(world, monkeypatch):
+    # SITEA has 100 notes, the other site 35: raise the group floor to 40 so only the "other sites" side is small
+    monkeypatch.setattr(ct, "GROUP_MIN_N", 40)
+    v = (await call("cdmss_v4_contributors", {"site": "SITEA", "window_days": 7}))["view"]
+    o = v["other_sites_rate"]
+    assert o["status"] == "count_only" and o["n"] == 35 and "other sites together" in o["note"]
+    assert all(o[k] is None for k in ("value", "numerator", "denominator", "ci95", "plain"))
+    assert v["gap"] is None and v["top_contributor_removed"] is None
+    assert all(c["share_of_gap"] is None for c in v["contributors"])
+    assert v["site_rate"]["status"] == "ok"  # the site itself is big enough and still shown
+
+
 # --- Rx denominators from the DB13 extract ------------------------------------------------------------------
 
 @pytest.mark.anyio

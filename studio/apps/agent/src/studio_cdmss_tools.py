@@ -1338,12 +1338,16 @@ async def build_v4(run: Run, days: int, site: str) -> str:
     other_stat = metric_stat("M-OPD-05b", other, ds, "site")
     rate_site, rate_other = _ratio(s_e, s_n), _ratio(o_e, o_n)
     site_small = s_n < GROUP_MIN_N  # under the site floor: the gap, the other sites' inputs and every share would give the site's rate back
-    if site_small:
+    other_small = o_n < GROUP_MIN_N  # the other sites together under the floor: their rate, and any gap against it, would be one division from a small group's
+    if site_small or other_small:
+        why = f"{site} has" if site_small else "the other sites together have"
         other_stat = {**other_stat, "value": None, "numerator": None, "denominator": None, "ci95": None, "ci_method": "none", "change": None, "plain": None,
-                      "status": "count_only", "grey_reason": "min_n", "n": 0, "note": f"Withheld: {site} has fewer than {GROUP_MIN_N} audited notes."}
+                      "status": "count_only", "grey_reason": "min_n", "n": 0 if site_small else int(o_n), "note": f"Withheld: {why} fewer than {GROUP_MIN_N} audited notes."}
+        if other_stat.get("extra"):
+            other_stat["extra"] = None
     gap = None
     excess = None
-    if not site_small and rate_site is not None and rate_other is not None:
+    if not site_small and not other_small and rate_site is not None and rate_other is not None:
         gap = {"absolute": rate_site - rate_other, "relative": (rate_site - rate_other) / rate_other if rate_other else None}
         excess = s_e - s_n * rate_other
     contributors = []
@@ -1353,7 +1357,7 @@ async def build_v4(run: Run, days: int, site: str) -> str:
         small = L.n < DOCTOR_MIN_N
         ci = wilson(L.n_lv_notes, L.n)
         share = None
-        if not small and not site_small and excess is not None and excess > 0 and rate_other is not None:
+        if not small and not site_small and not other_small and excess is not None and excess > 0 and rate_other is not None:
             share = (L.n_lv_notes - L.n * rate_other) / excess
         # the remainder must itself be a group above the doctor floor, else it is one small doctor's rate
         without = _ratio(s_e - L.n_lv_notes, s_n - L.n) if s_n - L.n >= DOCTOR_MIN_N and not site_small else None

@@ -53,9 +53,10 @@ describe("csv", () => {
     expect(toCsv(["a", "b"], [{ a: '=1+1', b: 'x,"y"' }])).toBe("a,b\r\n'=1+1,\"x,\"\"y\"\"\"\r\n");
   });
 });
-describe("csv negatives", () => {
-  it("leaves negative numbers alone, still neutralises formulas", () => {
-    expect(toCsv(["a"], [{ a: -5 }, { a: "-0.25" }, { a: "-cmd|calc" }, { a: "=1" }, { a: "+1" }, { a: "@x" }, { a: "\tx" }])).toBe("a\r\n-5\r\n-0.25\r\n'-cmd|calc\r\n'=1\r\n'+1\r\n'@x\r\n'\tx\r\n");
+describe("csv negatives and formulas", () => {
+  it("leaves plain negative numbers raw, prefixes every other formula-looking cell", () => {
+    const out = toCsv(["a"], [{ a: -5 }, { a: "-12.5" }, { a: "-1+1" }, { a: "-2+3*cmd|' /C calc'!A0" }, { a: "-cmd|calc" }, { a: "-5." }, { a: "=1" }, { a: "+1" }, { a: "@x" }, { a: "\tx" }]);
+    expect(out.split("\r\n")).toEqual(["a", "-5", "-12.5", "'-1+1", "'-2+3*cmd|' /C calc'!A0", "'-cmd|calc", "'-5.", "'=1", "'+1", "'@x", "'\tx", ""]);
   });
 });
 describe("fixtures satisfy the provisional contract", () => {
